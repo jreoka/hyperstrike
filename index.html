@@ -325,6 +325,91 @@ body.touch-on #camTag{left:168px;bottom:24px}
 @keyframes rotPhone{0%,20%{transform:rotate(0deg)}55%,80%{transform:rotate(-90deg)}100%{transform:rotate(0deg)}}
 @media (pointer:coarse) and (orientation:portrait){#rotateLock{display:flex}}
 body.portrait-lock #rotateLock{display:flex}
+/* ===== AUTH GATE, PROFILE, MULTIPLAYER, SQUADS, RANKS ===== */
+#authGate{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at 50% 35%,rgba(16,28,58,.92),rgba(4,7,16,.97));backdrop-filter:blur(12px);padding:20px}
+#authGate.hidden{display:none}
+.auth-card{width:100%;max-width:430px;background:rgba(9,15,32,.95);border:1px solid rgba(62,242,255,.25);
+  box-shadow:0 24px 70px rgba(0,0,0,.7),0 0 40px rgba(62,242,255,.08);padding:28px 30px;border-radius:4px}
+.auth-card .logo{align-items:center;margin-bottom:18px}
+.auth-card .logo .word{font-size:34px}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px}
+.auth-tabs button{padding:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--ink2);
+  font-weight:800;font-style:italic;letter-spacing:.14em;font-size:12px;cursor:pointer;transition:.15s}
+.auth-tabs button.on{background:rgba(62,242,255,.16);border-color:var(--accent);color:#fff}
+.auth-field{margin-bottom:13px}
+.auth-field label{display:block;font-size:10px;font-weight:800;letter-spacing:.2em;color:var(--ink2);margin-bottom:5px;text-transform:uppercase}
+.auth-field input{width:100%;padding:11px 13px;background:rgba(4,8,20,.85);border:1px solid rgba(255,255,255,.14);color:#fff;
+  font-size:14px;outline:none;border-radius:2px;box-sizing:border-box}
+.auth-field input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(62,242,255,.16)}
+.auth-err{min-height:18px;font-size:12px;color:#ff6b7a;margin-bottom:10px;font-weight:700;letter-spacing:.04em}
+.auth-sub{width:100%;margin-top:4px}
+.auth-srv{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:var(--ink2)}
+.auth-srv summary{cursor:pointer;letter-spacing:.12em;font-weight:700;opacity:.8}
+.auth-srv input{width:100%;margin-top:8px;padding:7px 10px;background:rgba(4,8,20,.85);border:1px solid rgba(255,255,255,.14);color:#fff;font-size:12px;box-sizing:border-box}
+
+#profileCard{margin:10px 0 12px;padding:12px 14px;background:rgba(8,14,30,.78);border:1px solid rgba(255,255,255,.1);
+  border-left:3px solid var(--accent);border-radius:2px}
+#profileCard.hidden{display:none}
+.pc-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pc-name{font-size:15px;font-weight:900;font-style:italic;letter-spacing:.08em;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-lvl{font-size:11px;font-weight:900;letter-spacing:.12em;padding:2px 8px;background:rgba(62,242,255,.16);color:var(--accent);border:1px solid rgba(62,242,255,.35);white-space:nowrap}
+.pc-rank{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:11px;font-weight:800;letter-spacing:.12em}
+.pc-xpbar{height:5px;background:rgba(255,255,255,.1);margin-top:7px;overflow:hidden;border-radius:2px}
+.pc-xpbar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--gold));transition:width .35s}
+.pc-xptxt{display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--ink2);letter-spacing:.08em}
+.pc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:6px;font-size:10px;color:var(--ink2)}
+.pc-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#4dff88;margin-right:5px;box-shadow:0 0 8px #4dff88}
+.pc-dot.off{background:#ff5a6a;box-shadow:0 0 8px #ff5a6a}
+.pc-out{background:transparent;border:1px solid rgba(255,255,255,.18);color:var(--ink2);font-size:10px;font-weight:800;letter-spacing:.12em;
+  padding:3px 8px;cursor:pointer}
+.pc-out:hover{border-color:#ff6b7a;color:#ff6b7a}
+
+.mp-box{background:rgba(6,11,26,.65);border:1px solid rgba(255,255,255,.1);padding:14px;margin-bottom:12px;border-radius:2px}
+.mp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mp-in{flex:1;min-width:130px;padding:9px 12px;background:rgba(4,8,20,.9);border:1px solid rgba(255,255,255,.16);color:#fff;
+  font-size:13px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;outline:none}
+.mp-in:focus{border-color:var(--accent)}
+.mp-btn{padding:9px 14px;background:rgba(62,242,255,.16);border:1px solid var(--accent);color:#fff;font-size:11px;font-weight:900;
+  font-style:italic;letter-spacing:.14em;cursor:pointer;text-transform:uppercase;white-space:nowrap}
+.mp-btn:hover{background:rgba(62,242,255,.28)}
+.mp-btn.alt{background:rgba(255,154,31,.16);border-color:var(--orange)}
+.mp-btn.alt:hover{background:rgba(255,154,31,.3)}
+.mp-btn.ghost{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.2);color:var(--ink2)}
+.mp-btn.ghost:hover{color:#fff;border-color:#fff}
+.mp-btn.danger{background:rgba(255,75,90,.16);border-color:#ff5a6a;color:#ff8a95}
+.mp-code{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;background:rgba(62,242,255,.12);border:1px dashed var(--accent);
+  font-size:18px;font-weight:900;font-style:italic;letter-spacing:.22em;color:var(--accent);cursor:pointer}
+.mp-pill{display:inline-block;padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:.12em;border:1px solid rgba(255,255,255,.18);
+  color:var(--ink2);text-transform:uppercase}
+.mp-pill.ranked{border-color:var(--gold);color:var(--gold);background:rgba(255,210,63,.12)}
+.mp-pill.pub{border-color:#4dff88;color:#4dff88}
+.mp-teams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+.mp-team{background:rgba(4,8,20,.65);border:1px solid rgba(255,255,255,.1);padding:10px}
+.mp-team.blue{border-top:3px solid var(--blue)}
+.mp-team.orange{border-top:3px solid var(--orange)}
+.mp-team h4{font-size:12px;font-weight:900;font-style:italic;letter-spacing:.16em;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.mp-pl{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px;margin-bottom:4px;background:rgba(255,255,255,.04);font-size:12px}
+.mp-pl.me{background:rgba(62,242,255,.1);border-left:2px solid var(--accent)}
+.mp-pl .rdy{font-size:10px;font-weight:800;letter-spacing:.1em;padding:2px 6px}
+.mp-pl .rdy.ok{color:#4dff88;background:rgba(77,255,136,.12)}
+.mp-pl .rdy.no{color:var(--ink2)}
+.mp-chat{height:110px;overflow-y:auto;background:rgba(3,6,15,.8);border:1px solid rgba(255,255,255,.08);padding:8px;font-size:12px;line-height:1.45;margin-bottom:6px}
+.mp-chat .sys{color:var(--gold);font-style:italic}
+.mp-chat b{color:var(--accent)}
+.mp-list-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);margin-bottom:6px}
+.mp-list-item:hover{border-color:var(--accent)}
+.rank-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;background:rgba(8,14,30,.78);
+  border:1px solid rgba(255,255,255,.12);margin-bottom:14px}
+.rank-big{font-size:26px;font-weight:900;font-style:italic;letter-spacing:.1em}
+.lb-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.lb-table th{text-align:left;padding:8px 6px;color:var(--ink2);font-size:10px;letter-spacing:.16em;border-bottom:1px solid rgba(255,255,255,.12)}
+.lb-table td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)}
+.lb-table tr.me td{background:rgba(62,242,255,.09);font-weight:800}
+.xp-reward{margin:14px 0 4px;padding:12px 16px;background:rgba(8,15,34,.85);border:1px solid rgba(62,242,255,.28);text-align:left}
+.xp-reward .lvlup{color:var(--gold);font-size:16px;font-weight:900;font-style:italic;letter-spacing:.18em;margin-bottom:4px;text-shadow:0 0 18px rgba(255,210,63,.7)}
+.xp-reward .row{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:800;letter-spacing:.1em}
 </style>
 </head>
 <body>
@@ -390,12 +475,42 @@ body.portrait-lock #rotateLock{display:flex}
 <div id="menu" class="hidden">
   <div class="left">
     <div class="logo"><div class="word">HYPERSTRIKE</div><div class="sub">ROCKET CAR SOCCER</div></div>
+    <div id="profileCard" class="hidden"></div>
     <nav id="mainNav"></nav>
   </div>
   <div class="right"><div id="menuPanel"></div></div>
 </div>
 
 <div id="overlay" class="overlay hidden"><div class="box" id="overlayBox"></div></div>
+<div id="authGate" class="hidden">
+  <div class="auth-card">
+    <div class="logo"><div class="word">HYPERSTRIKE</div><div class="sub">SIGN IN TO PLAY</div></div>
+    <div class="auth-tabs">
+      <button type="button" id="authTabLogin" class="on">SIGN IN</button>
+      <button type="button" id="authTabReg">CREATE ACCOUNT</button>
+    </div>
+    <form id="authForm" autocomplete="on">
+      <div class="auth-field">
+        <label for="authUser">Username</label>
+        <input type="text" id="authUser" minlength="3" maxlength="18" required autocomplete="username" placeholder="Enter username (3-18 chars)">
+      </div>
+      <div class="auth-field">
+        <label for="authPass">Password</label>
+        <input type="password" id="authPass" minlength="6" maxlength="128" required autocomplete="current-password" placeholder="Enter password (min 6 chars)">
+      </div>
+      <div class="auth-field hidden" id="authConfirmWrap">
+        <label for="authPass2">Confirm Password</label>
+        <input type="password" id="authPass2" minlength="6" maxlength="128" autocomplete="new-password" placeholder="Re-enter password">
+      </div>
+      <div class="auth-err" id="authErr"></div>
+      <button type="submit" class="cta auth-sub" id="authSubmit"><span id="authSubmitTxt">Sign In</span></button>
+    </form>
+    <details class="auth-srv">
+      <summary>Server Connection</summary>
+      <input type="text" id="authServerUrl" placeholder="https://hyperstrike-ord.fly.dev">
+    </details>
+  </div>
+</div>
 <div id="flash"></div>
 <div id="toast"></div>
 <div id="fps" class="hidden"></div>
@@ -4340,8 +4455,26 @@ class World {
     if (P && !this.frozen) P.preCars(dt);
     if (!this.frozen) {
       for (const c of this.cars) {
+        if (c.isRemote) {
+          if (c.netTarget) {
+            const nt = c.netTarget;
+            if (c.pos.distanceToSquared(nt.pos) > 36) c.pos.copy(nt.pos);
+            else c.pos.lerp(nt.pos, Math.min(1, dt * 18));
+            c.quat.slerp(nt.quat, Math.min(1, dt * 18));
+            c.vel.lerp(nt.vel, Math.min(1, dt * 18));
+            c.basis.fromQuat(c.quat);
+            c.boost = nt.boost;
+            c.isBoosting = nt.isBoosting;
+            c.supersonic = nt.supersonic;
+            c.sliding = nt.sliding;
+            c.demolished = nt.demolished;
+            c.item = nt.item;
+          }
+          continue;
+        }
         if (c.demolished) { c.respawnT -= dt; if (c.respawnT <= 0) this.respawn(c); continue; }
         c.unlimitedBoost = this.unlimitedBoost || c.unlimitedBoost === 'always';
+        if (this.boostRecharge && !c.isBoosting && c.boost < 100) c.boost = Math.min(100, c.boost + 14 * dt);
         c.step(dt, this);
         for (const e of c.events) this.events.push({ type: 'car', kind: e, car: c });
       }
@@ -4874,7 +5007,9 @@ class MatchMode extends ModeBase {
     const g = this.game, cfg = this.cfg;
     this.score = [0, 0]; this.timeLeft = cfg.duration || 300; this.overtime = false; this.otTime = 0; this.timerRunning = false;
     this.exhibition = !!cfg.exhibition; this.unlimited = cfg.duration === 0;
+    this.startedAt = performance.now();
     this.world.allowDemos = true;
+    if (!this.exhibition) g.ui.clearHudFX();
     this.beginKickoff();
     if (!this.exhibition) g.ui.showHud(true);
   }
@@ -4972,6 +5107,21 @@ class MatchMode extends ModeBase {
     const g = this.game; this.setState('ended'); this.world.frozen = true;
     if (this.exhibition) { this.score = [0, 0]; this.beginKickoff(); return; }
     g.ui.showResults(this);
+    if (g.player && g.online && g.online.user && !(this instanceof OnlineMatchMode)) {
+      const win = this.score[0] > this.score[1] ? 0 : 1;
+      const dur = Math.round((performance.now() - (this.startedAt || performance.now())) / 1000);
+      g.online.reportSoloMatch({
+        duration: dur,
+        won: g.player.team === win,
+        goals: g.player.stats.goals,
+        assists: g.player.stats.assists,
+        saves: g.player.stats.saves,
+        shots: g.player.stats.shots,
+        demos: g.player.stats.demos,
+        difficulty: this.cfg.difficulty || 0,
+        tournament: !!g.tournament
+      }).then(res => { if (res && res.user) g.ui.showXpReward(res); }).catch(() => {});
+    }
   }
   clockText() {
     if (this.overtime) { const t = Math.floor(this.otTime); return '+' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); }
@@ -4980,9 +5130,130 @@ class MatchMode extends ModeBase {
   }
 }
 
+class OnlineMatchMode extends MatchMode {
+  start() {
+    const cfg = this.cfg;
+    this.isHost = !!cfg.isHost;
+    this.netAcc = 0;
+    this.ballNetAcc = 0;
+    this.endedByServer = false;
+    this.netBallTarget = null;
+    if (cfg.boostMode === 'unlimited') this.world.unlimitedBoost = true;
+    if (cfg.boostMode === 'recharge') this.world.boostRecharge = true;
+    if (cfg.mutator === 'lowgrav') PHYS.g = 3.9;
+    else PHYS.g = 6.5;
+    if (cfg.mutator === 'fastball') PHYS.ballMax = 78;
+    else PHYS.ballMax = 60;
+    super.start();
+  }
+  end() {
+    PHYS.g = 6.5;
+    PHYS.ballMax = 60;
+    super.end();
+  }
+  beginKickoff() {
+    super.beginKickoff();
+    if (this.isHost && this.game.online) this.game.online.sendKickoff();
+  }
+  preUpdate(dt) {
+    const g = this.game, w = this.world;
+    if (this.isHost) {
+      super.preUpdate(dt);
+    } else {
+      ModeBase.prototype.preUpdate.call(this, dt);
+      if (this.state === 'countdown') {
+        const left = 3.0 - this.stateT; const n = Math.ceil(left);
+        if (n !== this.cdLast && n > 0) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
+        if (left <= 0) { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
+      } else if (this.state === 'goal') {
+        if (this.stateT < 1.3) this.timeScale = lerp(0.22, 1, sstep(0.5, 1.3, this.stateT)); else this.timeScale = 1;
+      }
+      if (this.netBallTarget && this.state === 'play' && !w.frozen) {
+        const bt = this.netBallTarget;
+        if (w.ball.pos.distanceToSquared(bt.pos) > 16) w.ball.pos.copy(bt.pos);
+        else w.ball.pos.lerp(bt.pos, Math.min(1, dt * 16));
+        w.ball.vel.lerp(bt.vel, Math.min(1, dt * 16));
+        w.ball.quat.slerp(bt.quat, Math.min(1, dt * 16));
+        w.ball.angVel.lerp(bt.angVel, Math.min(1, dt * 16));
+      }
+    }
+    // Send local player state at 25Hz
+    this.netAcc += dt;
+    if (this.netAcc >= 0.04) {
+      this.netAcc = 0;
+      if (g.player && g.online) g.online.sendPlayerState(g.player);
+    }
+    // Host sends authoritative ball + bots + clock at 25Hz
+    if (this.isHost) {
+      this.ballNetAcc += dt;
+      if (this.ballNetAcc >= 0.04) {
+        this.ballNetAcc = 0;
+        if (g.online) g.online.sendBallState(w, this);
+      }
+    }
+  }
+  postStep() {
+    if (!this.isHost) return;
+    super.postStep();
+  }
+  onGoal(goalTeam) {
+    if (!this.isHost) return;
+    const w = this.world;
+    const pos = w.ball.pos.clone();
+    const speed = Math.round(w.ball.vel.length() * 3.6);
+    const scoringTeam = 1 - goalTeam;
+    const hist = w.ball.touchHistory; let scorer = null, assist = null;
+    for (let i = hist.length - 1; i >= 0; i--) { const h = hist[i]; if (h.car.team === scoringTeam && w.time - h.time < 8) { scorer = h.car; for (let j = i - 1; j >= 0; j--) { const a = hist[j]; if (a.car !== scorer && a.car.team === scoringTeam && h.time - a.time < 5) { assist = a.car; break; } if (a.car.team !== scoringTeam) break; } break; } }
+    const own = w.ball.lastTouch && w.ball.lastTouch.team === goalTeam;
+    const exp = scorer ? (scorer === this.game.player ? Settings.data.car.explosion : scorer.explosion || 0) : 0;
+    super.onGoal(goalTeam);
+    if (this.game.online) {
+      this.game.online.sendGoal({
+        goalTeam,
+        pos: [pos.x, pos.y, pos.z],
+        speed,
+        scorerName: scorer ? scorer.name : '',
+        assistName: assist ? assist.name : '',
+        own,
+        explosion: exp
+      });
+    }
+  }
+  applyRemoteGoal(msg) {
+    const g = this.game, w = this.world;
+    this.score = msg.score.slice();
+    const pos = new V3(msg.pos[0], msg.pos[1], msg.pos[2]);
+    g.fx.goalExplosion(pos, msg.scoringTeam, msg.explosion || 0, new V3(0, 0, msg.goalTeam === 0 ? 1 : -1));
+    g.audio.goal(); g.camera.addShake(0.9); g.ui.flash(0.6); g.vibrate(0.9, 600);
+    w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0); g.ballVisual.mesh.visible = false;
+    this.replayGoalZ = pos.z;
+    this.setState('goal'); w.kickoff = false;
+    g.ui.updateScore(this.score, msg.scoringTeam);
+    g.ui.goalBanner(msg.scoringTeam, msg.scorerName || (msg.own ? 'OWN GOAL' : ''), `${msg.speed} KM/H${msg.assistName ? ' · ASSIST ' + msg.assistName : ''}`);
+    g.ui.feed(`${msg.scorerName || (msg.scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED`, msg.scoringTeam);
+    g.arenaExcite = 1.0;
+  }
+  startReplay() {
+    // Skip replays in multiplayer so all clients stay tightly synced on kickoffs
+    this.beginKickoff();
+  }
+  finish() {
+    if (this.endedByServer) return;
+    this.setState('ended'); this.world.frozen = true;
+    if (this.isHost && this.game.online) {
+      const stats = {};
+      for (const c of this.world.cars) {
+        if (c.netUserId) stats[c.netUserId] = { goals: c.stats.goals, assists: c.stats.assists, saves: c.stats.saves, shots: c.stats.shots, demos: c.stats.demos };
+      }
+      this.game.online.sendMatchEnd(this.score, stats);
+    }
+  }
+}
+
 class FreePlayMode extends ModeBase {
   start() {
     const g = this.game, w = this.world;
+    g.ui.clearHudFX();
     w.unlimitedBoost = !!this.cfg.unlimitedBoost; this.resetAll(); this.setState('play'); w.frozen = false; w.kickoff = false;
     g.ui.showHud(true); g.camera.mode = 'car'; g.camera.snap(); this.lastHit = 0;
   }
@@ -5155,9 +5426,388 @@ class Tournament {
   }
 }
 
+// ===== 11b_online.js — Auth, Progression, Squads, Multiplayer Lobbies =====
+class OnlineManager {
+  constructor(game) {
+    this.g = game;
+    this.token = localStorage.getItem('hyperstrike.token') || '';
+    this.user = null;
+    this.ws = null;
+    this.connected = false;
+    this.region = '';
+    this.onlineCount = 0;
+    this.squad = null;
+    this.lobby = null;
+    this.publicLobbies = [];
+    this.chatLog = [];
+    this.leaderboard = [];
+    this.lbSort = 'rp';
+    this._reconnectTimer = null;
+    this.serverUrl = this._defaultServerUrl();
+  }
+  _defaultServerUrl() {
+    const saved = localStorage.getItem('hyperstrike.serverUrl');
+    if (saved) return saved.replace(/\/+$/, '');
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      if (location.hostname.endsWith('github.io') || location.hostname === 'hyperstrike.dill.moe') {
+        return 'https://hyperstrike-ord.fly.dev';
+      }
+      return location.origin;
+    }
+    return 'http://localhost:8080';
+  }
+  setServerUrl(url) {
+    const clean = (url || '').trim().replace(/\/+$/, '');
+    if (!clean) return;
+    this.serverUrl = clean;
+    localStorage.setItem('hyperstrike.serverUrl', clean);
+  }
+  wsUrl() {
+    return this.serverUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+  }
+  async api(path, opts = {}) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    if (this.token) headers.Authorization = 'Bearer ' + this.token;
+    const res = await fetch(this.serverUrl + path, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+  async register(username, password, confirmPassword) {
+    const data = await this.api('/api/register', { method: 'POST', body: { username, password, confirmPassword } });
+    this._onAuthed(data.token, data.user);
+    return data.user;
+  }
+  async login(username, password) {
+    const data = await this.api('/api/login', { method: 'POST', body: { username, password } });
+    this._onAuthed(data.token, data.user);
+    return data.user;
+  }
+  async restoreSession() {
+    if (!this.token) return null;
+    try {
+      const data = await this.api('/api/me');
+      this._onAuthed(this.token, data.user);
+      if (data.server) { this.region = data.server.region || ''; this.onlineCount = data.server.online || 0; }
+      return data.user;
+    } catch (_) {
+      this.token = '';
+      localStorage.removeItem('hyperstrike.token');
+      return null;
+    }
+  }
+  async logout() {
+    try { if (this.token) await this.api('/api/logout', { method: 'POST' }); } catch (_) {}
+    this.token = '';
+    this.user = null;
+    this.squad = null;
+    this.lobby = null;
+    this.chatLog = [];
+    localStorage.removeItem('hyperstrike.token');
+    clearTimeout(this._reconnectTimer);
+    if (this.ws) { try { this.ws.close(); } catch (_) {} this.ws = null; }
+    this.connected = false;
+    this.g.ui.updateProfileCard();
+    if (this.g.inGame) this.g.exitToMenu();
+    this.g.ui.hideMenu();
+    this.g.ui.showAuthGate();
+  }
+  _onAuthed(token, user) {
+    this.token = token;
+    this.user = user;
+    localStorage.setItem('hyperstrike.token', token);
+    Settings.data.playerName = user.username.toUpperCase().slice(0, 14);
+    if (user.car) Settings.data.car = Object.assign({}, Settings.data.car, user.car);
+    Settings.save();
+    this.connectWs();
+    this.g.ui.updateProfileCard();
+  }
+  saveCar(car) {
+    if (!this.token) return;
+    this.api('/api/car', { method: 'POST', body: { car } }).catch(() => {});
+  }
+  async reportSoloMatch(payload) {
+    if (!this.token) return null;
+    const res = await this.api('/api/match/report', { method: 'POST', body: payload });
+    if (res && res.user) {
+      this.user = res.user;
+      this.g.ui.updateProfileCard();
+    }
+    return res;
+  }
+  async fetchLeaderboard(sort = 'rp') {
+    this.lbSort = sort;
+    const res = await this.api('/api/leaderboard?sort=' + encodeURIComponent(sort));
+    this.leaderboard = res.leaderboard || [];
+    return this.leaderboard;
+  }
+  connectWs() {
+    clearTimeout(this._reconnectTimer);
+    if (!this.token) return;
+    if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
+    let ws;
+    try { ws = new WebSocket(this.wsUrl()); } catch (_) { return; }
+    this.ws = ws;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'auth', token: this.token }));
+    };
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      this.onWsMessage(msg);
+    };
+    ws.onclose = () => {
+      this.connected = false;
+      this.g.ui.updateProfileCard();
+      if (this.token) {
+        this._reconnectTimer = setTimeout(() => this.connectWs(), 3000);
+      }
+    };
+    ws.onerror = () => {};
+  }
+  wsSend(obj) {
+    if (this.ws && this.ws.readyState === 1) {
+      this.ws.send(JSON.stringify(obj));
+      return true;
+    }
+    return false;
+  }
+  onWsMessage(msg) {
+    const g = this.g, ui = g.ui;
+    switch (msg.type) {
+      case 'auth_ok':
+        this.connected = true;
+        if (msg.user) this.user = msg.user;
+        this.region = msg.region || '';
+        this.onlineCount = msg.online || 1;
+        ui.updateProfileCard();
+        this.listLobbies();
+        break;
+      case 'auth_error':
+        this.logout();
+        break;
+      case 'error':
+        ui.toast(msg.text || 'SERVER ERROR');
+        break;
+      case 'toast':
+        ui.toast(msg.text || '');
+        break;
+      case 'kicked':
+        ui.toast(msg.reason || 'DISCONNECTED');
+        this.logout();
+        break;
+      case 'squad_update':
+        this.squad = msg.squad || null;
+        ui.updateProfileCard();
+        if (!g.inGame && ui.menuScreen === 'multiplayer') ui.renderPanel();
+        break;
+      case 'lobby_list':
+        this.publicLobbies = msg.lobbies || [];
+        if (msg.online !== undefined) this.onlineCount = msg.online;
+        ui.updateProfileCard();
+        if (!g.inGame && ui.menuScreen === 'multiplayer' && !this.lobby) ui.renderPanel();
+        break;
+      case 'lobby_joined':
+        this.lobby = msg.lobby;
+        this.chatLog = [{ system: true, text: `Joined lobby ${msg.lobby.code}. Share this code with friends!` }];
+        if (!g.inGame) { ui.menuScreen = 'multiplayer'; ui.showMenu('multiplayer'); }
+        break;
+      case 'lobby_update':
+        this.lobby = msg.lobby;
+        if (!g.inGame && ui.menuScreen === 'multiplayer') ui.renderPanel();
+        break;
+      case 'lobby_left':
+        this.lobby = null;
+        this.chatLog = [];
+        if (g.inGame && g.mode instanceof OnlineMatchMode) g.exitToMenu();
+        else if (!g.inGame && ui.menuScreen === 'multiplayer') { this.listLobbies(); ui.renderPanel(); }
+        break;
+      case 'lobby_chat':
+        this.chatLog.push({ from: msg.from, text: msg.text, system: !!msg.system });
+        if (this.chatLog.length > 40) this.chatLog.shift();
+        if (!g.inGame && ui.menuScreen === 'multiplayer') ui.updateLobbyChat();
+        else if (g.inGame) ui.feed(msg.system ? msg.text : `${msg.from}: ${msg.text}`, -1);
+        break;
+      case 'match_start':
+        this.lobby = msg.lobby;
+        g.startOnlineMatch(msg);
+        break;
+      case 'p_state':
+        if (g.mode instanceof OnlineMatchMode && g.world) {
+          const car = g.world.cars.find(c => c.netUserId === msg.uid && c.isRemote);
+          if (car) {
+            if (!car.netTarget) car.netTarget = { pos: new V3(), vel: new V3(), quat: new QT(), boost: 33, isBoosting: false, supersonic: false, sliding: 0, demolished: false, item: null };
+            car.netTarget.pos.set(msg.p[0], msg.p[1], msg.p[2]);
+            car.netTarget.vel.set(msg.v[0], msg.v[1], msg.v[2]);
+            car.netTarget.quat.set(msg.q[0], msg.q[1], msg.q[2], msg.q[3]);
+            car.netTarget.boost = msg.b;
+            car.netTarget.isBoosting = !!msg.bs;
+            car.netTarget.supersonic = !!msg.ss;
+            car.netTarget.sliding = msg.sl || 0;
+            car.netTarget.demolished = !!msg.d;
+            car.netTarget.item = msg.it || null;
+          }
+        }
+        break;
+      case 'b_state':
+        if (g.mode instanceof OnlineMatchMode && !g.mode.isHost && g.world) {
+          if (!g.mode.netBallTarget) g.mode.netBallTarget = { pos: new V3(), vel: new V3(), quat: new QT(), angVel: new V3() };
+          g.mode.netBallTarget.pos.set(msg.p[0], msg.p[1], msg.p[2]);
+          g.mode.netBallTarget.vel.set(msg.v[0], msg.v[1], msg.v[2]);
+          g.mode.netBallTarget.quat.set(msg.q[0], msg.q[1], msg.q[2], msg.q[3]);
+          g.mode.netBallTarget.angVel.set(msg.av[0], msg.av[1], msg.av[2]);
+          g.mode.timeLeft = msg.tl;
+          g.mode.overtime = !!msg.ot;
+          g.mode.otTime = msg.ott || 0;
+          if (Array.isArray(msg.sc)) {
+            g.mode.score[0] = msg.sc[0]; g.mode.score[1] = msg.sc[1];
+            ui.updateScore(g.mode.score);
+          }
+          if (Array.isArray(msg.bots)) {
+            for (const b of msg.bots) {
+              const car = g.world.cars.find(c => c.netBotId === b.id);
+              if (car) {
+                if (!car.netTarget) car.netTarget = { pos: new V3(), vel: new V3(), quat: new QT(), boost: 33, isBoosting: false, supersonic: false, sliding: 0, demolished: false, item: null };
+                car.netTarget.pos.set(b.p[0], b.p[1], b.p[2]);
+                car.netTarget.vel.set(b.v[0], b.v[1], b.v[2]);
+                car.netTarget.quat.set(b.q[0], b.q[1], b.q[2], b.q[3]);
+                car.netTarget.boost = b.b;
+                car.netTarget.isBoosting = !!b.bs;
+                car.netTarget.supersonic = !!b.ss;
+                car.netTarget.demolished = !!b.d;
+              }
+            }
+          }
+        }
+        break;
+      case 'match_kickoff':
+        if (g.mode instanceof OnlineMatchMode && !g.mode.isHost) {
+          g.mode.beginKickoff();
+        }
+        break;
+      case 'match_goal_ack':
+        if (g.mode instanceof OnlineMatchMode && !g.mode.isHost) {
+          g.mode.applyRemoteGoal(msg);
+        }
+        break;
+      case 'host_migrated':
+        if (this.lobby) this.lobby.hostId = msg.hostId;
+        if (g.mode instanceof OnlineMatchMode) {
+          g.mode.isHost = (this.user && msg.hostId === this.user.id);
+          if (g.mode.isHost) {
+            // Take over bot AI locally
+            for (const c of g.world.cars) {
+              if (c.netBotId && !c.bot) { c.isRemote = false; c.bot = new BotAI(c, g.mode.cfg.botDiff || 1, randi(0, PERSONALITIES.length - 1)); }
+            }
+          }
+          ui.toast(`NEW HOST: ${msg.hostName}`);
+        }
+        break;
+      case 'player_left_match':
+        ui.feed(`${msg.username} LEFT THE MATCH`, -1);
+        break;
+      case 'anticheat_warn':
+        ui.toast(msg.reason || 'ANTI-CHEAT WARNING');
+        ui.popup('ANTI-CHEAT WARNING', '#ff5b5b');
+        break;
+      case 'anticheat_kick':
+        this.lobby = null;
+        if (g.inGame) g.exitToMenu();
+        ui.toast(msg.reason || 'REMOVED BY ANTI-CHEAT');
+        break;
+      case 'match_finished':
+        this.lobby = msg.lobby || this.lobby;
+        if (g.mode instanceof OnlineMatchMode) {
+          g.mode.endedByServer = true;
+          g.mode.score = msg.score || g.mode.score;
+          g.mode.setState('ended');
+          g.world.frozen = true;
+          const myReward = this.user && msg.rewards ? msg.rewards[this.user.id] : null;
+          if (myReward && myReward.user) {
+            this.user = myReward.user;
+            ui.updateProfileCard();
+          }
+          ui.showResults(g.mode, true);
+          if (myReward) ui.showXpReward(myReward);
+        }
+        break;
+    }
+  }
+  // Squad & Lobby commands
+  createSquad() { this.wsSend({ type: 'squad_create' }); }
+  joinSquad(code) { this.wsSend({ type: 'squad_join', code }); }
+  leaveSquad() { this.wsSend({ type: 'squad_leave' }); }
+  kickSquad(userId) { this.wsSend({ type: 'squad_kick', userId }); }
+  listLobbies() { this.wsSend({ type: 'lobby_list' }); }
+  createLobby(settings) { this.wsSend({ type: 'lobby_create', settings }); }
+  joinLobby(code) { this.wsSend({ type: 'lobby_join', code }); }
+  leaveLobby() { this.wsSend({ type: 'lobby_leave' }); }
+  updateLobbySettings(settings) { this.wsSend({ type: 'lobby_settings', settings }); }
+  switchTeam(team) { this.wsSend({ type: 'lobby_team', team }); }
+  toggleReady() { this.wsSend({ type: 'lobby_ready' }); }
+  kickLobby(userId) { this.wsSend({ type: 'lobby_kick', userId }); }
+  sendChat(text) { this.wsSend({ type: 'lobby_chat', text }); }
+  startLobbyMatch() { this.wsSend({ type: 'lobby_start' }); }
+  // Match sync
+  sendPlayerState(car) {
+    this.wsSend({
+      type: 'p_state',
+      p: [+(car.pos.x.toFixed(3)), +(car.pos.y.toFixed(3)), +(car.pos.z.toFixed(3))],
+      v: [+(car.vel.x.toFixed(3)), +(car.vel.y.toFixed(3)), +(car.vel.z.toFixed(3))],
+      q: [+(car.quat.x.toFixed(4)), +(car.quat.y.toFixed(4)), +(car.quat.z.toFixed(4)), +(car.quat.w.toFixed(4))],
+      b: +(car.boost.toFixed(1)),
+      bs: !!car.isBoosting,
+      ss: !!car.supersonic,
+      sl: car.sliding > 0.5 ? 1 : 0,
+      d: !!car.demolished,
+      it: car.item || null
+    });
+  }
+  sendBallState(w, mode) {
+    const b = w.ball;
+    const bots = [];
+    for (const c of w.cars) {
+      if (c.netBotId) {
+        bots.push({
+          id: c.netBotId,
+          p: [+(c.pos.x.toFixed(3)), +(c.pos.y.toFixed(3)), +(c.pos.z.toFixed(3))],
+          v: [+(c.vel.x.toFixed(3)), +(c.vel.y.toFixed(3)), +(c.vel.z.toFixed(3))],
+          q: [+(c.quat.x.toFixed(4)), +(c.quat.y.toFixed(4)), +(c.quat.z.toFixed(4)), +(c.quat.w.toFixed(4))],
+          b: Math.round(c.boost),
+          bs: !!c.isBoosting,
+          ss: !!c.supersonic,
+          d: !!c.demolished
+        });
+      }
+    }
+    this.wsSend({
+      type: 'b_state',
+      p: [+(b.pos.x.toFixed(3)), +(b.pos.y.toFixed(3)), +(b.pos.z.toFixed(3))],
+      v: [+(b.vel.x.toFixed(3)), +(b.vel.y.toFixed(3)), +(b.vel.z.toFixed(3))],
+      q: [+(b.quat.x.toFixed(4)), +(b.quat.y.toFixed(4)), +(b.quat.z.toFixed(4)), +(b.quat.w.toFixed(4))],
+      av: [+(b.angVel.x.toFixed(3)), +(b.angVel.y.toFixed(3)), +(b.angVel.z.toFixed(3))],
+      st: mode.state,
+      tl: +(mode.timeLeft.toFixed(2)),
+      ot: !!mode.overtime,
+      ott: +(mode.otTime.toFixed(2)),
+      sc: mode.score,
+      bots
+    });
+  }
+  sendKickoff() { this.wsSend({ type: 'match_kickoff' }); }
+  sendGoal(data) { this.wsSend(Object.assign({ type: 'match_goal' }, data)); }
+  sendMatchEnd(score, stats) { this.wsSend({ type: 'match_end', score, stats }); }
+}
+
 // ===== 12_ui.js =====
 const ICONS = {
   play: '<path d="M7 4l13 8-13 8z" fill="currentColor"/>',
+  mp: '<circle cx="9" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="9" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M17 13.5c2.6.4 5 2 5 5.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  rank: '<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21 7 14.2 2 9.3l6.9-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   trophy: '<path d="M7 3h10v4a5 5 0 01-10 0zM5 4H2v2a4 4 0 004 4M19 4h3v2a4 4 0 01-4 4M12 12v5M8 21h8M9 17h6" fill="none" stroke="currentColor" stroke-width="2"/>',
   ball: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7l4 3-1.5 5h-5L8 10z" fill="currentColor"/>',
   target: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>',
@@ -5188,11 +5838,95 @@ class UIManager {
     this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 0, arena: 0, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
     if (!ARENAS[this.setup.arena]) this.setup.arena = 0; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
     this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
+    this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
     $('boostTicks').innerHTML = t;
+    // Automatically clear HUD animation classes when animations end so hiding/showing HUD never replays stale banners
+    const gb = $('goalBanner'); if (gb) gb.addEventListener('animationend', () => gb.classList.remove('show'));
+    const cd = $('countdown'); if (cd) cd.addEventListener('animationend', () => cd.classList.remove('anim'));
+    const pop = $('popup'); if (pop) pop.addEventListener('animationend', () => pop.classList.remove('show'));
+    this.initAuthGate();
     document.addEventListener('mouseover', e => { const b = e.target.closest('button,.card,.sw'); if (b && b !== this._hov) { this._hov = b; this.g.audio.ui('hover'); } });
     Events.on('pad', (on) => { if (on) this.toast('CONTROLLER CONNECTED'); });
     addEventListener('pointerdown', () => document.body.classList.remove('gp-nav'));
+  }
+  esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+  initAuthGate() {
+    const tabLogin = $('authTabLogin'), tabReg = $('authTabReg'), form = $('authForm');
+    const cWrap = $('authConfirmWrap'), pass2 = $('authPass2'), pass1 = $('authPass');
+    const errEl = $('authErr'), subTxt = $('authSubmitTxt'), srvIn = $('authServerUrl');
+    const setMode = (m) => {
+      this.authMode = m;
+      tabLogin.classList.toggle('on', m === 'login');
+      tabReg.classList.toggle('on', m === 'register');
+      cWrap.classList.toggle('hidden', m !== 'register');
+      pass2.required = (m === 'register');
+      pass1.autocomplete = m === 'register' ? 'new-password' : 'current-password';
+      subTxt.textContent = m === 'register' ? 'Create Account' : 'Sign In';
+      errEl.textContent = '';
+    };
+    tabLogin.onclick = () => setMode('login');
+    tabReg.onclick = () => setMode('register');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      errEl.textContent = '';
+      const srv = srvIn.value.trim();
+      if (srv && this.g.online) this.g.online.setServerUrl(srv);
+      const u = $('authUser').value.trim();
+      const p = pass1.value;
+      const p2 = pass2.value;
+      if (this.authMode === 'register' && p !== p2) {
+        errEl.textContent = 'Passwords do not match.';
+        return;
+      }
+      const btn = $('authSubmit');
+      btn.disabled = true;
+      subTxt.textContent = this.authMode === 'register' ? 'Creating...' : 'Signing In...';
+      try {
+        if (this.authMode === 'register') await this.g.online.register(u, p, p2);
+        else await this.g.online.login(u, p);
+        pass1.value = ''; pass2.value = '';
+        this.hideAuthGate();
+        this.showMenu('play');
+      } catch (err) {
+        errEl.textContent = err.message || 'Authentication failed.';
+      } finally {
+        btn.disabled = false;
+        subTxt.textContent = this.authMode === 'register' ? 'Create Account' : 'Sign In';
+      }
+    };
+  }
+  showAuthGate() {
+    const srvIn = $('authServerUrl');
+    if (srvIn && this.g.online) srvIn.value = this.g.online.serverUrl;
+    $('authErr').textContent = '';
+    $('authGate').classList.remove('hidden');
+    setTimeout(() => { const u = $('authUser'); if (u) u.focus(); }, 50);
+  }
+  hideAuthGate() { $('authGate').classList.add('hidden'); }
+  updateProfileCard() {
+    const el = $('profileCard');
+    if (!el) return;
+    const on = this.g.online, u = on && on.user;
+    if (!u) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    const r = u.rank || { name: 'BRONZE I', color: '#cd7f32', rp: 0 };
+    const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
+    const sqTag = on.squad ? `<span style="color:var(--gold)">SQUAD ${this.esc(on.squad.code)} (${on.squad.members.length})</span>` : `<span>${on.onlineCount || 1} ONLINE${on.region ? ' · ' + on.region.toUpperCase() : ''}</span>`;
+    el.innerHTML = `
+      <div class="pc-top"><span class="pc-name">${this.esc(u.username)}</span><span class="pc-lvl">LVL ${u.level}</span></div>
+      <div class="pc-rank"><span style="color:${r.color}">${this.esc(r.name)}</span><span style="color:var(--ink2)">${u.rp} RP</span></div>
+      <div class="pc-xpbar"><i style="width:${pct}%"></i></div>
+      <div class="pc-xptxt"><span>${u.xp.toLocaleString()} / ${u.xpNext.toLocaleString()} XP</span><span>${pct}%</span></div>
+      <div class="pc-foot"><span><i class="pc-dot ${on.connected ? '' : 'off'}"></i>${sqTag}</span><button class="pc-out" id="btnSignOut">SIGN OUT</button></div>`;
+    const so = $('btnSignOut');
+    if (so) so.onclick = () => { this.g.audio.ui('click'); this.g.online.logout(); };
+  }
+  clearHudFX() {
+    const gb = $('goalBanner'); if (gb) { gb.className = ''; $('gbMeta').textContent = ''; }
+    const cd = $('countdown'); if (cd) { cd.className = ''; cd.textContent = ''; }
+    const pop = $('popup'); if (pop) { pop.className = ''; pop.textContent = ''; }
+    const fd = $('feed'); if (fd) fd.innerHTML = '';
   }
   toggleMute() {
     Settings.set('muted', !Settings.data.muted);
@@ -5205,11 +5939,15 @@ class UIManager {
     b.addEventListener('click', go); addEventListener('keydown', go);
   }
   showMenu(screen) {
+    if (!this.g.online || !this.g.online.user) { this.showAuthGate(); return; }
     if (screen) this.menuScreen = screen;
     $('menu').classList.remove('hidden'); this.showHud(false); this.hideOverlay();
-    const items = [['play', 'PLAY MATCH', 'play'], ['tournament', 'TOURNAMENT', 'trophy'], ['freeplay', 'FREE PLAY', 'ball'], ['training', 'TRAINING', 'target'], ['garage', 'GARAGE', 'car'], ['settings', 'SETTINGS', 'gear'], ['controls', 'CONTROLS', 'pad']];
+    this.updateProfileCard();
+    const items = [['multiplayer', 'MULTIPLAYER', 'mp'], ['play', 'PLAY MATCH', 'play'], ['ranks', 'RANKS & XP', 'rank'], ['tournament', 'TOURNAMENT', 'trophy'], ['freeplay', 'FREE PLAY', 'ball'], ['training', 'TRAINING', 'target'], ['garage', 'GARAGE', 'car'], ['settings', 'SETTINGS', 'gear'], ['controls', 'CONTROLS', 'pad']];
     $('mainNav').innerHTML = items.map(([k, l, i]) => `<button class="navbtn ${this.menuScreen === k ? 'active' : ''}" data-nav="${k}">${ico(i)}<span>${l}</span></button>`).join('');
     $('mainNav').querySelectorAll('[data-nav]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.showMenu(b.dataset.nav); });
+    if (this.menuScreen === 'multiplayer' && !this.g.online.lobby) this.g.online.listLobbies();
+    if (this.menuScreen === 'ranks') this.g.online.fetchLeaderboard(this.g.online.lbSort).then(() => { if (this.menuScreen === 'ranks') this.renderPanel(); }).catch(() => {});
     this.renderPanel();
     if (this.g.input && this.g.input.usingPad) { const act = $('mainNav').querySelector('.navbtn.active'); act && this.focusEl(act); }
     this.g.onMenuScreen(this.menuScreen);
@@ -5264,6 +6002,8 @@ class UIManager {
           <div class="sect">Layout</div>${this.layoutSeg()}
           <div class="sect">Choose a drill</div>` +
           DRILLS.map((d, i) => `<button class="drill" data-drill="${i}">${ico(d.icon, 'ic')}<div><b>${d.name}</b><span>${d.desc}</span></div><div class="best">BEST<em>${Settings.data.best[d.id] || 0}</em></div></button>`).join(''); break;
+      case 'multiplayer': h = this.multiplayerHtml(); P.classList.add('wide'); break;
+      case 'ranks': h = this.ranksHtml(); P.classList.add('wide'); break;
       case 'garage': h = this.garageHtml(); P.classList.add('wide'); break;
       case 'settings': h = this.settingsHtml(); break;
       case 'controls': h = this.controlsHtml(); P.classList.add('wide'); break;
@@ -5275,9 +6015,235 @@ class UIManager {
     on('goTourney', () => this.g.startTournament({ teamSize: s.tsize, difficulty: s.tdiff, mode: s.tmode }));
     on('goFree', () => this.g.startFreePlay({ arena: s.arena, unlimitedBoost: s.unlimited, layout: s.layout }));
     P.querySelectorAll('[data-drill]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.startTraining({ drill: +b.dataset.drill, arena: s.arena, layout: s.layout }); });
+    if (this.menuScreen === 'multiplayer') this.bindMultiplayer();
+    if (this.menuScreen === 'ranks') this.bindRanks();
     if (this.menuScreen === 'garage') this.bindGarage();
     if (this.menuScreen === 'settings') this.bindSettings();
     if (refocusSel && document.body.classList.contains('gp-nav')) { const el = P.querySelector(refocusSel); el && this.focusEl(el); }
+  }
+  multiplayerHtml() {
+    const on = this.g.online, me = on.user, sq = on.squad, lb = on.lobby;
+    let h = `<div class="ph"><h2>Multiplayer</h2><span>${on.connected ? `${on.onlineCount || 1} online · anti-cheat active` : 'connecting...'}</span></div>`;
+    // SQUAD BAR
+    h += `<div class="mp-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:12px;letter-spacing:.16em;color:var(--gold)">SQUAD PARTY</b>
+      <span style="font-size:11px;color:var(--ink2)">Squad members auto-join lobbies together</span></div>`;
+    if (!sq) {
+      h += `<div class="mp-row">
+        <button class="mp-btn alt" id="btnSqCreate">Create Squad</button>
+        <input class="mp-in" id="inSqCode" maxlength="8" placeholder="SQUAD CODE (e.g. SQ4K9P)">
+        <button class="mp-btn" id="btnSqJoin">Join Squad</button>
+      </div>`;
+    } else {
+      const amLeader = me && sq.leaderId === me.id;
+      h += `<div class="mp-row" style="justify-content:space-between;margin-bottom:8px">
+        <div class="mp-code" id="copySqCode" title="Click to copy">${this.esc(sq.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
+        <button class="mp-btn danger" id="btnSqLeave">Leave Squad</button>
+      </div><div>` + sq.members.map(m => `
+        <div class="mp-pl ${me && m.id === me.id ? 'me' : ''}">
+          <span>${m.isLeader ? '★ ' : ''}<b>${this.esc(m.username)}</b> <small style="color:${m.rankColor}">${this.esc(m.rank)}</small> <small style="color:var(--ink2)">LVL ${m.level}</small></span>
+          ${amLeader && me && m.id !== me.id ? `<button class="mp-btn danger" style="padding:3px 7px;font-size:10px" data-sqkick="${m.id}">KICK</button>` : `<span style="font-size:10px;color:${m.online ? '#4dff88' : '#ff6b7a'}">${m.online ? 'ONLINE' : 'OFFLINE'}</span>`}
+        </div>`).join('') + `</div>`;
+    }
+    h += `</div>`;
+
+    if (!lb) {
+      // CREATE / JOIN LOBBY + PUBLIC BROWSER
+      h += `<div class="mp-box">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.16em;color:var(--accent);margin-bottom:10px">CREATE OR JOIN A LOBBY</div>
+        <div class="mp-row">
+          <button class="mp-btn" id="btnLbCreate">+ Create Lobby</button>
+          <input class="mp-in" id="inLbCode" maxlength="8" placeholder="ENTER 6-CHAR LOBBY CODE">
+          <button class="mp-btn alt" id="btnLbJoin">Join Code</button>
+          <button class="mp-btn ghost" id="btnLbRefresh">Refresh</button>
+        </div>
+      </div>`;
+      h += `<div class="sect">Public Lobbies (${on.publicLobbies.length})</div>`;
+      if (!on.publicLobbies.length) {
+        h += `<div class="desc">No public lobbies open right now. Create one and share the lobby code!</div>`;
+      } else {
+        h += on.publicLobbies.map(l => `
+          <div class="mp-list-item">
+            <div>
+              <b>${this.esc(l.name)}</b> <span class="mp-pill">${this.esc(l.code)}</span>
+              ${l.ranked ? '<span class="mp-pill ranked">RANKED</span>' : '<span class="mp-pill">CASUAL</span>'}
+              <div style="font-size:11px;color:var(--ink2);margin-top:3px">Host: ${this.esc(l.host)} · ${l.teamSize}v${l.teamSize} · ${l.mode.toUpperCase()} · ${ARENAS[l.arena] ? ARENAS[l.arena].name : 'Arena'} · ${l.players}/${l.maxPlayers} players</div>
+            </div>
+            <button class="mp-btn" data-joinlb="${this.esc(l.code)}" ${l.status === 'in_match' ? 'disabled' : ''}>${l.status === 'in_match' ? 'IN GAME' : 'JOIN'}</button>
+          </div>`).join('');
+      }
+      return h;
+    }
+
+    // INSIDE A LOBBY
+    const amHost = me && lb.hostId === me.id;
+    const S = lb.settings;
+    const myP = lb.players.find(p => me && p.id === me.id);
+    const renderTeam = (teamNum, cls, title) => {
+      const list = lb.players.filter(p => p.team === teamNum);
+      return `<div class="mp-team ${cls}">
+        <h4><span>${title} (${list.length}/${S.teamSize})</span>
+          <button class="mp-btn ghost" style="padding:3px 8px;font-size:10px" data-lbt="${teamNum}">JOIN</button></h4>
+        ${list.map(p => `<div class="mp-pl ${me && p.id === me.id ? 'me' : ''}">
+          <span>${p.isHost ? '★ ' : ''}<b>${this.esc(p.username)}</b> <small style="color:${p.rankColor}">${this.esc(p.rank)}</small> <small style="color:var(--ink2)">L${p.level}</small></span>
+          <span><span class="rdy ${p.ready ? 'ok' : 'no'}">${p.ready ? 'READY' : 'WAIT'}</span>
+          ${amHost && me && p.id !== me.id ? `<button class="mp-btn danger" style="padding:2px 6px;font-size:9px;margin-left:4px" data-lbkick="${p.id}">X</button>` : ''}</span>
+        </div>`).join('') || '<div style="font-size:11px;color:var(--ink2);padding:6px">Empty slot' + (S.botFill ? ' (Bot fill)' : '') + '</div>'}
+      </div>`;
+    };
+    const specs = lb.players.filter(p => p.team === -1);
+    const lseg = (k, opts) => `<div class="seg">` + opts.map(([v, l]) =>
+      `<button class="${S[k] === v ? 'on' : ''}" ${amHost ? `data-lset="${k}" data-lval='${JSON.stringify(v)}'` : 'disabled'}><span>${l}</span></button>`).join('') + `</div>`;
+
+    h += `<div class="mp-box">
+      <div class="mp-row" style="justify-content:space-between;margin-bottom:10px">
+        <div class="mp-row">
+          <div class="mp-code" id="copyLbCode" title="Click to copy lobby code">${this.esc(lb.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
+          <span class="mp-pill ${S.isPublic ? 'pub' : ''}">${S.isPublic ? 'PUBLIC' : 'PRIVATE'}</span>
+          <span class="mp-pill ${S.ranked ? 'ranked' : ''}">${S.ranked ? 'RANKED' : 'CASUAL'}</span>
+        </div>
+        <button class="mp-btn danger" id="btnLbLeave">Leave Lobby</button>
+      </div>
+      <div class="mp-teams">${renderTeam(0, 'blue', 'BLUE TEAM')}${renderTeam(1, 'orange', 'ORANGE TEAM')}</div>
+      <div class="mp-row" style="justify-content:space-between;margin-top:6px">
+        <span style="font-size:11px;color:var(--ink2)">Spectators: ${specs.length ? specs.map(s => this.esc(s.username)).join(', ') : 'None'}</span>
+        <div class="mp-row">
+          <button class="mp-btn ghost" data-lbt="-1">Spectate</button>
+          <button class="mp-btn ${myP && myP.ready ? 'alt' : ''}" id="btnLbReady">${myP && myP.ready ? 'Unready' : 'Ready Up'}</button>
+          ${amHost ? `<button class="mp-btn" id="btnLbStart" style="background:var(--accent);color:#04101e">START MATCH</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+    // LOBBY SETTINGS
+    h += `<div class="mp-box">
+      <div style="font-size:12px;font-weight:800;letter-spacing:.16em;color:var(--accent);margin-bottom:6px">LOBBY SETTINGS ${amHost ? '(HOST)' : '(VIEW ONLY)'}</div>
+      <div class="sect">Visibility & Type</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('isPublic', [[true, 'Public'], [false, 'Private (Code)']])}</div>
+        <div style="flex:1">${lseg('ranked', [[false, 'Casual'], [true, 'Ranked (RP)']])}</div>
+      </div>
+      <div class="sect">Team Size</div>${lseg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [4, '4v4']])}
+      <div class="sect">Mode</div>${lseg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem']])}
+      <div class="sect">Arena</div>
+      <div class="seg">${ARENAS.map((a, i) => `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
+      <div class="sect">Layout</div>${lseg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()]))}
+      <div class="sect">Match Length</div>${lseg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
+      <div class="sect">Bot Fill & Difficulty</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('botFill', [[true, 'Bots On'], [false, 'Humans Only']])}</div>
+        <div style="flex:1">${lseg('botDiff', DIFFICULTY.map((d, i) => [i, d.name]))}</div>
+      </div>
+      ${!S.ranked ? `<div class="sect">Boost & Mutators (Casual)</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('boostMode', [['normal', 'Normal'], ['recharge', 'Recharge'], ['unlimited', 'Unlimited']])}</div>
+        <div style="flex:1">${lseg('mutator', [['normal', 'Standard'], ['lowgrav', 'Low Gravity'], ['fastball', 'Fast Ball']])}</div>
+      </div>` : '<div class="desc">Ranked lobbies enforce standard physics & normal boost for competitive integrity.</div>'}
+    </div>`;
+
+    // LOBBY CHAT
+    h += `<div class="mp-box">
+      <div style="font-size:11px;font-weight:800;letter-spacing:.16em;color:var(--ink2);margin-bottom:6px">LOBBY CHAT</div>
+      <div class="mp-chat" id="lbChatLog"></div>
+      <div class="mp-row">
+        <input class="mp-in" id="inLbChat" maxlength="160" style="text-transform:none;letter-spacing:.02em;font-weight:500" placeholder="Type message and press Enter...">
+        <button class="mp-btn" id="btnLbSend">Send</button>
+      </div>
+    </div>`;
+    return h;
+  }
+  updateLobbyChat() {
+    const el = $('lbChatLog');
+    if (!el) return;
+    el.innerHTML = this.g.online.chatLog.map(m => m.system
+      ? `<div class="sys">${this.esc(m.text)}</div>`
+      : `<div><b>${this.esc(m.from)}:</b> ${this.esc(m.text)}</div>`).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+  bindMultiplayer() {
+    const P = $('menuPanel'), on = this.g.online;
+    const click = (id, fn) => { const e = $(id); if (e) e.onclick = () => { this.g.audio.ui('click'); fn(); }; };
+    const copyTxt = (txt, label) => { try { navigator.clipboard.writeText(txt); } catch (_) {} this.toast(label + ' COPIED: ' + txt); };
+    click('btnSqCreate', () => on.createSquad());
+    click('btnSqJoin', () => { const v = $('inSqCode').value.trim(); if (v) on.joinSquad(v); });
+    click('btnSqLeave', () => on.leaveSquad());
+    click('copySqCode', () => on.squad && copyTxt(on.squad.code, 'SQUAD CODE'));
+    P.querySelectorAll('[data-sqkick]').forEach(b => b.onclick = () => on.kickSquad(b.dataset.sqkick));
+
+    click('btnLbCreate', () => on.createLobby({ arena: this.setup.arena, layout: this.setup.layout, teamSize: Math.min(4, this.setup.teamSize || 2), mode: this.setup.mode || 'standard', duration: this.setup.duration || 300 }));
+    click('btnLbJoin', () => { const v = $('inLbCode').value.trim(); if (v) on.joinLobby(v); });
+    click('btnLbRefresh', () => on.listLobbies());
+    P.querySelectorAll('[data-joinlb]').forEach(b => b.onclick = () => on.joinLobby(b.dataset.joinlb));
+
+    click('copyLbCode', () => on.lobby && copyTxt(on.lobby.code, 'LOBBY CODE'));
+    click('btnLbLeave', () => on.leaveLobby());
+    click('btnLbReady', () => on.toggleReady());
+    click('btnLbStart', () => on.startLobbyMatch());
+    P.querySelectorAll('[data-lbt]').forEach(b => b.onclick = () => on.switchTeam(+b.dataset.lbt));
+    P.querySelectorAll('[data-lbkick]').forEach(b => b.onclick = () => on.kickLobby(b.dataset.lbkick));
+    P.querySelectorAll('[data-lset]').forEach(b => b.onclick = () => {
+      const k = b.dataset.lset, v = JSON.parse(b.dataset.lval);
+      on.updateLobbySettings({ [k]: v });
+    });
+    const chatIn = $('inLbChat'), sendChat = () => { if (!chatIn) return; const t = chatIn.value.trim(); if (!t) return; on.sendChat(t); chatIn.value = ''; };
+    click('btnLbSend', sendChat);
+    if (chatIn) chatIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendChat(); } };
+    this.updateLobbyChat();
+  }
+  ranksHtml() {
+    const on = this.g.online, u = on.user;
+    if (!u) return '';
+    const r = u.rank || { name: 'BRONZE I', color: '#cd7f32', rp: 0, nextRp: 100, progress: 0 };
+    const st = u.stats || {};
+    const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
+    const rpct = Math.min(100, Math.round((r.progress || 0) * 100));
+    let h = `<div class="ph"><h2>Ranks & Progression</h2><span>infinite levels · competitive rp</span></div>
+      <div class="rank-hero">
+        <div>
+          <div style="font-size:11px;letter-spacing:.2em;color:var(--ink2)">CURRENT RANK</div>
+          <div class="rank-big" style="color:${r.color}">${this.esc(r.name)}</div>
+          <div style="font-size:12px;color:var(--ink2);margin-top:4px">${u.rp} RP · Peak ${u.peakRp || u.rp} RP · Next Tier at ${r.nextRp} RP</div>
+          <div class="pc-xpbar" style="width:240px;margin-top:8px"><i style="width:${rpct}%;background:${r.color}"></i></div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;letter-spacing:.2em;color:var(--ink2)">INFINITE LEVEL</div>
+          <div class="rank-big" style="color:var(--accent)">LEVEL ${u.level}</div>
+          <div style="font-size:12px;color:var(--ink2);margin-top:4px">${u.xp.toLocaleString()} / ${u.xpNext.toLocaleString()} XP (${pct}%)</div>
+          <div style="font-size:11px;color:var(--ink2);margin-top:2px">Total Career XP: ${(u.totalXp || 0).toLocaleString()}</div>
+        </div>
+      </div>
+      <div class="mp-box" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center">
+        <div><div style="font-size:20px;font-weight:900">${st.matches || 0}</div><div style="font-size:10px;color:var(--ink2);letter-spacing:.14em">MATCHES</div></div>
+        <div><div style="font-size:20px;font-weight:900;color:#4dff88">${st.wins || 0}</div><div style="font-size:10px;color:var(--ink2);letter-spacing:.14em">WINS</div></div>
+        <div><div style="font-size:20px;font-weight:900;color:var(--gold)">${st.goals || 0}</div><div style="font-size:10px;color:var(--ink2);letter-spacing:.14em">GOALS</div></div>
+        <div><div style="font-size:20px;font-weight:900;color:var(--accent)">${st.saves || 0}</div><div style="font-size:10px;color:var(--ink2);letter-spacing:.14em">SAVES</div></div>
+      </div>
+      <div class="mp-row" style="justify-content:space-between;margin:10px 0 4px">
+        <div class="sect" style="margin:0">Global Leaderboard</div>
+        <div class="mp-row">
+          <button class="mp-btn ${on.lbSort === 'rp' ? '' : 'ghost'}" data-lbsort="rp">By Rank</button>
+          <button class="mp-btn ${on.lbSort === 'level' ? '' : 'ghost'}" data-lbsort="level">By Level</button>
+        </div>
+      </div>
+      <table class="lb-table"><tr><th>#</th><th>PLAYER</th><th>RANK</th><th>RP</th><th>LEVEL</th><th>WINS</th><th>GOALS</th></tr>` +
+      (on.leaderboard.length ? on.leaderboard.map((row, idx) => `
+        <tr class="${row.username === u.username ? 'me' : ''}">
+          <td>${idx + 1}</td>
+          <td>${this.esc(row.username)}</td>
+          <td style="color:${row.rankColor};font-weight:800">${this.esc(row.rank)}</td>
+          <td>${row.rp}</td>
+          <td>LVL ${row.level}</td>
+          <td>${row.wins}</td>
+          <td>${row.goals}</td>
+        </tr>`).join('') : '<tr><td colspan="7" style="color:var(--ink2);text-align:center;padding:16px">Loading leaderboard...</td></tr>') +
+      `</table>`;
+    return h;
+  }
+  bindRanks() {
+    $('menuPanel').querySelectorAll('[data-lbsort]').forEach(b => b.onclick = () => {
+      this.g.audio.ui('click');
+      this.g.online.fetchLeaderboard(b.dataset.lbsort).then(() => this.renderPanel()).catch(() => {});
+    });
   }
   garageHtml() {
     const c = Settings.data.car; const tabs = [['body', 'Body'], ['paint', 'Paint'], ['decal', 'Decal'], ['wheels', 'Wheels'], ['boost', 'Boost'], ['goal', 'Goal FX'], ['id', 'Player']];
@@ -5299,11 +6265,11 @@ class UIManager {
   bindGarage() {
     const P = $('menuPanel');
     P.querySelectorAll('[data-gtab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.garageTab = b.dataset.gtab; this.renderPanel(`[data-gtab="${b.dataset.gtab}"]`); });
-    P.querySelectorAll('[data-car]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.car, v = b.dataset.val; Settings.data.car[k] = +v; Settings.save(); this.renderPanel(`[data-car="${k}"][data-val="${v}"]`); this.g.refreshShowroom(); });
+    P.querySelectorAll('[data-car]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.car, v = b.dataset.val; Settings.data.car[k] = +v; Settings.save(); this.g.online && this.g.online.saveCar(Settings.data.car); this.renderPanel(`[data-car="${k}"][data-val="${v}"]`); this.g.refreshShowroom(); });
     const pe = $('previewExp'); if (pe) pe.onclick = () => { this.g.audio.ui('click'); this.g.previewExplosion(); };
     const rc = $('randCar'); if (rc) rc.onclick = () => {
       this.g.audio.ui('click');
-      Settings.data.car = this.g.randomCustom(); Settings.save(); this.renderPanel('#randCar'); this.g.refreshShowroom();
+      Settings.data.car = this.g.randomCustom(); Settings.save(); this.g.online && this.g.online.saveCar(Settings.data.car); this.renderPanel('#randCar'); this.g.refreshShowroom();
     };
     const pn = $('pname'); if (pn) pn.oninput = () => { Settings.data.playerName = pn.value.toUpperCase().slice(0, 14) || 'PLAYER'; Settings.save(); };
   }
@@ -5333,7 +6299,7 @@ class UIManager {
     return `<div class="ph"><h2>Controls</h2><span>keyboard · mouse · gamepad</span></div><table class="keys"><tr><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">ACTION</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">KEYBOARD / MOUSE</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">GAMEPAD</td></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('') + `</table>
       <div class="sect">Mechanics</div><div class="desc"><b>Dodge:</b> jump, then press jump again while holding a direction — front/back/side/diagonal flips add a burst of speed and spin. Jump again with no direction for a double jump.<br><b>Aerials:</b> jump, tilt the nose up and boost. Watch the glowing target ring under the ball to read bounces.<br><b>Wall driving:</b> drive into any curved wall to climb it. Hold throttle to maintain grip.<br><b>Demolition:</b> hit an opponent at supersonic speed (trail appears) to destroy them.<br><b>Flip cancel:</b> pull back during a front flip to stop the rotation.</div>`;
   }
-  showHud(v) { $('hud').classList.toggle('hidden', !v); if (!v) { this.clearTags(); } }
+  showHud(v) { $('hud').classList.toggle('hidden', !v); if (!v) { this.clearTags(); this.clearHudFX(); } }
   updateScore(score, bumpTeam) {
     $('scoreBlue').textContent = score[0]; $('scoreOrange').textContent = score[1];
     if (bumpTeam !== undefined) { const el = bumpTeam === 0 ? $('scoreBlue') : $('scoreOrange'); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
@@ -5359,6 +6325,7 @@ class UIManager {
   flash(a) { const el = $('flash'); el.style.transition = 'none'; el.style.opacity = a; void el.offsetWidth; el.style.transition = 'opacity .6s'; el.style.opacity = 0; }
   replayTag(v) { $('replayTag').classList.toggle('hidden', !v); }
   setupHud(game) {
+    this.clearHudFX();
     const m = game.mode; const isMatch = m instanceof MatchMode;
     $('scorebar').classList.toggle('hidden', !isMatch); $('rosterBlue').classList.toggle('hidden', !isMatch); $('rosterOrange').classList.toggle('hidden', !isMatch);
     $('modeInfo').classList.toggle('hidden', isMatch);
@@ -5528,13 +6495,29 @@ class UIManager {
     this._sb = true; this.overlay(`<h2>SCOREBOARD</h2>${this.statsTable(game, false)}`);
     $('overlay').style.pointerEvents = 'none';
   }
-  showResults(mode) {
-    const g = this.g; const s = mode.score; const win = s[0] > s[1] ? 0 : 1; const tn = g.teamNames || ['BLUE', 'ORANGE'];
-    const pt = g.player ? g.player.team : -1; const title = pt < 0 ? `${tn[win]} WINS` : pt === win ? 'VICTORY' : 'DEFEAT';
+  showResults(mode, isOnline = false) {
+    const g = this.g; const s = mode.score; const win = s[0] > s[1] ? 0 : (s[1] > s[0] ? 1 : -1); const tn = g.teamNames || ['BLUE', 'ORANGE'];
+    const pt = g.player ? g.player.team : -1; const title = win < 0 ? 'DRAW' : (pt < 0 ? `${tn[win]} WINS` : pt === win ? 'VICTORY' : 'DEFEAT');
     const t = g.tournament;
-    const btns = t ? `<button class="cta alt" data-act="tcontinue"><span>Continue</span></button>` : `<button class="cta" data-act="rematch"><span>Rematch</span></button><button class="cta alt" data-act="menu"><span>Main Menu</span></button>`;
-    this.overlay(`<div class="results"><div class="winner ${win === 0 ? 'blue' : 'orange'}">${title}</div><div class="final"><span class="b">${s[0]}</span><span style="font-size:22px;color:#9fb2d6">${mode.overtime ? 'OT' : 'FINAL'}</span><span class="o">${s[1]}</span></div>${this.statsTable(g, true)}<div class="btnrow">${btns}</div></div>`, 'results');
+    const btns = isOnline
+      ? `<button class="cta" data-act="mp_lobby"><span>Return to Lobby</span></button><button class="cta alt" data-act="menu"><span>Main Menu</span></button>`
+      : (t ? `<button class="cta alt" data-act="tcontinue"><span>Continue</span></button>` : `<button class="cta" data-act="rematch"><span>Rematch</span></button><button class="cta alt" data-act="menu"><span>Main Menu</span></button>`);
+    this.overlay(`<div class="results"><div class="winner ${win === 0 ? 'blue' : 'orange'}">${title}</div><div class="final"><span class="b">${s[0]}</span><span style="font-size:22px;color:#9fb2d6">${mode.overtime ? 'OT' : 'FINAL'}</span><span class="o">${s[1]}</span></div>${this.statsTable(g, true)}<div id="xpRewardSlot"></div><div class="btnrow">${btns}</div></div>`, 'results');
     if (pt === win || pt < 0) { g.fx.confetti(new V3(0, 0, 0), 400, 35, 12); g.audio.crowdCheer(1, 4); }
+  }
+  showXpReward(res) {
+    const slot = $('xpRewardSlot');
+    if (!slot || !res || !res.user) return;
+    const u = res.user, r = u.rank || { name: 'BRONZE I', color: '#cd7f32' };
+    const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
+    const rpTxt = res.rpDelta ? `<span style="color:${res.rpDelta > 0 ? '#4dff88' : '#ff6b7a'}">${res.rpDelta > 0 ? '+' : ''}${res.rpDelta} RP</span>` : '';
+    slot.innerHTML = `<div class="xp-reward">
+      ${res.leveledUp ? `<div class="lvlup">★ LEVEL UP! LEVEL ${res.oldLevel} → LEVEL ${res.newLevel} ★</div>` : ''}
+      <div class="row"><span style="color:var(--accent)">+${res.xpGained} XP</span><span style="color:${r.color}">${this.esc(r.name)} (${u.rp} RP) ${rpTxt}</span></div>
+      <div class="pc-xpbar" style="margin-top:6px"><i style="width:${pct}%"></i></div>
+      <div class="pc-xptxt"><span>LEVEL ${u.level}</span><span>${u.xp.toLocaleString()} / ${u.xpNext.toLocaleString()} XP</span></div>
+    </div>`;
+    if (res.leveledUp) this.g.audio.crowdCheer(0.8, 2);
   }
   showTrainingResults(drill, score, max, best, record) {
     this.overlay(`<h2>${drill.name}</h2><div class="results"><div class="final"><span style="color:var(--accent)">${score}</span><span style="font-size:22px;color:#9fb2d6">/ ${max}</span></div>
@@ -5665,6 +6648,7 @@ class GameEngine {
   }
   async init() {
     const tick = () => new Promise(r => setTimeout(r, 16));
+    this.online = new OnlineManager(this);
     this.ui = new UIManager(this);
     this.ui.progress(0.05, 'Starting renderer'); await tick();
     const canvas = document.createElement('canvas'); canvas.id = 'gl'; document.body.prepend(canvas); canvas.tabIndex = 0;
@@ -5701,7 +6685,12 @@ class GameEngine {
     Events.on('settings', (k) => { if (k === 'quality' || k === 'resScale') { this.renderer.applyQuality(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
     this.last = performance.now();
     requestAnimationFrame((t) => this.frame(t));
-    this.ui.loadingDone(() => { this.audio.init(); this.audio.setArena(this.arenaDef); this.audio.startMusic('menu'); this.ui.showMenu('play'); });
+    this.ui.loadingDone(async () => {
+      this.audio.init(); this.audio.setArena(this.arenaDef); this.audio.startMusic('menu');
+      const user = await this.online.restoreSession();
+      if (user) this.ui.showMenu('play');
+      else this.ui.showAuthGate();
+    });
   }
   loadArena(def, opts = {}) {
     const key = def.id + '|' + (opts.layout || 'default') + '|' + (opts.scale || 1);
@@ -5730,12 +6719,13 @@ class GameEngine {
     return this.world;
   }
   randomCustom() { return { body: randi(0, CAR_DESIGNS.length - 1), primary: -1, secondary: randi(0, PALETTE.length - 1), finish: randi(0, FINISHES.length - 1), decal: randi(0, DECALS.length - 1), wheels: randi(0, WHEELS.length - 1), trail: Math.random() < 0.35 ? 6 : randi(0, 5), explosion: randi(0, EXPLOSIONS.length - 1) }; }
-  addCar(team, { player = false, name, diff = 1, pers = null } = {}) {
-    const custom = player ? Object.assign({}, Settings.data.car) : this.randomCustom();
-    const car = new Car(this.nextId++, team, name, custom.body); car.explosion = custom.explosion; car.isPlayer = player;
-    if (!player) car.bot = new BotAI(car, diff, pers === null ? randi(0, PERSONALITIES.length - 1) : pers);
+  addCar(team, { player = false, remote = false, custom = null, netUserId = null, netBotId = null, name, diff = 1, pers = null } = {}) {
+    const cCustom = custom ? Object.assign({}, Settings.data.car, custom) : (player ? Object.assign({}, Settings.data.car) : this.randomCustom());
+    const car = new Car(this.nextId++, team, name, cCustom.body); car.explosion = cCustom.explosion; car.isPlayer = player;
+    car.isRemote = !!remote; car.netUserId = netUserId; car.netBotId = netBotId;
+    if (!player && !remote) car.bot = new BotAI(car, diff, pers === null ? randi(0, PERSONALITIES.length - 1) : pers);
     this.world.addCar(car);
-    this.carVisuals.push(new CarVisual(car, custom, this.renderer.scene));
+    this.carVisuals.push(new CarVisual(car, cCustom, this.renderer.scene));
     if (player) this.player = car;
     return car;
   }
@@ -5767,6 +6757,57 @@ class GameEngine {
     this.specMode = 'broadcast';
     if (cfg.mode === 'mayhem') { this.world.powers = new PowerSystem(this.world, { interval: cfg.interval || 10 }); this.powerVis = new PowerVisuals(this); }
     this.setMode(new MatchMode(this, { teamSize: cfg.teamSize, duration: cfg.duration, mayhem: cfg.mode === 'mayhem' }));
+    this.audio.setMusicMode('game');
+  }
+  startOnlineMatch(msg) {
+    const s = msg.settings, players = msg.players || [];
+    const meId = this.online && this.online.user ? this.online.user.id : null;
+    const isHost = meId && msg.hostId === meId;
+    this.lastCfg = null; this.inGame = true; this.paused = false; this.tournament = null;
+    this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
+    const def = ARENAS[s.arena] || ARENAS[0];
+    this.newWorld(def, { layout: s.layout || 'default', scale: s.teamSize >= 4 ? 1.12 : 1 });
+    let botIdx = 0;
+    for (const team of [0, 1]) {
+      const teamPlayers = players.filter(p => p.team === team);
+      for (const p of teamPlayers) {
+        const isMe = p.id === meId;
+        this.addCar(team, {
+          player: isMe,
+          remote: !isMe,
+          custom: p.car || null,
+          netUserId: p.id,
+          name: p.username.toUpperCase()
+        });
+      }
+      if (s.botFill) {
+        for (let i = teamPlayers.length; i < s.teamSize; i++) {
+          const bId = `bot_${team}_${i}`;
+          const bName = BOT_NAMES[(botIdx++) % BOT_NAMES.length];
+          this.addCar(team, {
+            player: false,
+            remote: !isHost,
+            netBotId: bId,
+            name: bName,
+            diff: s.botDiff || 1,
+            pers: botIdx % PERSONALITIES.length
+          });
+        }
+      }
+    }
+    this.teamNames = ['BLUE', 'ORANGE'];
+    this.camera.ballCam = Settings.data.ballCamDefault;
+    this.specMode = 'broadcast';
+    if (s.mode === 'mayhem') { this.world.powers = new PowerSystem(this.world, { interval: s.interval || 10 }); this.powerVis = new PowerVisuals(this); }
+    this.setMode(new OnlineMatchMode(this, {
+      teamSize: s.teamSize,
+      duration: s.duration,
+      mayhem: s.mode === 'mayhem',
+      isHost,
+      boostMode: s.boostMode || 'normal',
+      mutator: s.mutator || 'normal',
+      botDiff: s.botDiff || 1
+    }));
     this.audio.setMusicMode('game');
   }
   startFreePlay(cfg) {
@@ -5808,7 +6849,16 @@ class GameEngine {
       case 'restart': this.setPaused(false); if (this.tournament && this.lastCfg && this.lastCfg.cfg.tournament) this.playTournamentRound(); else this.restart(); break;
       case 'psettings': this.ui.showPauseSettings(); break;
       case 'pause': this.ui.showPause(); break;
-      case 'menu': this.tournament = null; this.exitToMenu(); break;
+      case 'menu':
+        this.tournament = null;
+        if (this.mode instanceof OnlineMatchMode && this.online && this.online.lobby && !this.mode.endedByServer) this.online.leaveLobby();
+        this.exitToMenu();
+        break;
+      case 'mp_lobby':
+        this.tournament = null;
+        this.exitToMenu();
+        this.ui.showMenu('multiplayer');
+        break;
       case 'rematch': this.restart(); break;
       case 'retrain': this.restart(); break;
       case 'tcontinue': {
@@ -5878,6 +6928,9 @@ class GameEngine {
   }
   handleInput(dt) {
     const inp = this.input;
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+    if (typing || !$('authGate').classList.contains('hidden')) return;
     if (inp.hit('KeyM')) this.ui.toggleMute();
     if (!$('loading').classList.contains('hidden')) {
       const sb = $('startBtn');
