@@ -1,0 +1,45 @@
+# Fly.io deployment configuration for Hyperstrike (ORD - Chicago, minimal CPU & RAM)
+# Deploy with:
+#   fly apps create hyperstrike-ord   (or change app name below)
+#   fly volumes create hyperstrike_data --region ord --size 1
+#   fly deploy
+
+app = 'hyperstrike-ord'
+primary_region = 'ord'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  NODE_ENV = 'production'
+  PORT = '8080'
+  DATA_DIR = '/data'
+  URL = 'https://hyperstrike.dill.moe'
+
+[mounts]
+  source = 'hyperstrike_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 200
+    soft_limit = 160
+
+[[http_service.checks]]
+  interval = '30s'
+  timeout = '5s'
+  grace_period = '10s'
+  method = 'GET'
+  path = '/api/health'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

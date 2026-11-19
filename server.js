@@ -1,0 +1,1379 @@
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DB_FILE = path.join(DATA_DIR, 'db.json');
+const INDEX_FILE = path.join(__dirname, 'index.html');
+const REGION = process.env.FLY_REGION || 'local';
+const ALLOWED_URL_RAW = (process.env.URL || '').trim();
+let ALLOWED_ORIGIN = '';
+let ALLOWED_HOST = '';
+if (ALLOWED_URL_RAW) {
+  try {
+    const u = new URL(ALLOWED_URL_RAW);
+    ALLOWED_ORIGIN = u.origin.toLowerCase();
+    ALLOWED_HOST = u.host.toLowerCase();
+  } catch (err) {
+    console.error('[CONFIG] Invalid URL env:', ALLOWED_URL_RAW);
+  }
+}
+
+function isRequestAllowed(req) {
+  if (!ALLOWED_ORIGIN) return true;
+  const origin = String(req.headers.origin || '').trim().toLowerCase();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+  const referer = String(req.headers.referer || '').trim().toLowerCase();
+  if (origin) return origin === ALLOWED_ORIGIN;
+  if (host === ALLOWED_HOST) return true;
+  if (referer && (referer === ALLOWED_ORIGIN || referer.startsWith(ALLOWED_ORIGIN + '/'))) return true;
+  return false;
+}
+
+function corsOriginHeader() {
+  return ALLOWED_ORIGIN || '*';
+}
+
+// ============================================================
+// PROGRESSION: INFINITE LEVELING & RANKS
+// ============================================================
+function xpForLevel(level) {
+  const L = Math.max(1, Math.floor(level));
+  return Math.floor(250 + (L - 1) * 140 + 20 * Math.pow(L - 1, 1.35));
+}
+
+function addXp(user, amount) {
+  const gain = Math.max(0, Math.floor(amount));
+  const oldLevel = user.level || 1;
+  user.xp = (user.xp || 0) + gain;
+  user.totalXp = (user.totalXp || 0) + gain;
+  user.level = oldLevel;
+  let safety = 0;
+  while (user.xp >= xpForLevel(user.level) && safety < 500) {
+    user.xp -= xpForLevel(user.level);
+    user.level += 1;
+    safety++;
+  }
+  return {
+    xpGained: gain,
+    oldLevel,
+    newLevel: user.level,
+    leveledUp: user.level > oldLevel
+  };
+}
+
+const RANK_TIERS = [
+  { name: 'BRONZE', min: 0, color: '#cd7f32' },
+  { name: 'SILVER', min: 300, color: '#c4d0e0' },
+  { name: 'GOLD', min: 600, color: '#ffd23f' },
+  { name: 'PLATINUM', min: 900, color: '#4ff2e8' },
+  { name: 'DIAMOND', min: 1200, color: '#4d9fff' },
+  { name: 'CHAMPION', min: 1500, color: '#c06bff' },
+  { name: 'GRAND CHAMPION', min: 1800, color: '#ff4f7a' }
+];
+
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+function toRoman(n) {
+  if (n <= 10) return ROMAN[n] || String(n);
+  return String(n);
+}
+
+function computeRank(rpRaw) {
+  const rp = Math.max(0, Math.floor(rpRaw || 0));
+  if (rp >= 2100) {
+    const over = rp - 2100;
+    const legendTier = Math.floor(over / 150) + 1;
+    const base = 2100 + (legendTier - 1) * 150;
+    const nextRp = base + 150;
+    return {
+      tier: 'HYPERSTRIKE LEGEND',
+      division: toRoman(legendTier),
+      name: `LEGEND ${toRoman(legendTier)}`,
+      short: `LEG ${toRoman(legendTier)}`,
+      color: '#ffdf6b',
+      rp,
+      tierMin: base,
+      nextRp,
+      progress: Math.min(1, (rp - base) / 150)
+    };
+  }
+  let t = RANK_TIERS[0];
+  for (let i = RANK_TIERS.length - 1; i >= 0; i--) {
+    if (rp >= RANK_TIERS[i].min) { t = RANK_TIERS[i]; break; }
+  }
+  const offset = rp - t.min;
+  const divIdx = Math.min(2, Math.floor(offset / 100));
+  const divBase = t.min + divIdx * 100;
+  const divRoman = ['I', 'II', 'III'][divIdx];
+  return {
+    tier: t.name,
+    division: divRoman,
+    name: `${t.name} ${divRoman}`,
+    short: `${t.name.slice(0, 3)} ${divRoman}`,
+    color: t.color,
+    rp,
+    tierMin: divBase,
+    nextRp: divBase + 100,
+    progress: Math.min(1, (rp - divBase) / 100)
+  };
+}
+
+// ============================================================
+// PERSISTENCE (ATOMIC JSON STORE - MINIMAL RAM & ZERO NATIVE DEPS)
+// ============================================================
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const db = {
+  users: {},     // usernameLower -> user object
+  sessions: {}   // token -> { usernameLower, createdAt, expiresAt }
+};
+
+function loadDb() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.users) db.users = parsed.users;
+        if (parsed.sessions) db.sessions = parsed.sessions;
+      }
+      // Clean expired sessions on boot
+      const now = Date.now();
+      for (const [tok, sess] of Object.entries(db.sessions)) {
+        if (!sess || sess.expiresAt < now || !db.users[sess.usernameLower]) {
+          delete db.sessions[tok];
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[DB] Failed to load db.json:', err.message);
+  }
+}
+
+let dbDirty = false;
+function markDirty() { dbDirty = true; }
+
+function flushDb() {
+  if (!dbDirty) return;
+  dbDirty = false;
+  try {
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
+    fs.renameSync(tmp, DB_FILE);
+  } catch (err) {
+    console.error('[DB] Flush error:', err.message);
+    dbDirty = true;
+  }
+}
+
+loadDb();
+setInterval(flushDb, 2000).unref();
+
+// ============================================================
+// AUTH & USER HELPERS
+// ============================================================
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function verifyPassword(password, salt, expectedHex) {
+  const actual = Buffer.from(hashPassword(password, salt), 'hex');
+  const expected = Buffer.from(expectedHex, 'hex');
+  if (actual.length !== expected.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+function createSession(usernameLower) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  db.sessions[token] = {
+    usernameLower,
+    createdAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  };
+  markDirty();
+  return token;
+}
+
+function getUserByToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const sess = db.sessions[token];
+  if (!sess) return null;
+  if (sess.expiresAt < Date.now()) {
+    delete db.sessions[token];
+    markDirty();
+    return null;
+  }
+  return db.users[sess.usernameLower] || null;
+}
+
+function sanitizeCar(car) {
+  const def = { body: 0, primary: -1, secondary: 0, finish: 0, decal: 0, wheels: 0, trail: 0, explosion: 0 };
+  if (!car || typeof car !== 'object') return def;
+  const num = (v, min, max, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(n)));
+  };
+  return {
+    body: num(car.body, 0, 10, 0),
+    primary: num(car.primary, -1, 30, -1),
+    secondary: num(car.secondary, 0, 30, 0),
+    finish: num(car.finish, 0, 10, 0),
+    decal: num(car.decal, 0, 15, 0),
+    wheels: num(car.wheels, 0, 15, 0),
+    trail: num(car.trail, 0, 15, 0),
+    explosion: num(car.explosion, 0, 15, 0)
+  };
+}
+
+function publicUser(user) {
+  const level = user.level || 1;
+  const xp = user.xp || 0;
+  const xpNext = xpForLevel(level);
+  const rp = user.rp || 0;
+  return {
+    id: user.id,
+    username: user.username,
+    level,
+    xp,
+    xpNext,
+    xpProgress: Math.min(1, xp / xpNext),
+    totalXp: user.totalXp || 0,
+    rp,
+    peakRp: user.peakRp || rp,
+    rank: computeRank(rp),
+    stats: user.stats || { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 },
+    car: user.car || sanitizeCar(null)
+  };
+}
+
+// ============================================================
+// RATE LIMITER (HTTP + WS)
+// ============================================================
+const ipBuckets = new Map();
+function checkRateLimit(key, maxHits, windowMs) {
+  const now = Date.now();
+  let b = ipBuckets.get(key);
+  if (!b || now > b.resetAt) {
+    b = { count: 0, resetAt: now + windowMs };
+    ipBuckets.set(key, b);
+  }
+  b.count++;
+  return b.count <= maxHits;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of ipBuckets.entries()) {
+    if (now > b.resetAt) ipBuckets.delete(k);
+  }
+}, 60000).unref();
+
+// ============================================================
+// CODE GENERATOR
+// ============================================================
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function randomCode(len, prefix = '') {
+  let s = prefix;
+  for (let i = 0; i < len; i++) {
+    s += CODE_CHARS[crypto.randomInt(0, CODE_CHARS.length)];
+  }
+  return s;
+}
+
+// ============================================================
+// MULTIPLAYER STATE: CLIENTS, SQUADS, LOBBIES & ANTI-CHEAT
+// ============================================================
+const clientsByUserId = new Map(); // userId -> ws
+const squads = new Map();          // squadCode -> Squad
+const lobbies = new Map();         // lobbyCode -> Lobby
+
+const VALID_LAYOUTS = new Set(['default', 'pillars', 'wide', 'octagon', 'narrow', 'dome', 'classic', 'bowl', 'hex']);
+const VALID_MODES = new Set(['standard', 'mayhem']);
+const VALID_BOOST = new Set(['normal', 'unlimited', 'recharge']);
+const VALID_MUTATORS = new Set(['normal', 'lowgrav', 'fastball']);
+
+function defaultLobbySettings(hostName) {
+  return {
+    name: `${hostName}'S LOBBY`,
+    isPublic: true,
+    ranked: false,
+    teamSize: 2,
+    mode: 'standard',
+    interval: 10,
+    arena: 0,
+    layout: 'default',
+    duration: 300,
+    botFill: true,
+    botDiff: 1,
+    boostMode: 'normal',
+    mutator: 'normal'
+  };
+}
+
+function sanitizeLobbySettings(raw, current) {
+  const s = Object.assign({}, current);
+  if (!raw || typeof raw !== 'object') return s;
+  if (typeof raw.name === 'string') s.name = raw.name.trim().slice(0, 28).toUpperCase() || s.name;
+  if (typeof raw.isPublic === 'boolean') s.isPublic = raw.isPublic;
+  if (typeof raw.ranked === 'boolean') s.ranked = raw.ranked;
+  if (Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4) s.teamSize = raw.teamSize;
+  if (VALID_MODES.has(raw.mode)) s.mode = raw.mode;
+  if ([6, 10, 15].includes(raw.interval)) s.interval = raw.interval;
+  if (Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena <= 12) s.arena = raw.arena;
+  if (typeof raw.layout === 'string' && raw.layout.length <= 20) s.layout = raw.layout;
+  if ([0, 120, 180, 300].includes(raw.duration)) s.duration = raw.duration;
+  if (typeof raw.botFill === 'boolean') s.botFill = raw.botFill;
+  if (Number.isInteger(raw.botDiff) && raw.botDiff >= 0 && raw.botDiff <= 3) s.botDiff = raw.botDiff;
+  if (VALID_BOOST.has(raw.boostMode)) s.boostMode = raw.boostMode;
+  if (VALID_MUTATORS.has(raw.mutator)) s.mutator = raw.mutator;
+  // Ranked enforces fair rules
+  if (s.ranked) {
+    s.boostMode = 'normal';
+    s.mutator = 'normal';
+    if (s.duration === 0) s.duration = 300;
+  }
+  return s;
+}
+
+function send(ws, obj) {
+  if (ws && ws.readyState === 1) {
+    try { ws.send(JSON.stringify(obj)); } catch (_) {}
+  }
+}
+
+function squadSnapshot(sq) {
+  return {
+    code: sq.code,
+    leaderId: sq.leaderId,
+    members: [...sq.members.values()].map(m => {
+      const u = db.users[m.usernameLower];
+      const rank = computeRank(u ? u.rp : 0);
+      return {
+        id: m.userId,
+        username: m.username,
+        level: u ? u.level : 1,
+        rank: rank.short,
+        rankColor: rank.color,
+        isLeader: m.userId === sq.leaderId,
+        online: clientsByUserId.has(m.userId)
+      };
+    })
+  };
+}
+
+function broadcastSquad(sq, msg) {
+  for (const m of sq.members.values()) {
+    const ws = clientsByUserId.get(m.userId);
+    if (ws) send(ws, msg);
+  }
+}
+
+function lobbySnapshot(lb) {
+  return {
+    code: lb.code,
+    hostId: lb.hostId,
+    status: lb.status,
+    settings: lb.settings,
+    players: [...lb.players.values()].map(p => {
+      const u = db.users[p.usernameLower];
+      const rank = computeRank(u ? u.rp : 0);
+      return {
+        id: p.userId,
+        username: p.username,
+        team: p.team,
+        ready: p.ready,
+        isHost: p.userId === lb.hostId,
+        level: u ? u.level : 1,
+        rp: u ? u.rp : 0,
+        rank: rank.short,
+        rankColor: rank.color,
+        squadCode: p.squadCode || null,
+        car: u ? u.car : sanitizeCar(null)
+      };
+    })
+  };
+}
+
+function broadcastLobby(lb, msg, excludeUserId = null) {
+  for (const p of lb.players.values()) {
+    if (excludeUserId && p.userId === excludeUserId) continue;
+    const ws = clientsByUserId.get(p.userId);
+    if (ws) send(ws, msg);
+  }
+}
+
+function pickTeamForPlayer(lb, preferredTeam = null) {
+  const maxPerTeam = lb.settings.teamSize;
+  let blue = 0, orange = 0;
+  for (const p of lb.players.values()) {
+    if (p.team === 0) blue++;
+    else if (p.team === 1) orange++;
+  }
+  if (preferredTeam === 0 && blue < maxPerTeam) return 0;
+  if (preferredTeam === 1 && orange < maxPerTeam) return 1;
+  if (blue <= orange && blue < maxPerTeam) return 0;
+  if (orange < maxPerTeam) return 1;
+  if (blue < maxPerTeam) return 0;
+  return -1; // spectator
+}
+
+function leaveSquad(ws) {
+  if (!ws.squadCode) return;
+  const sq = squads.get(ws.squadCode);
+  ws.squadCode = null;
+  if (!sq) return;
+  sq.members.delete(ws.userId);
+  if (sq.members.size === 0) {
+    squads.delete(sq.code);
+    return;
+  }
+  if (sq.leaderId === ws.userId) {
+    const next = sq.members.values().next().value;
+    sq.leaderId = next.userId;
+  }
+  broadcastSquad(sq, { type: 'squad_update', squad: squadSnapshot(sq) });
+}
+
+function leaveLobby(ws, reason = 'left') {
+  if (!ws.lobbyCode) return;
+  const lb = lobbies.get(ws.lobbyCode);
+  ws.lobbyCode = null;
+  if (!lb) return;
+  const wasHost = lb.hostId === ws.userId;
+  lb.players.delete(ws.userId);
+  if (lb.ac) lb.ac.delete(ws.userId);
+
+  if (lb.players.size === 0) {
+    lobbies.delete(lb.code);
+    return;
+  }
+
+  if (wasHost) {
+    const next = lb.players.values().next().value;
+    lb.hostId = next.userId;
+    if (lb.status === 'in_match') {
+      broadcastLobby(lb, { type: 'host_migrated', hostId: lb.hostId, hostName: next.username });
+    }
+  }
+
+  if (lb.status === 'in_match') {
+    broadcastLobby(lb, { type: 'player_left_match', userId: ws.userId, username: ws.username, reason });
+  }
+  broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) });
+}
+
+function joinLobbyInternal(ws, lb, preferredTeam = null) {
+  if (ws.lobbyCode === lb.code) return true;
+  if (ws.lobbyCode) leaveLobby(ws);
+  const team = pickTeamForPlayer(lb, preferredTeam);
+  lb.players.set(ws.userId, {
+    userId: ws.userId,
+    username: ws.username,
+    usernameLower: ws.usernameLower,
+    team,
+    ready: lb.hostId === ws.userId,
+    squadCode: ws.squadCode || null
+  });
+  ws.lobbyCode = lb.code;
+  send(ws, { type: 'lobby_joined', lobby: lobbySnapshot(lb) });
+  broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) }, ws.userId);
+  return true;
+}
+
+function pullSquadIntoLobby(leaderWs, lb, preferredTeam) {
+  if (!leaderWs.squadCode) return;
+  const sq = squads.get(leaderWs.squadCode);
+  if (!sq || sq.leaderId !== leaderWs.userId) return;
+  for (const m of sq.members.values()) {
+    if (m.userId === leaderWs.userId) continue;
+    const mws = clientsByUserId.get(m.userId);
+    if (mws && mws.readyState === 1) {
+      joinLobbyInternal(mws, lb, preferredTeam);
+      send(mws, { type: 'toast', text: `SQUAD LEADER PULLED YOU INTO LOBBY ${lb.code}` });
+    }
+  }
+}
+
+// ============================================================
+// SERVER-SIDE ANTI-CHEAT ENGINE
+// ============================================================
+function isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
+function isVec3(a) { return Array.isArray(a) && a.length === 3 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]); }
+function isQuat(a) { return Array.isArray(a) && a.length === 4 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]) && isFiniteNum(a[3]); }
+
+function addStrike(lb, ws, reason, severity = 1) {
+  if (!lb.ac) lb.ac = new Map();
+  let rec = lb.ac.get(ws.userId);
+  if (!rec) { rec = { strikes: 0, lastDecay: Date.now(), prev: null, lastBoostGainT: 0, boostGains: 0 }; lb.ac.set(ws.userId, rec); }
+  rec.strikes += severity;
+  if (rec.strikes >= 12) {
+    const user = db.users[ws.usernameLower];
+    if (user) { user.antiCheatFlags = (user.antiCheatFlags || 0) + 1; markDirty(); }
+    send(ws, { type: 'anticheat_kick', reason: `Anti-Cheat Kick: ${reason}` });
+    leaveLobby(ws, 'anticheat');
+    broadcastLobby(lb, { type: 'lobby_chat', system: true, text: `[ANTI-CHEAT] ${ws.username} was removed (${reason}).` });
+    return false;
+  }
+  if (rec.strikes >= 6 && rec.strikes - severity < 6) {
+    send(ws, { type: 'anticheat_warn', reason: `Suspicious physics detected (${reason}). Continued violations will kick you.` });
+  }
+  return true;
+}
+
+function validatePlayerState(lb, ws, msg) {
+  if (!isVec3(msg.p) || !isVec3(msg.v) || !isQuat(msg.q) || !isFiniteNum(msg.b)) {
+    return addStrike(lb, ws, 'Malformed state packet', 3) ? null : null;
+  }
+  if (!lb.ac) lb.ac = new Map();
+  const now = Date.now();
+  let rec = lb.ac.get(ws.userId);
+  if (!rec) {
+    rec = { strikes: 0, lastDecay: now, prev: null, lastBoostGainT: 0, boostGains: 0 };
+    lb.ac.set(ws.userId, rec);
+  }
+  // Decay strikes over clean play
+  if (now - rec.lastDecay > 20000 && rec.strikes > 0) {
+    rec.strikes = Math.max(0, rec.strikes - 1);
+    rec.lastDecay = now;
+  }
+
+  const [x, y, z] = msg.p;
+  const [vx, vy, vz] = msg.v;
+  let boost = msg.b;
+
+  // 1. Arena bounds check
+  if (Math.abs(x) > 78 || Math.abs(z) > 100 || y < -6 || y > 42) {
+    if (!addStrike(lb, ws, 'Out-of-bounds position', 2)) return null;
+    msg.p[0] = Math.max(-72, Math.min(72, x));
+    msg.p[1] = Math.max(0, Math.min(36, y));
+    msg.p[2] = Math.max(-92, Math.min(92, z));
+  }
+
+  // 2. Speed cap check (allows supersonic + dodge + bumps + mayhem nitro/grapple)
+  const speed = Math.hypot(vx, vy, vz);
+  const maxSpeed = lb.settings.mode === 'mayhem' ? 58 : (lb.settings.mutator !== 'normal' ? 48 : 40);
+  if (speed > maxSpeed) {
+    if (!addStrike(lb, ws, `Speed hack (${Math.round(speed * 3.6)} km/h)`, 2)) return null;
+    const scale = maxSpeed / speed;
+    msg.v[0] *= scale; msg.v[1] *= scale; msg.v[2] *= scale;
+  }
+
+  // 3. Teleport check (skip right after kickoff / respawn / demolished)
+  const inGrace = lb.match && (now - lb.match.lastResetAt < 4500);
+  if (rec.prev && !inGrace && !msg.d && !rec.prev.d) {
+    const dt = Math.max(0.016, (now - rec.prev.t) / 1000);
+    const dist = Math.hypot(x - rec.prev.x, y - rec.prev.y, z - rec.prev.z);
+    const maxDist = Math.max(14, maxSpeed * dt * 2.4);
+    if (dist > maxDist && lb.settings.mode !== 'mayhem') {
+      if (!addStrike(lb, ws, 'Teleport / position spoofing', 2)) return null;
+    }
+  }
+
+  // 4. Boost validation
+  if (boost < -0.5 || boost > 100.5) {
+    if (!addStrike(lb, ws, 'Invalid boost value', 2)) return null;
+  }
+  boost = Math.max(0, Math.min(100, boost));
+  if (rec.prev && lb.settings.boostMode === 'normal' && lb.settings.mode !== 'mayhem' && !inGrace) {
+    const delta = boost - rec.prev.b;
+    // Small pad = +12, big pad = +100. Rapidly gaining boost >5 times in 1.5s without pads is impossible
+    if (delta > 3) {
+      if (now - rec.lastBoostGainT < 1500) {
+        rec.boostGains++;
+        if (rec.boostGains > 6) {
+          if (!addStrike(lb, ws, 'Boost refill hack', 2)) return null;
+        }
+      } else {
+        rec.boostGains = 1;
+        rec.lastBoostGainT = now;
+      }
+    }
+  }
+
+  // Normalize quaternion length check
+  const qLen = Math.hypot(msg.q[0], msg.q[1], msg.q[2], msg.q[3]);
+  if (qLen < 0.8 || qLen > 1.25) {
+    if (!addStrike(lb, ws, 'Invalid orientation quaternion', 1)) return null;
+    const inv = qLen > 0 ? 1 / qLen : 1;
+    msg.q = [msg.q[0] * inv, msg.q[1] * inv, msg.q[2] * inv, msg.q[3] * inv];
+  }
+
+  rec.prev = { x: msg.p[0], y: msg.p[1], z: msg.p[2], b: boost, d: !!msg.d, t: now };
+  return {
+    type: 'p_state',
+    uid: ws.userId,
+    p: msg.p,
+    v: msg.v,
+    q: msg.q,
+    b: Math.round(boost * 10) / 10,
+    bs: !!msg.bs,   // isBoosting
+    ss: !!msg.ss,   // supersonic
+    sl: msg.sl ? 1 : 0, // sliding
+    d: !!msg.d,     // demolished
+    it: typeof msg.it === 'string' ? msg.it.slice(0, 16) : null
+  };
+}
+
+function validateBallState(lb, msg) {
+  if (!isVec3(msg.p) || !isVec3(msg.v) || !isQuat(msg.q)) return null;
+  const speed = Math.hypot(msg.v[0], msg.v[1], msg.v[2]);
+  const maxBall = lb.settings.mode === 'mayhem' ? 120 : (lb.settings.mutator === 'fastball' ? 95 : 75);
+  if (speed > maxBall) {
+    const sc = maxBall / speed;
+    msg.v[0] *= sc; msg.v[1] *= sc; msg.v[2] *= sc;
+  }
+  return {
+    type: 'b_state',
+    p: msg.p,
+    v: msg.v,
+    q: msg.q,
+    av: isVec3(msg.av) ? msg.av : [0, 0, 0],
+    st: typeof msg.st === 'string' ? msg.st.slice(0, 16) : 'play',
+    tl: isFiniteNum(msg.tl) ? msg.tl : 0,
+    ot: !!msg.ot,
+    ott: isFiniteNum(msg.ott) ? msg.ott : 0,
+    sc: Array.isArray(msg.sc) && msg.sc.length === 2 ? [Number(msg.sc[0]) || 0, Number(msg.sc[1]) || 0] : [0, 0],
+    bots: Array.isArray(msg.bots) ? msg.bots.slice(0, 10) : []
+  };
+}
+
+// ============================================================
+// MATCH REWARDS (SERVER-AUTHORITATIVE XP + INFINITE LEVELS + RP)
+// ============================================================
+function finalizeMultiplayerMatch(lb, score, playerStatsMap) {
+  const m = lb.match;
+  if (!m || m.finished) return;
+  m.finished = true;
+  lb.status = 'waiting';
+
+  const durationSec = Math.max(1, (Date.now() - m.startedAt) / 1000);
+  const blueScore = Math.max(0, Math.min(99, Math.floor(score[0] || 0)));
+  const orangeScore = Math.max(0, Math.min(99, Math.floor(score[1] || 0)));
+  const winnerTeam = blueScore > orangeScore ? 0 : (orangeScore > blueScore ? 1 : -1);
+
+  const rewards = {};
+  const isRanked = !!lb.settings.ranked && durationSec >= 25;
+
+  for (const p of lb.players.values()) {
+    p.ready = (p.userId === lb.hostId);
+    if (p.team !== 0 && p.team !== 1) continue;
+    const user = db.users[p.usernameLower];
+    if (!user) continue;
+    if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
+
+    const st = (playerStatsMap && playerStatsMap[p.userId]) || {};
+    const goals = Math.max(0, Math.min(20, Math.floor(st.goals || 0)));
+    const assists = Math.max(0, Math.min(20, Math.floor(st.assists || 0)));
+    const saves = Math.max(0, Math.min(25, Math.floor(st.saves || 0)));
+    const shots = Math.max(0, Math.min(35, Math.floor(st.shots || 0)));
+    const demos = Math.max(0, Math.min(20, Math.floor(st.demos || 0)));
+
+    const won = winnerTeam === p.team;
+    const lost = winnerTeam >= 0 && winnerTeam !== p.team;
+
+    user.stats.matches++;
+    user.stats.mpMatches = (user.stats.mpMatches || 0) + 1;
+    if (won) { user.stats.wins++; user.stats.mpWins = (user.stats.mpWins || 0) + 1; }
+    else if (lost) user.stats.losses++;
+    user.stats.goals += goals;
+    user.stats.assists += assists;
+    user.stats.saves += saves;
+    user.stats.shots += shots;
+    user.stats.demos += demos;
+
+    // Anti-cheat: scale XP down if match was very short (<30s)
+    const timeFactor = Math.min(1, durationSec / 45);
+    const rawXp = (120 + (won ? 100 : 35) + goals * 45 + assists * 30 + saves * 35 + shots * 10 + demos * 15) * (isRanked ? 1.25 : 1.0) * timeFactor;
+    const xpRes = addXp(user, Math.min(1200, Math.round(rawXp)));
+
+    let rpDelta = 0;
+    if (isRanked) {
+      const perfBonus = Math.min(12, goals * 3 + saves * 2 + assists * 2);
+      if (won) rpDelta = 28 + perfBonus;
+      else if (lost) rpDelta = -Math.max(10, 22 - Math.floor(perfBonus * 0.5));
+      else rpDelta = 5;
+      user.rp = Math.max(0, (user.rp || 0) + rpDelta);
+      user.peakRp = Math.max(user.peakRp || 0, user.rp);
+    }
+
+    rewards[p.userId] = {
+      ...xpRes,
+      rpDelta,
+      user: publicUser(user)
+    };
+  }
+  markDirty();
+
+  broadcastLobby(lb, {
+    type: 'match_finished',
+    score: [blueScore, orangeScore],
+    winnerTeam,
+    rewards,
+    lobby: lobbySnapshot(lb)
+  });
+}
+
+// ============================================================
+// HTTP SERVER & REST API
+// ============================================================
+function readJsonBody(req, maxBytes = 32768) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('Payload too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (!chunks.length) return resolve({});
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch (_) { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, data) {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': corsOriginHeader(),
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+function getClientIp(req) {
+  return (req.headers['fly-client-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').toString().split(',')[0].trim();
+}
+
+function getBearerToken(req) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) return h.slice(7).trim();
+  return null;
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = url.pathname;
+
+  // Health check for Fly.io (always allowed for internal machine health checks)
+  if (req.method === 'GET' && pathname === '/api/health') {
+    return sendJson(res, 200, {
+      ok: true,
+      region: REGION,
+      uptime: Math.floor(process.uptime()),
+      online: clientsByUserId.size,
+      lobbies: lobbies.size
+    });
+  }
+
+  // Enforce allowed URL / Origin when URL env is configured
+  if (!isRequestAllowed(req)) {
+    res.writeHead(403, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store'
+    });
+    return res.end(JSON.stringify({ error: 'Forbidden' }));
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': corsOriginHeader(),
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Vary': 'Origin',
+      'Access-Control-Max-Age': '86400'
+    });
+    return res.end();
+  }
+
+  // Static index.html serving
+  if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+    try {
+      const html = fs.readFileSync(INDEX_FILE);
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache'
+      });
+      return res.end(html);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      return res.end('index.html not found');
+    }
+  }
+
+  const ip = getClientIp(req);
+
+  try {
+    // REGISTER
+    if (req.method === 'POST' && pathname === '/api/register') {
+      if (!checkRateLimit('auth:' + ip, 20, 60000)) {
+        return sendJson(res, 429, { error: 'Too many requests. Please wait a minute.' });
+      }
+      const body = await readJsonBody(req);
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      const confirmPassword = typeof body.confirmPassword === 'string' ? body.confirmPassword : '';
+
+      if (username.length < 3 || username.length > 18) {
+        return sendJson(res, 400, { error: 'Username must be 3 to 18 characters.' });
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return sendJson(res, 400, { error: 'Username can only use letters, numbers, _ and -.' });
+      }
+      if (password.length < 6 || password.length > 128) {
+        return sendJson(res, 400, { error: 'Password must be at least 6 characters.' });
+      }
+      if (password !== confirmPassword) {
+        return sendJson(res, 400, { error: 'Passwords do not match.' });
+      }
+
+      const key = username.toLowerCase();
+      if (db.users[key]) {
+        return sendJson(res, 409, { error: 'That username is already taken.' });
+      }
+
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passHash = hashPassword(password, salt);
+      const user = {
+        id: crypto.randomBytes(8).toString('hex'),
+        username,
+        passHash,
+        salt,
+        createdAt: Date.now(),
+        level: 1,
+        xp: 0,
+        totalXp: 0,
+        rp: 100,
+        peakRp: 100,
+        stats: { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 },
+        car: sanitizeCar(null),
+        antiCheatFlags: 0,
+        lastReportAt: 0
+      };
+      db.users[key] = user;
+      const token = createSession(key);
+      markDirty();
+      return sendJson(res, 201, { token, user: publicUser(user) });
+    }
+
+    // LOGIN
+    if (req.method === 'POST' && pathname === '/api/login') {
+      if (!checkRateLimit('auth:' + ip, 25, 60000)) {
+        return sendJson(res, 429, { error: 'Too many login attempts. Please wait a minute.' });
+      }
+      const body = await readJsonBody(req);
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      const key = username.toLowerCase();
+      const user = db.users[key];
+      if (!user || !verifyPassword(password, user.salt, user.passHash)) {
+        return sendJson(res, 401, { error: 'Invalid username or password.' });
+      }
+      const token = createSession(key);
+      return sendJson(res, 200, { token, user: publicUser(user) });
+    }
+
+    // LOGOUT
+    if (req.method === 'POST' && pathname === '/api/logout') {
+      const token = getBearerToken(req);
+      if (token && db.sessions[token]) {
+        delete db.sessions[token];
+        markDirty();
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // CURRENT USER
+    if (req.method === 'GET' && pathname === '/api/me') {
+      const user = getUserByToken(getBearerToken(req));
+      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
+      return sendJson(res, 200, {
+        user: publicUser(user),
+        server: { region: REGION, online: clientsByUserId.size, lobbies: lobbies.size }
+      });
+    }
+
+    // SAVE CAR CUSTOMIZATION
+    if (req.method === 'POST' && pathname === '/api/car') {
+      const user = getUserByToken(getBearerToken(req));
+      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
+      const body = await readJsonBody(req);
+      user.car = sanitizeCar(body.car);
+      markDirty();
+      return sendJson(res, 200, { car: user.car });
+    }
+
+    // LEADERBOARD
+    if (req.method === 'GET' && pathname === '/api/leaderboard') {
+      const sort = url.searchParams.get('sort') === 'level' ? 'level' : 'rp';
+      const list = Object.values(db.users)
+        .map(u => {
+          const r = computeRank(u.rp || 0);
+          return {
+            username: u.username,
+            level: u.level || 1,
+            totalXp: u.totalXp || 0,
+            rp: u.rp || 0,
+            rank: r.name,
+            rankColor: r.color,
+            wins: (u.stats && u.stats.wins) || 0,
+            goals: (u.stats && u.stats.goals) || 0,
+            matches: (u.stats && u.stats.matches) || 0
+          };
+        })
+        .sort((a, b) => sort === 'level' ? (b.level - a.level || b.totalXp - a.totalXp) : (b.rp - a.rp || b.level - a.level))
+        .slice(0, 50);
+      return sendJson(res, 200, { leaderboard: list, sort });
+    }
+
+    // SOLO / AI / TOURNAMENT MATCH REPORT (ANTI-CHEAT SANITY VALIDATED)
+    if (req.method === 'POST' && pathname === '/api/match/report') {
+      const user = getUserByToken(getBearerToken(req));
+      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
+      if (!checkRateLimit('rep:' + user.id, 6, 60000)) {
+        return sendJson(res, 429, { error: 'Match report rate limit exceeded.' });
+      }
+      const now = Date.now();
+      if (user.lastReportAt && now - user.lastReportAt < 15000) {
+        return sendJson(res, 429, { error: 'Match submitted too quickly.' });
+      }
+      const body = await readJsonBody(req);
+      const duration = Math.max(0, Math.min(3600, Number(body.duration) || 0));
+      if (duration < 15) {
+        return sendJson(res, 400, { error: 'Match too short for XP.' });
+      }
+
+      // Cap stats proportionally to match length to stop stat spoofing
+      const mins = Math.max(1, duration / 60);
+      const goals = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.goals) || 0)));
+      const assists = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.assists) || 0)));
+      const saves = Math.max(0, Math.min(Math.ceil(mins * 5), Math.floor(Number(body.saves) || 0)));
+      const shots = Math.max(0, Math.min(Math.ceil(mins * 8), Math.floor(Number(body.shots) || 0)));
+      const demos = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.demos) || 0)));
+      const won = !!body.won;
+      const difficulty = Math.max(0, Math.min(3, Math.floor(Number(body.difficulty) || 0)));
+      const isTournament = !!body.tournament;
+
+      if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
+      user.stats.matches++;
+      if (won) user.stats.wins++; else user.stats.losses++;
+      user.stats.goals += goals;
+      user.stats.assists += assists;
+      user.stats.saves += saves;
+      user.stats.shots += shots;
+      user.stats.demos += demos;
+      user.lastReportAt = now;
+
+      const diffMult = 1 + difficulty * 0.15 + (isTournament ? 0.25 : 0);
+      const timeFactor = Math.min(1, duration / 60);
+      const rawXp = (75 + (won ? 65 : 20) + goals * 30 + assists * 20 + saves * 25 + shots * 6 + demos * 10) * diffMult * timeFactor;
+      const xpRes = addXp(user, Math.min(750, Math.round(rawXp)));
+
+      // Small casual RP gain vs high-difficulty bots up to Gold I (600 RP) so solo players can warm up,
+      // while Competitive Multiplayer drives higher ranks!
+      let rpDelta = 0;
+      if (won && (user.rp || 0) < 600) {
+        rpDelta = 8 + difficulty * 3;
+        user.rp = Math.min(600, (user.rp || 0) + rpDelta);
+        user.peakRp = Math.max(user.peakRp || 0, user.rp);
+      }
+
+      markDirty();
+      return sendJson(res, 200, { ...xpRes, rpDelta, user: publicUser(user) });
+    }
+
+    return sendJson(res, 404, { error: 'Not found' });
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message || 'Bad request' });
+  }
+});
+
+// ============================================================
+// WEBSOCKET SERVER
+// ============================================================
+const wss = new WebSocketServer({
+  server,
+  maxPayload: 16384,
+  verifyClient: (info, done) => {
+    if (!isRequestAllowed(info.req)) return done(false, 403, 'Forbidden');
+    done(true);
+  }
+});
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.authed = false;
+  ws.userId = null;
+  ws.username = null;
+  ws.usernameLower = null;
+  ws.squadCode = null;
+  ws.lobbyCode = null;
+  ws.msgCount = 0;
+  ws.msgWindowStart = Date.now();
+  ws.chatTimes = [];
+
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  ws.on('message', (raw) => {
+    const now = Date.now();
+    if (now - ws.msgWindowStart > 1000) {
+      ws.msgWindowStart = now;
+      ws.msgCount = 0;
+    }
+    ws.msgCount++;
+    if (ws.msgCount > 110) {
+      return; // drop flood
+    }
+
+    let msg;
+    try { msg = JSON.parse(raw.toString('utf8')); } catch (_) { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+
+    // Auth required before any other WS message
+    if (msg.type === 'auth') {
+      const user = getUserByToken(msg.token);
+      if (!user) {
+        send(ws, { type: 'auth_error', error: 'Invalid session' });
+        return;
+      }
+      // Disconnect previous socket for same account if any
+      const prev = clientsByUserId.get(user.id);
+      if (prev && prev !== ws) {
+        send(prev, { type: 'kicked', reason: 'Signed in from another tab/device.' });
+        leaveLobby(prev);
+        leaveSquad(prev);
+        try { prev.close(); } catch (_) {}
+      }
+      ws.authed = true;
+      ws.userId = user.id;
+      ws.username = user.username;
+      ws.usernameLower = user.username.toLowerCase();
+      clientsByUserId.set(user.id, ws);
+      send(ws, {
+        type: 'auth_ok',
+        user: publicUser(user),
+        region: REGION,
+        online: clientsByUserId.size
+      });
+      return;
+    }
+
+    if (!ws.authed) {
+      send(ws, { type: 'auth_error', error: 'Please sign in first.' });
+      return;
+    }
+
+    switch (msg.type) {
+      // ---- SQUADS ----
+      case 'squad_create': {
+        if (ws.squadCode) leaveSquad(ws);
+        let code;
+        do { code = randomCode(4, 'SQ'); } while (squads.has(code));
+        const sq = { code, leaderId: ws.userId, members: new Map() };
+        sq.members.set(ws.userId, { userId: ws.userId, username: ws.username, usernameLower: ws.usernameLower });
+        squads.set(code, sq);
+        ws.squadCode = code;
+        send(ws, { type: 'squad_update', squad: squadSnapshot(sq) });
+        break;
+      }
+      case 'squad_join': {
+        const code = String(msg.code || '').trim().toUpperCase();
+        const sq = squads.get(code);
+        if (!sq) return send(ws, { type: 'error', text: `Squad "${code}" not found.` });
+        if (sq.members.size >= 5) return send(ws, { type: 'error', text: 'Squad is full (max 5).' });
+        if (ws.squadCode && ws.squadCode !== code) leaveSquad(ws);
+        sq.members.set(ws.userId, { userId: ws.userId, username: ws.username, usernameLower: ws.usernameLower });
+        ws.squadCode = code;
+        broadcastSquad(sq, { type: 'squad_update', squad: squadSnapshot(sq) });
+        // If leader is already in a waiting lobby, pull joiner in too
+        const leaderWs = clientsByUserId.get(sq.leaderId);
+        if (leaderWs && leaderWs.lobbyCode) {
+          const lb = lobbies.get(leaderWs.lobbyCode);
+          if (lb && lb.status === 'waiting') {
+            const lp = lb.players.get(leaderWs.userId);
+            joinLobbyInternal(ws, lb, lp ? lp.team : null);
+          }
+        }
+        break;
+      }
+      case 'squad_leave': {
+        leaveSquad(ws);
+        send(ws, { type: 'squad_update', squad: null });
+        break;
+      }
+      case 'squad_kick': {
+        const sq = squads.get(ws.squadCode);
+        if (!sq || sq.leaderId !== ws.userId) return;
+        const targetId = String(msg.userId || '');
+        if (!targetId || targetId === ws.userId) return;
+        const targetWs = clientsByUserId.get(targetId);
+        if (targetWs) {
+          leaveSquad(targetWs);
+          send(targetWs, { type: 'squad_update', squad: null });
+          send(targetWs, { type: 'toast', text: 'YOU WERE REMOVED FROM THE SQUAD' });
+        } else {
+          sq.members.delete(targetId);
+          broadcastSquad(sq, { type: 'squad_update', squad: squadSnapshot(sq) });
+        }
+        break;
+      }
+
+      // ---- LOBBIES ----
+      case 'lobby_list': {
+        const list = [];
+        for (const lb of lobbies.values()) {
+          if (!lb.settings.isPublic) continue;
+          const host = lb.players.get(lb.hostId);
+          list.push({
+            code: lb.code,
+            name: lb.settings.name,
+            host: host ? host.username : 'HOST',
+            players: lb.players.size,
+            maxPlayers: lb.settings.teamSize * 2,
+            status: lb.status,
+            ranked: lb.settings.ranked,
+            mode: lb.settings.mode,
+            teamSize: lb.settings.teamSize,
+            arena: lb.settings.arena
+          });
+        }
+        send(ws, { type: 'lobby_list', lobbies: list, online: clientsByUserId.size });
+        break;
+      }
+      case 'lobby_create': {
+        if (ws.lobbyCode) leaveLobby(ws);
+        let code;
+        do { code = randomCode(6); } while (lobbies.has(code));
+        const settings = sanitizeLobbySettings(msg.settings, defaultLobbySettings(ws.username));
+        const lb = {
+          code,
+          hostId: ws.userId,
+          status: 'waiting',
+          settings,
+          players: new Map(),
+          ac: new Map(),
+          match: null
+        };
+        lobbies.set(code, lb);
+        joinLobbyInternal(ws, lb, 0);
+        pullSquadIntoLobby(ws, lb, 0);
+        break;
+      }
+      case 'lobby_join': {
+        const code = String(msg.code || '').trim().toUpperCase();
+        const lb = lobbies.get(code);
+        if (!lb) return send(ws, { type: 'error', text: `Lobby "${code}" not found.` });
+        if (lb.status === 'in_match') return send(ws, { type: 'error', text: 'Match is already in progress.' });
+        joinLobbyInternal(ws, lb);
+        const myP = lb.players.get(ws.userId);
+        pullSquadIntoLobby(ws, lb, myP ? myP.team : null);
+        break;
+      }
+      case 'lobby_leave': {
+        leaveLobby(ws);
+        send(ws, { type: 'lobby_left' });
+        break;
+      }
+      case 'lobby_settings': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.hostId !== ws.userId || lb.status !== 'waiting') return;
+        lb.settings = sanitizeLobbySettings(msg.settings, lb.settings);
+        // Ensure team counts still fit new teamSize
+        let b = 0, o = 0;
+        for (const p of lb.players.values()) {
+          if (p.team === 0) { if (++b > lb.settings.teamSize) p.team = -1; }
+          else if (p.team === 1) { if (++o > lb.settings.teamSize) p.team = -1; }
+        }
+        broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) });
+        break;
+      }
+      case 'lobby_team': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'waiting') return;
+        const p = lb.players.get(ws.userId);
+        if (!p) return;
+        const want = Number(msg.team);
+        if (![0, 1, -1].includes(want)) return;
+        if (want === 0 || want === 1) {
+          let count = 0;
+          for (const pl of lb.players.values()) if (pl.team === want && pl.userId !== ws.userId) count++;
+          if (count >= lb.settings.teamSize) {
+            return send(ws, { type: 'error', text: 'That team is full.' });
+          }
+        }
+        p.team = want;
+        broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) });
+        break;
+      }
+      case 'lobby_ready': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'waiting') return;
+        const p = lb.players.get(ws.userId);
+        if (!p) return;
+        p.ready = !p.ready;
+        broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) });
+        break;
+      }
+      case 'lobby_kick': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.hostId !== ws.userId) return;
+        const targetId = String(msg.userId || '');
+        if (!targetId || targetId === ws.userId) return;
+        const targetWs = clientsByUserId.get(targetId);
+        if (targetWs) {
+          leaveLobby(targetWs, 'kicked');
+          send(targetWs, { type: 'lobby_left', kicked: true });
+          send(targetWs, { type: 'toast', text: 'YOU WERE KICKED FROM THE LOBBY' });
+        }
+        break;
+      }
+      case 'lobby_chat': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb) return;
+        ws.chatTimes = ws.chatTimes.filter(t => now - t < 10000);
+        if (ws.chatTimes.length >= 6) return;
+        ws.chatTimes.push(now);
+        const text = String(msg.text || '').trim().slice(0, 160);
+        if (!text) return;
+        broadcastLobby(lb, { type: 'lobby_chat', from: ws.username, text });
+        break;
+      }
+      case 'lobby_start': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.hostId !== ws.userId || lb.status !== 'waiting') return;
+        // Need at least 1 active player
+        const active = [...lb.players.values()].filter(p => p.team === 0 || p.team === 1);
+        if (active.length === 0) {
+          return send(ws, { type: 'error', text: 'At least one player must be on Blue or Orange.' });
+        }
+        lb.status = 'in_match';
+        lb.ac = new Map();
+        lb.match = {
+          startedAt: now,
+          lastGoalAt: 0,
+          lastResetAt: now,
+          score: [0, 0],
+          finished: false
+        };
+        const snap = lobbySnapshot(lb);
+        broadcastLobby(lb, {
+          type: 'match_start',
+          lobby: snap,
+          hostId: lb.hostId,
+          settings: lb.settings,
+          players: snap.players
+        });
+        break;
+      }
+
+      // ---- IN-MATCH REAL-TIME SYNC + ANTI-CHEAT ----
+      case 'p_state': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'in_match') return;
+        const validated = validatePlayerState(lb, ws, msg);
+        if (!validated) return;
+        broadcastLobby(lb, validated, ws.userId);
+        break;
+      }
+      case 'b_state': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId) return;
+        const validated = validateBallState(lb, msg);
+        if (!validated) return;
+        broadcastLobby(lb, validated, ws.userId);
+        break;
+      }
+      case 'match_kickoff': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId) return;
+        if (lb.match) lb.match.lastResetAt = now;
+        broadcastLobby(lb, { type: 'match_kickoff' }, ws.userId);
+        break;
+      }
+      case 'match_goal': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId || !lb.match) return;
+        // Anti-cheat goal validation
+        if (now - lb.match.lastGoalAt < 2500) return;
+        const goalTeam = Number(msg.goalTeam);
+        if (goalTeam !== 0 && goalTeam !== 1) return;
+        const pos = isVec3(msg.pos) ? msg.pos : [0, 2, goalTeam === 0 ? -55 : 55];
+        if (Math.abs(pos[2]) < 30) return; // ball must actually be in goal area
+        const speed = Math.min(250, Math.max(0, Math.round(Number(msg.speed) || 0)));
+
+        lb.match.lastGoalAt = now;
+        lb.match.lastResetAt = now;
+        const scoringTeam = 1 - goalTeam;
+        lb.match.score[scoringTeam]++;
+
+        broadcastLobby(lb, {
+          type: 'match_goal_ack',
+          goalTeam,
+          scoringTeam,
+          score: lb.match.score.slice(),
+          scorerName: typeof msg.scorerName === 'string' ? msg.scorerName.slice(0, 24) : '',
+          assistName: typeof msg.assistName === 'string' ? msg.assistName.slice(0, 24) : '',
+          own: !!msg.own,
+          speed,
+          pos,
+          explosion: Number(msg.explosion) || 0
+        }, ws.userId);
+        break;
+      }
+      case 'match_end': {
+        const lb = lobbies.get(ws.lobbyCode);
+        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId || !lb.match) return;
+        const score = Array.isArray(msg.score) ? msg.score : lb.match.score;
+        finalizeMultiplayerMatch(lb, score, msg.stats || {});
+        break;
+      }
+    }
+  });
+
+  ws.on('close', () => {
+    if (ws.userId && clientsByUserId.get(ws.userId) === ws) {
+      clientsByUserId.delete(ws.userId);
+    }
+    leaveLobby(ws, 'disconnected');
+    leaveSquad(ws);
+  });
+});
+
+// Heartbeat to drop dead connections & keep Fly.io proxy alive
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 25000).unref();
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[HYPERSTRIKE] Server running on :${PORT} (region=${REGION}, data=${DATA_DIR})`);
+});
+
+function shutdown() {
+  console.log('[HYPERSTRIKE] Shutting down, flushing DB...');
+  flushDb();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
