@@ -901,6 +901,45 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    // CHANGE PASSWORD
+    if (req.method === 'POST' && pathname === '/api/password') {
+      const token = getBearerToken(req);
+      const user = getUserByToken(token);
+      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
+      if (!checkRateLimit('pass:' + user.id, 10, 60000)) {
+        return sendJson(res, 429, { error: 'Too many password change attempts. Please wait a minute.' });
+      }
+      const body = await readJsonBody(req);
+      const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+      const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+      const confirmPassword = typeof body.confirmPassword === 'string' ? body.confirmPassword : '';
+
+      if (!currentPassword || !verifyPassword(currentPassword, user.salt, user.passHash)) {
+        return sendJson(res, 401, { error: 'Current password is incorrect.' });
+      }
+      if (newPassword.length < 6 || newPassword.length > 128) {
+        return sendJson(res, 400, { error: 'New password must be at least 6 characters.' });
+      }
+      if (newPassword !== confirmPassword) {
+        return sendJson(res, 400, { error: 'New passwords do not match.' });
+      }
+      if (newPassword === currentPassword) {
+        return sendJson(res, 400, { error: 'New password must be different from your current password.' });
+      }
+
+      const salt = crypto.randomBytes(16).toString('hex');
+      user.salt = salt;
+      user.passHash = hashPassword(newPassword, salt);
+      const key = user.username.toLowerCase();
+      for (const [tok, sess] of Object.entries(db.sessions)) {
+        if (sess.usernameLower === key && tok !== token) {
+          delete db.sessions[tok];
+        }
+      }
+      markDirty();
+      return sendJson(res, 200, { ok: true });
+    }
+
     // CURRENT USER
     if (req.method === 'GET' && pathname === '/api/me') {
       const user = getUserByToken(getBearerToken(req));
