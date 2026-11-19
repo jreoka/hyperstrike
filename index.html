@@ -155,14 +155,6 @@ kbd{display:inline-block;min-width:24px;padding:3px 7px;margin:1px 2px;border:1p
 #clock.live .t{color:var(--accent);animation:blink .7s infinite}
 #clock.live .s{color:var(--accent)}
 @keyframes blink{50%{opacity:.5}}
-.roster{position:absolute;top:72px;display:flex;flex-direction:column;gap:4px}
-.roster.blue{left:calc(50% - 245px)}.roster.orange{left:calc(50% + 115px)}
-.roster .p{width:130px;font-size:11px;font-weight:700;letter-spacing:.08em;padding:3px 8px;background:rgba(6,10,22,.65);display:flex;justify-content:space-between;align-items:center}
-.roster .p .bb{width:34px;height:4px;background:rgba(255,255,255,.12);position:relative}
-.roster .p .bb i{position:absolute;left:0;top:0;bottom:0;background:var(--gold)}
-.roster.blue .p{border-left:3px solid var(--blue)}.roster.orange .p{border-left:3px solid var(--orange)}
-.roster .p.me{background:rgba(62,242,255,.16)}
-.roster .p.dead{opacity:.4;text-decoration:line-through}
 #radar{position:absolute;left:20px;top:16px;width:110px;height:142px;background:rgba(6,10,22,.72);border:1px solid var(--line);border-radius:6px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 #boostGauge{position:absolute;right:2.5vw;bottom:3.5vh;width:156px;height:156px}
 #boostGauge svg{width:100%;height:100%;overflow:visible}
@@ -248,7 +240,6 @@ kbd{display:inline-block;min-width:24px;padding:3px 7px;margin:1px 2px;border:1p
 #glitch{position:fixed;inset:0;pointer-events:none;z-index:8;background:repeating-linear-gradient(0deg,rgba(90,255,154,.045) 0 2px,transparent 2px 6px);animation:glitchJ .18s steps(2) infinite;box-shadow:inset 0 0 120px rgba(90,255,154,.28)}
 #glitch span{position:absolute;top:21%;left:50%;transform:translateX(-50%);font-weight:900;font-style:italic;letter-spacing:.4em;font-size:18px;color:#5aff9a;text-shadow:2px 0 #ff3fd8,-2px 0 #3ef2ff}
 @keyframes glitchJ{0%{transform:translate(0,0)}50%{transform:translate(3px,-2px)}100%{transform:translate(-2px,1px)}}
-.roster .p svg{width:13px;height:13px;margin-left:auto;margin-right:6px;flex:none}
 #feed .f svg{width:14px;height:14px;vertical-align:-2px;margin-right:6px}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px;margin-top:4px}
 .pgrid div{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:11px;font-weight:800;letter-spacing:.08em;cursor:help}
@@ -305,7 +296,7 @@ table.stats .mvp{color:var(--gold);font-size:10px;letter-spacing:.2em;margin-lef
   .navbtn:hover,.navbtn:focus-visible,body.gp-nav .navbtn:focus,.navbtn.active{padding-left:12px}
   #menu .right{padding:1vh 4vw 2vh;align-items:stretch}
   #menuPanel,#menuPanel.wide{width:100%;max-height:66vh}
-  .roster,#radar{display:none}
+  #radar{display:none}
   #boostGauge{width:120px;height:120px}
   #boostGauge .num b{font-size:36px}
   #speedo{right:calc(2.5vw + 130px)}
@@ -439,8 +430,6 @@ body.portrait-lock #rotateLock{display:flex}
     <div id="clock"><div class="t" id="clockT">5:00</div><div class="s" id="clockS">REGULATION</div></div>
     <div class="team orange"><span class="tscore" id="scoreOrange">0</span><span class="tname" id="nameOrange">ORANGE</span></div>
   </div>
-  <div class="roster blue" id="rosterBlue"></div>
-  <div class="roster orange" id="rosterOrange"></div>
   <div id="modeInfo" class="hidden"></div>
   <div id="feed"></div>
   <div id="countdown"></div>
@@ -1911,23 +1900,23 @@ function buildEnvMap(renderer, def, skyMat) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(inten), side: THREE.DoubleSide }));
     m.position.set(x, y, z); m.lookAt(0, 0, 0); sc.add(m);
   };
-  // Bright HDR key sun / main light source for crisp clearcoat & chrome reflections
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(4.5, 24), new THREE.MeshBasicMaterial({ color: sunCol.clone().multiplyScalar(8.5), side: THREE.DoubleSide }));
+  // Soft HDR key sun / main light source for balanced reflections
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(4.5, 24), new THREE.MeshBasicMaterial({ color: sunCol.clone().multiplyScalar(3.2), side: THREE.DoubleSide }));
   sunDisc.position.copy(sdir).multiplyScalar(38); sunDisc.lookAt(0, 0, 0); sc.add(sunDisc);
-  // 4 stadium floodlight banks in upper corners for realistic automotive highlights
+  // 4 stadium floodlight banks in upper corners for soft automotive highlights
   const floodCol = sunCol.clone().lerp(new THREE.Color(0xffffff), 0.45);
   for (const [fx, fz] of [[26, 30], [-26, 30], [26, -30], [-26, -30]]) {
-    panel(fx, 24, fz, 10, 4.5, floodCol, def.indoor ? 4.2 : 5.5);
+    panel(fx, 24, fz, 10, 4.5, floodCol, def.indoor ? 1.8 : 2.2);
   }
   // Arena perimeter accent strips & team endzone bounce lights (-Z blue, +Z orange)
-  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; panel(Math.cos(a) * 32, 14, Math.sin(a) * 32, 14, 2.2, i % 2 ? lc : ac, 2.2); }
-  panel(0, 9, -36, 26, 8, new THREE.Color(0x2f8fff), 2.4);
-  panel(0, 9, 36, 26, 8, new THREE.Color(0xff8a1f), 2.4);
+  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; panel(Math.cos(a) * 32, 14, Math.sin(a) * 32, 14, 2.2, i % 2 ? lc : ac, 0.95); }
+  panel(0, 9, -36, 26, 8, new THREE.Color(0x2f8fff), 1.0);
+  panel(0, 9, 36, 26, 8, new THREE.Color(0xff8a1f), 1.0);
   // Soft overhead sky diffuser + grounded pitch bounce
-  panel(0, 42, 0, 38, 38, hemiSky, 1.0);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: new THREE.Color(def.c.base2).lerp(new THREE.Color(def.light.hemiGround), 0.4).multiplyScalar(0.65) }));
+  panel(0, 42, 0, 38, 38, hemiSky, 0.65);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: new THREE.Color(def.c.base2).lerp(new THREE.Color(def.light.hemiGround), 0.4).multiplyScalar(0.55) }));
   floor.rotation.x = -PI / 2; floor.position.y = -6; sc.add(floor);
-  const rt = pm.fromScene(sc, 0.02);
+  const rt = pm.fromScene(sc, 0.04);
   pm.dispose(); sc.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
   return rt.texture;
 }
@@ -2295,7 +2284,7 @@ else { base = mix(base, lc * 0.4, ln); fEmis += lc * ln * uGlow; }
 if(abs(fp.y) > uL){ base = mix(base, teamCol * 0.25, 0.5); float gp = fp.y < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * (0.14 + gp * 2.6) * (0.6 + 0.4 * sin(abs(fp.y) * 3.0 - uTime * 4.0)); }
 // Geometric specular anti-aliasing to prevent distant highlight shimmering without washing out near roughness
 float aaRough = clamp(length(fwidth(fp)) * 0.22, 0.0, 0.38);
-fRough = clamp(max(fRough, aaRough), 0.035, 0.98);
+fRough = clamp(max(mix(fRough, 1.0, 0.22), aaRough), 0.14, 0.98);
 // Perimeter & wall-fillet ambient occlusion
 float ao = smoothstep(0.0, 3.6, -d2 - uRf + 0.45); base *= mix(0.42, 1.0, ao);
 float cring = lmask(length(fp) - 9.5, 0.6) * (uType == 0 || uType == 4 || uType == 5 || uType == 8 ? 1.0 : 0.0); fEmis += mix(uGrid, uLine, 0.5) * cring * 0.08 * (1.0 + sin(uTime * 2.0));
@@ -2397,7 +2386,7 @@ class ArenaVisual {
           float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
           float gloss = pow(clamp(1.0 - fRough, 0.0, 1.0), 2.2);
           vec3 reflTint = mix(vec3(1.0), base * 1.4 + 0.25, fMetal * 0.6);
-          totalEmissiveRadiance += rcol * reflTint * uReflect * 0.72 * gloss * mix(0.22, 1.0, fres) * (1.0 - ln * 0.65); }`
+          totalEmissiveRadiance += rcol * reflTint * uReflect * 0.34 * gloss * mix(0.22, 1.0, fres) * (1.0 - ln * 0.65); }`
     });
     const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.add(m); this.floor = m;
   }
@@ -2446,7 +2435,7 @@ class ArenaVisual {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.FrontSide });
     injectStandard(mat, 'wall' + d.id, wallUniforms, {
       vertexDecl: 'attribute vec2 wuv; varying vec2 vWuv;', vertexMain: 'vWuv = wuv;', fragDecl: WALL_FRAG, mapFrag: WALL_MAP,
-      roughFrag: 'float roughnessFactor = fRough;', metalFrag: 'float metalnessFactor = fMetal;',
+      roughFrag: 'float roughnessFactor = clamp(mix(fRough, 1.0, 0.25), 0.2, 0.98);', metalFrag: 'float metalnessFactor = fMetal;',
       normalFrag: 'normal = normalize(normal + vec3(wBevel, 0.0) * 0.35);',
       emisFrag: 'totalEmissiveRadiance += fEmis;'
     });
@@ -3238,11 +3227,11 @@ vec3 paintColor(vec3 p, vec3 n){
 
 function makePaintMaterial(custom, team) {
   const fin = custom.finish;
-  const opts = { color: 0xffffff, roughness: 0.24, metalness: 0.18, clearcoat: 1.0, clearcoatRoughness: 0.035, envMapIntensity: 1.45 };
-  if (fin === 1) Object.assign(opts, { metalness: 0.82, roughness: 0.26, clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.6 });
-  if (fin === 2) Object.assign(opts, { metalness: 0.04, roughness: 0.68, clearcoat: 0.0, sheen: 0.45, sheenRoughness: 0.62, sheenColor: new THREE.Color(0xffffff), envMapIntensity: 0.85 });
-  if (fin === 3) Object.assign(opts, { metalness: 0.42, roughness: 0.18, clearcoat: 1.0, clearcoatRoughness: 0.03, iridescence: 1.0, iridescenceIOR: 1.55, iridescenceThicknessRange: [200, 650], envMapIntensity: 1.65 });
-  if (fin === 4) Object.assign(opts, { map: TexGen.carbon(), metalness: 0.35, roughness: 0.28, clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.5 });
+  const opts = { color: 0xffffff, roughness: 0.36, metalness: 0.14, clearcoat: 0.45, clearcoatRoughness: 0.18, envMapIntensity: 0.75 };
+  if (fin === 1) Object.assign(opts, { metalness: 0.68, roughness: 0.36, clearcoat: 0.45, clearcoatRoughness: 0.18, envMapIntensity: 0.85 });
+  if (fin === 2) Object.assign(opts, { metalness: 0.04, roughness: 0.76, clearcoat: 0.0, sheen: 0.35, sheenRoughness: 0.7, sheenColor: new THREE.Color(0xffffff), envMapIntensity: 0.5 });
+  if (fin === 3) Object.assign(opts, { metalness: 0.35, roughness: 0.3, clearcoat: 0.55, clearcoatRoughness: 0.16, iridescence: 1.0, iridescenceIOR: 1.55, iridescenceThicknessRange: [200, 650], envMapIntensity: 0.9 });
+  if (fin === 4) Object.assign(opts, { map: TexGen.carbon(), metalness: 0.28, roughness: 0.4, clearcoat: 0.4, clearcoatRoughness: 0.2, envMapIntensity: 0.75 });
   const mat = new THREE.MeshPhysicalMaterial(opts);
   if (fin === 4 && mat.map) { mat.map.repeat.set(6, 6); }
   const prim = custom.primary < 0 ? TEAM_BODY[team] : PALETTE[custom.primary];
@@ -3297,11 +3286,11 @@ class CarModel {
   build() {
     const D = this.design, team = this.team, c = this.custom;
     const paint = this.paint = makePaintMaterial(c, team);
-    const dark = sharedMat('dark', () => new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.5, metalness: 0.48, envMapIntensity: 1.1 }));
-    const carbon = sharedMat('carbon', () => new THREE.MeshPhysicalMaterial({ map: TexGen.carbon(), roughness: 0.26, metalness: 0.42, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.45 }));
-    const glass = sharedMat('glass', () => new THREE.MeshPhysicalMaterial({ color: 0x050912, roughness: 0.03, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.02, reflectivity: 1.0, ior: 1.52, envMapIntensity: 2.2 }));
-    const chrome = sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.1, metalness: 1.0, envMapIntensity: 1.85 }));
-    const accent = new THREE.MeshPhysicalMaterial({ color: PALETTE[c.secondary], roughness: 0.24, metalness: 0.55, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.4 });
+    const dark = sharedMat('dark', () => new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.62, metalness: 0.3, envMapIntensity: 0.55 }));
+    const carbon = sharedMat('carbon', () => new THREE.MeshPhysicalMaterial({ map: TexGen.carbon(), roughness: 0.42, metalness: 0.3, clearcoat: 0.35, clearcoatRoughness: 0.22, envMapIntensity: 0.7 }));
+    const glass = sharedMat('glass', () => new THREE.MeshPhysicalMaterial({ color: 0x050912, roughness: 0.1, metalness: 0.1, clearcoat: 0.5, clearcoatRoughness: 0.1, reflectivity: 0.7, ior: 1.52, envMapIntensity: 1.0 }));
+    const chrome = sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.22, metalness: 0.9, envMapIntensity: 0.95 }));
+    const accent = new THREE.MeshPhysicalMaterial({ color: PALETTE[c.secondary], roughness: 0.38, metalness: 0.35, clearcoat: 0.4, clearcoatRoughness: 0.18, envMapIntensity: 0.7 });
     const teamGlow = new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM_GLOW[team]).multiplyScalar(3.2) });
     const headMat = sharedMat('head', () => new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.95, 1.0).multiplyScalar(5) }));
     this.tailMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.05, 0.03).multiplyScalar(3) });
@@ -4113,10 +4102,9 @@ class AudioSystem {
   firework(pos) { this.burst(2500, 0.4, 0.6, 0.35, pos, 0.8, 'highpass'); this.tone('sine', 70, 30, 0.6, 0.35, pos, 0.7); for (let i = 0; i < 6; i++) this.burst(3000 + Math.random() * 3000, 2, 0.05, 0.08, pos, 0.5, 'bandpass', 0.15 + Math.random() * 0.6); }
   goal() {
     if (!this.ready) return;
-    this.tone('sine', 80, 25, 2.2, 0.9, null, 0.9); this.burst(500, 0.4, 2.2, 0.9, null, 1.0, 'lowpass', 0, 80); this.burst(5000, 0.5, 1.2, 0.35, null, 0.9, 'highpass');
+    this.tone('sine', 80, 25, 2.2, 0.9, null, 0.9); this.burst(500, 0.4, 1.4, 0.85, null, 0.6, 'lowpass', 0, 80); this.burst(5000, 0.5, 0.35, 0.22, null, 0.3, 'highpass');
     [523, 659, 784, 1046].forEach((f, i) => this.tone('sawtooth', f, f, 0.6, 0.06, null, 0.6, 0.15 + i * 0.09));
     this.horn(0.3);
-    this.crowdCheer(1.0, 5);
   }
   power(kind, pos) {
     if (!this.ready) return;
@@ -4154,13 +4142,6 @@ class AudioSystem {
   }
   buildCrowd() {
     const ctx = this.ctx;
-    this.crowd = ctx.createGain(); this.crowd.gain.value = 0.0; this.crowd.connect(this.amb);
-    const src = this.noiseSrc(true, true);
-    const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 520; f1.Q.value = 0.6;
-    const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 1400; f2.Q.value = 0.9;
-    const g2 = ctx.createGain(); g2.gain.value = 0.5;
-    src.connect(f1).connect(this.crowd); src.connect(f2).connect(g2).connect(this.crowd); src.start();
-    this.crowdF = f1;
     this.humG = ctx.createGain(); this.humG.gain.value = 0; this.humG.connect(this.amb);
     const hum = ctx.createOscillator(); hum.type = 'sine'; hum.frequency.value = 55; const hum2 = ctx.createOscillator(); hum2.type = 'sine'; hum2.frequency.value = 82.5;
     const hl = ctx.createGain(); hl.gain.value = 0.5; hum.connect(this.humG); hum2.connect(hl).connect(this.humG); hum.start(); hum2.start();
@@ -4171,13 +4152,8 @@ class AudioSystem {
     this.crowdBase = def.crowdBase; this.humBase = indoor ? 0.03 : 0.0;
     this.humG.gain.setTargetAtTime(this.humBase, this.ctx.currentTime, 0.5);
   }
-  crowdCheer(amount, dur) { this.crowdExcite = Math.max(this.crowdExcite, amount); this.cheerT = dur; }
-  updateAmbience(dt, intensity) {
-    if (!this.ready) return;
-    if (this.cheerT > 0) this.cheerT -= dt; else this.crowdExcite = Math.max(0, this.crowdExcite - dt * 0.4);
-    const v = this.crowdBase * (1 + intensity * 1.5) + this.crowdExcite * 0.35;
-    const t = this.ctx.currentTime; this.crowd.gain.setTargetAtTime(v, t, 0.2); this.crowdF.frequency.setTargetAtTime(480 + this.crowdExcite * 300 + intensity * 120, t, 0.3);
-  }
+  crowdCheer(amount, dur) { }
+  updateAmbience(dt, intensity) { }
   startMusic(mode) {
     if (!this.ready) return; this.musicMode = mode; this.applyVolumes();
     if (this.musicOn) return; this.musicOn = true;
@@ -5045,7 +5021,7 @@ float soccer(vec3 n, out float isPent){
 }`;
 class BallVisual {
   constructor(scene) {
-    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.4, clearcoat: 0.75, clearcoatRoughness: 0.14, envMapIntensity: 1.55 });
+    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.42, metalness: 0.25, clearcoat: 0.25, clearcoatRoughness: 0.28, envMapIntensity: 0.75 });
     this.U = { uSeam: { value: new THREE.Color(0x9fdcff) }, uGlow: { value: 0.4 } };
     injectStandard(mat, 'ball', this.U, {
       vertexDecl: 'varying vec3 vOPos;', vertexMain: 'vOPos = position;', fragDecl: BALL_GLSL,
@@ -5056,8 +5032,8 @@ class BallVisual {
         vec3 bBase = mix(vec3(0.84, 0.87, 0.92), vec3(0.14, 0.15, 0.19), isPent);
         bBase *= (0.9 + 0.1 * bGrain) * (0.78 + 0.22 * bBevel);
         diffuseColor.rgb = mix(bBase, vec3(0.03), bSeam);`,
-      roughFrag: `float roughnessFactor = mix(mix(0.24, 0.56, isPent) + (bGrain - 0.5) * 0.08, 0.82, bSeam);`,
-      metalFrag: `float metalnessFactor = mix(mix(0.55, 0.15, isPent), 0.08, bSeam);`,
+      roughFrag: `float roughnessFactor = mix(mix(0.38, 0.66, isPent) + (bGrain - 0.5) * 0.08, 0.84, bSeam);`,
+      metalFrag: `float metalnessFactor = mix(mix(0.32, 0.1, isPent), 0.06, bSeam);`,
       normalFrag: `{
         float bH = bBevel * 0.85 + bGrain * 0.08 * isPent;
         vec3 dPosX = dFdx(vViewPosition); vec3 dPosY = dFdy(vViewPosition);
@@ -6651,14 +6627,13 @@ class UIManager {
   setupHud(game) {
     this.clearHudFX();
     const m = game.mode; const isMatch = m instanceof MatchMode;
-    $('scorebar').classList.toggle('hidden', !isMatch); $('rosterBlue').classList.toggle('hidden', !isMatch); $('rosterOrange').classList.toggle('hidden', !isMatch);
+    $('scorebar').classList.toggle('hidden', !isMatch);
     $('modeInfo').classList.toggle('hidden', isMatch);
     $('radar').classList.toggle('hidden', !isMatch || !Settings.data.showRadar);
     const hasPlayer = !!game.player; $('boostGauge').classList.toggle('hidden', !hasPlayer); $('speedo').classList.toggle('hidden', !hasPlayer); $('camTag').classList.toggle('hidden', false);
     if (isMatch) { this.updateScore(m.score); const tn = game.teamNames || ['BLUE', 'ORANGE']; $('nameBlue').textContent = tn[0]; $('nameOrange').textContent = tn[1]; }
     $('hint').classList.toggle('hidden', !!hasPlayer && !(m instanceof MatchMode && !game.player));
     if (!hasPlayer) $('hint').textContent = 'SPECTATING · V cycle camera · TAB scoreboard · ESC menu';
-    this.rosterKey = '';
   }
   updateHud(game, dt) {
     const p = game.player, m = game.mode, S = Settings.data;
@@ -6675,12 +6650,6 @@ class UIManager {
       $('clock').classList.toggle('ot', m.overtime);
       $('clock').classList.toggle('low', !m.overtime && !m.unlimited && !zeroLive && m.timeLeft < 30 && m.timeLeft > 0);
       $('clock').classList.toggle('live', zeroLive);
-      const key = game.world.cars.map(c => c.name + (c.demolished ? 1 : 0) + Math.round(c.boost / 10) + (c.item || '')).join();
-      if (key !== this.rosterKey) {
-        this.rosterKey = key;
-        const ic = (c) => c.item && POWER_BY_ID[c.item] && (!p || c.team === p.team || !p) ? powerIcon(c.item).replace('<svg ', `<svg style="color:${POWER_BY_ID[c.item].color}" `) : '';
-        for (const team of [0, 1]) $(team === 0 ? 'rosterBlue' : 'rosterOrange').innerHTML = game.world.cars.filter(c => c.team === team).map(c => `<div class="p ${c === p ? 'me' : ''} ${c.demolished ? 'dead' : ''}"><span>${c.name}</span>${ic(c)}<span class="bb"><i style="width:${c.boost}%"></i></span></div>`).join('');
-      }
       if (S.showRadar) { $('radar').classList.remove('hidden'); this.drawRadar(game); } else $('radar').classList.add('hidden');
     } else {
       const info = m && m.hudInfo && m.hudInfo();
@@ -7510,7 +7479,7 @@ class GameEngine {
       this.audio.updateAmbience(vdt, ballHeat);
     }
     const av = this.arenaVisual;
-    if (av.refl) { const on = R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]); av.floor.material.envMapIntensity = on ? 0.38 : 0.85; }
+    if (av.refl) { const on = R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]); av.floor.material.envMapIntensity = on ? 0.25 : 0.52; }
     R.render(this.time);
     if (this.inGame) this.ui.updateHud(this, vdt || 0.016);
   }
