@@ -17,6 +17,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:#04060d;color:var(--ink);font-family:var(--font);user-select:none;-webkit-user-select:none;touch-action:none}
 canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block;outline:none}
+body.hide-cursor,body.hide-cursor *{cursor:none!important}
 .hidden{display:none!important}
 .layer{position:fixed;inset:0;pointer-events:none}
 .layer.interactive{pointer-events:auto}
@@ -659,7 +660,7 @@ class InputManager {
     this.keys = new Set(); this.pressed = new Set(); this.mouse = { l: false, r: false, m: false, dx: 0, dy: 0, drag: false };
     this.pad = null; this.padPrev = []; this.padPressed = new Set(); this.usingPad = false;
     this.touch = { active: false, thr: 0, steer: 0, jump: false, boost: false, slide: false, camToggle: false, item: false };
-    this.lastMouseMove = 0; this.pointerLocked = false;
+    this.lastMouseMove = 0; this.lastCursorMove = performance.now(); this.pointerLocked = false;
     addEventListener('keydown', e => {
       if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'text') return;
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
@@ -678,9 +679,14 @@ class InputManager {
     addEventListener('mouseup', e => { if (e.button === 0) this.mouse.l = false; if (e.button === 2) this.mouse.r = false; if (e.button === 1) this.mouse.m = false; });
     addEventListener('contextmenu', e => { if (Game && Game.inGame) e.preventDefault(); });
     addEventListener('mousemove', e => {
-      if (this.pointerLocked) { this.mouse.dx += e.movementX; this.mouse.dy += e.movementY; this.lastMouseMove = performance.now(); }
+      const now = performance.now();
+      if (this.pointerLocked) { this.mouse.dx += e.movementX; this.mouse.dy += e.movementY; this.lastMouseMove = now; }
+      else { this.lastCursorMove = now; }
     });
-    document.addEventListener('pointerlockchange', () => { this.pointerLocked = !!document.pointerLockElement; });
+    document.addEventListener('pointerlockchange', () => {
+      this.pointerLocked = !!document.pointerLockElement;
+      if (!this.pointerLocked) this.lastCursorMove = performance.now();
+    });
     addEventListener('gamepadconnected', () => { Events.emit('pad', true); });
     addEventListener('gamepaddisconnected', () => { Events.emit('pad', false); });
     this.initTouch();
@@ -1042,7 +1048,7 @@ const PHYS = {
   brake: 35, coast: 5.25, jumpImp: 2.92, jumpHold: 14.58, jumpHoldT: 0.2, dodgeWindow: 1.25,
   flipTime: 0.65, flipRate: 5.5,
   suspRest: 0.18, suspMax: 0.25, suspK: 55, suspC: 7.0, suspGrace: 0.05, sticky: 3.25,
-  ballDrag: 0.0305, ballRest: 0.6, ballFric: 0.35,
+  ballDrag: 0.0305, ballRest: 0.6, ballFric: 0.35, ballMagnus: 0.011,
   T_roll: 36.08, D_roll: 4.47, T_pitch: 12.15, D_pitch: 2.80, T_yaw: 8.92, D_yaw: 1.89
 };
 const THROTTLE_CURVE = [[0, 16], [14, 1.6], [14.1, 0], [30, 0]];
@@ -1107,6 +1113,11 @@ const _bn = new V3(), _br = new V3(), _bc = new V3(), _bt = new V3();
 function ballIntegrate(b, dt, arena, wantEvent) {
   const R = PHYS.ballR;
   b.vel.y -= PHYS.g * (b.gScale === undefined ? 1 : b.gScale) * dt;
+  // Subtle Magnus effect (spin-induced curve in flight)
+  if (b.angVel.lengthSq() > 1e-4) {
+    _bt.crossVectors(b.angVel, b.vel);
+    b.vel.addScaledVector(_bt, PHYS.ballMagnus * dt);
+  }
   const drag = 1 - PHYS.ballDrag * dt; b.vel.multiplyScalar(drag);
   let sp = b.vel.length(); if (sp > PHYS.ballMax) b.vel.multiplyScalar(PHYS.ballMax / sp);
   b.pos.addScaledVector(b.vel, dt);
@@ -1122,7 +1133,7 @@ function ballIntegrate(b, dt, arena, wantEvent) {
     if (vn < 0) {
       _br.copy(n).multiplyScalar(-R);
       _bc.crossVectors(b.angVel, _br).add(b.vel);
-      const e = vn < -1.2 ? PHYS.ballRest : 0;
+      const e = vn < -1.4 ? PHYS.ballRest : vn < -0.35 ? PHYS.ballRest * ((-vn - 0.35) / 1.05) : 0;
       const Jn = -(1 + e) * vn;
       b.vel.addScaledVector(n, Jn);
       const cvn = _bc.dot(n); _bt.copy(_bc).addScaledVector(n, -cvn);
@@ -1139,7 +1150,7 @@ function ballIntegrate(b, dt, arena, wantEvent) {
     }
   }
   const w = b.angVel.length(); if (w > PHYS.ballMaxAng) b.angVel.multiplyScalar(PHYS.ballMaxAng / w);
-  if (b.onGround) b.angVel.multiplyScalar(1 - 0.02 * dt);
+  if (b.onGround) b.angVel.multiplyScalar(1 - 0.03 * dt);
   return ev;
 }
 
@@ -1188,7 +1199,7 @@ class Car {
     this.wheels = WHEEL_LAYOUT.map(w => ({ local: new V3(w.x * hb.hx / 0.59, -0.04, w.z * hb.hz / 0.42), front: w.front, r: 0.17, contact: false, len: PHYS.suspRest, prevLen: PHYS.suspRest, normal: new V3(0, 1, 0), spin: 0, steer: 0 }));
     this.contacts = 0; this.onGround = false; this.groundNormal = new V3(0, 1, 0);
     this.jumping = false; this.jumpHoldT = 0; this.jumped = false; this.hasFlip = false; this.timeSinceJump = 0; this.doubleJumped = false;
-    this.flipping = false; this.flipT = 0; this.flipAxis = new V3(); this.groundLock = 0;
+    this.flipping = false; this.flipT = 0; this.flipAxis = new V3(); this.groundLock = 0; this.coyoteT = 0;
     this.airTime = 0; this.bodyContactT = 0; this.bodyContact = false;
     this.isBoosting = false; this.boostT = 0; this.supersonic = false; this.wasSupersonic = false; this.sliding = 0; this.handbrake = false;
     this.demolished = false; this.respawnT = 0;
@@ -1208,7 +1219,7 @@ class Car {
   place(x, y, z, yaw) {
     this.pos.set(x, y, z); this.vel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.quat.setFromAxisAngle(tmpV.set(0, 1, 0), yaw); this.savePrev();
-    this.jumping = this.jumped = this.flipping = this.doubleJumped = false; this.hasFlip = false; this.airTime = 0;
+    this.jumping = this.jumped = this.flipping = this.doubleJumped = false; this.hasFlip = false; this.airTime = 0; this.coyoteT = 0;
     this.supersonic = this.wasSupersonic = false;
     this.basis.fromQuat(this.quat); this.contacts = 4; this.onGround = true;
     for (const w of this.wheels) { w.len = w.prevLen = PHYS.suspRest - 0.044; w.contact = true; }
@@ -1260,6 +1271,8 @@ class Car {
     this.contacts = contacts;
     if (contacts > 0) this.groundNormal.copy(gn.normalize()); else this.groundNormal.set(0, 1, 0);
     this.onGround = contacts >= 3;
+    if (contacts >= 2 && !this.jumping && !this.jumped) this.coyoteT = 0.08;
+    else this.coyoteT = Math.max(0, this.coyoteT - dt);
     const n = this.groundNormal;
 
     const throttleIn = (c.boost && (this.boost > 0 || this.unlimitedBoost)) ? 1 : c.throttle;
@@ -1283,38 +1296,45 @@ class Car {
       }
       acc.addScaledVector(ft, a * traction);
       const sliding = c.handbrake;
-      this.sliding = damp(this.sliding, sliding ? 1 : 0, sliding ? 12 : 3, dt);
+      this.sliding = damp(this.sliding, sliding ? 1 : 0, sliding ? 14 : 3.5, dt);
       const maxLat = lerp(62, 6.5, this.sliding);
       let dvl = -vr; const lim = maxLat * dt * traction;
       if (dvl > lim) dvl = lim; if (dvl < -lim) dvl = -lim;
       this.vel.addScaledVector(rt, dvl);
       this.slipSpeed = Math.abs(vr);
-      const vSteer = (Math.abs(vf) < 2 && Math.abs(throttleIn) > 0.1) ? Math.sign(throttleIn) * Math.max(Math.abs(vf), 2) : vf;
-      const targetYaw = -c.steer * vSteer * curve(STEER_CURVE, Math.abs(vSteer)) * (1 + 0.35 * this.sliding);
+      const planarSp = Math.hypot(vf, vr);
+      const driftDir = Math.abs(vf) > 0.5 ? Math.sign(vf) : (Math.abs(throttleIn) > 0.1 ? Math.sign(throttleIn) : 1);
+      const effVf = this.sliding > 0.1 ? lerp(vf, driftDir * planarSp, this.sliding * 0.75) : vf;
+      const vSteer = (Math.abs(effVf) < 2 && Math.abs(throttleIn) > 0.1) ? Math.sign(throttleIn) * Math.max(Math.abs(effVf), 2) : effVf;
+      const targetYaw = -c.steer * vSteer * curve(STEER_CURVE, Math.abs(vSteer)) * (1 + 0.55 * this.sliding);
       const curYaw = this.angVel.dot(n);
       this.angVel.addScaledVector(n, (targetYaw - curYaw) * Math.min(1, dt * 22 * traction));
-      if (contacts >= 3 && !this.jumping) {
+      if (contacts >= 2 && !this.jumping) {
+        const alignScale = contacts >= 3 ? 1 : 0.45;
         _cv3.copy(this.angVel).addScaledVector(n, -this.angVel.dot(n));
-        this.angVel.addScaledVector(_cv3, -Math.min(1, dt * 12));
-        _cv3.crossVectors(u, n); this.angVel.addScaledVector(_cv3, dt * 70);
-        const vn = this.vel.dot(n);
-        if (vn < 0) {
-          const spd = this.vel.length();
-          this.vel.addScaledVector(n, -vn);
-          if (-vn < spd * 0.45) { const l = this.vel.length(); if (l > 1e-3) this.vel.multiplyScalar(Math.min(spd, l + (spd - l) * 0.85) / l); }
+        this.angVel.addScaledVector(_cv3, -Math.min(1, dt * 12 * alignScale));
+        _cv3.crossVectors(u, n); this.angVel.addScaledVector(_cv3, dt * 70 * alignScale);
+        if (contacts >= 3) {
+          const vn = this.vel.dot(n);
+          if (vn < 0) {
+            const spd = this.vel.length();
+            this.vel.addScaledVector(n, -vn);
+            if (-vn < spd * 0.45) { const l = this.vel.length(); if (l > 1e-3) this.vel.multiplyScalar(Math.min(spd, l + (spd - l) * 0.85) / l); }
+          }
         }
       }
       if (!this.jumping) { this.jumped = false; this.doubleJumped = false; this.hasFlip = true; this.flipping = false; }
     } else {
-      this.sliding = damp(this.sliding, 0, 4, dt);
+      // Allow pre-charging powerslide in mid-air for smooth drift landings
+      this.sliding = damp(this.sliding, c.handbrake ? 0.85 : 0, c.handbrake ? 10 : 4, dt);
       this.slipSpeed = 0;
     }
 
     this.timeSinceJump += dt;
-    if (jumpPressed && contacts >= 2 && !this.jumping && this.groundLock <= 0) {
+    if (jumpPressed && (contacts >= 2 || this.coyoteT > 0) && !this.jumping && this.groundLock <= 0) {
       this.vel.addScaledVector(u, PHYS.jumpImp);
       this.jumping = true; this.jumpHoldT = 0; this.jumped = true; this.hasFlip = true; this.doubleJumped = false;
-      this.timeSinceJump = 0; this.groundLock = 0.12; this.events.push('jump');
+      this.timeSinceJump = 0; this.groundLock = 0.12; this.coyoteT = 0; this.events.push('jump');
     } else if (jumpPressed && contacts < 2 && this.bodyContact && this.contacts === 0) {
       this.vel.y += 3.5; _cv.crossVectors(u, tmpV.set(0, 1, 0)); if (_cv.lengthSq() < 0.01) _cv.copy(f);
       this.angVel.addScaledVector(_cv.normalize(), 7.5); this.events.push('jump');
@@ -1339,7 +1359,7 @@ class Car {
         if (this.flipT < PHYS.flipTime) {
           const cancel = this.flipT > 0.1 && this.flipAxis.z * (-pin) < -0.3 && Math.abs(this.flipAxis.z) > 0.3;
           if (!cancel) { wl.x = this.flipAxis.x * PHYS.flipRate; wl.z = this.flipAxis.z * PHYS.flipRate; b.toWorld(wl, this.angVel); pin = 0; rin = 0; }
-          else this.flipping = false;
+          else { wl.z *= 0.2; b.toWorld(wl, this.angVel); this.flipping = false; }
           if (this.flipT > 0.15 && this.vel.y < 0) this.vel.y *= Math.pow(0.35, dt * 4);
         } else if (this.flipT > 1.05) this.flipping = false;
         else { pin *= 0.3; rin *= 0.3; }
@@ -1413,7 +1433,7 @@ class Car {
       if (vn < 0) {
         const m = PHYS.carMass;
         const k = 1 / m + this.invInertiaTerm(_cr, nrm, m);
-        const e = vn < -3 ? 0.25 : 0.0;
+        const e = vn < -3.5 ? 0.18 : 0.0;
         const j = -(1 + e) * vn / k;
         this.vel.addScaledVector(nrm, j / m);
         _cv4.crossVectors(_cr, nrm).multiplyScalar(j); this.applyAngImpulse(_cv4, m);
@@ -1423,7 +1443,7 @@ class Car {
         if (vt > 1e-3) {
           _cv3.multiplyScalar(1 / vt);
           const kt = 1 / m + this.invInertiaTerm(_cr, _cv3, m);
-          const jt = Math.min(vt / kt, 0.45 * j);
+          const jt = Math.min(vt / kt, 0.22 * j);
           this.vel.addScaledVector(_cv3, -jt / m);
           _cv4.crossVectors(_cr, _cv3).multiplyScalar(-jt); this.applyAngImpulse(_cv4, m);
         }
@@ -1457,7 +1477,6 @@ function collideCarBall(car, ball, tick, arena) {
   _kcp.set(cx, cy, cz); b.toWorld(_kcp, _kcp).add(car.pos);
   const pen = R - dist;
   const mc = PHYS.carMass, mb = PHYS.ballMass;
-  const preRel = _k5.copy(ball.vel).sub(car.vel); const relSpeed = Math.min(preRel.length(), 46);
   const ballV0 = _k4.copy(ball.vel);
   const ballSpeed0 = ballV0.length();
   ball.pos.addScaledVector(_kn, pen * mc / (mc + mb));
@@ -1470,14 +1489,17 @@ function collideCarBall(car, ball, tick, arena) {
   const rc = _k2.copy(_kcp).sub(car.pos);
   const rb = _k3.copy(_kn).multiplyScalar(-R);
   const vc = _k1.crossVectors(car.angVel, rc).add(car.vel);
+  const preRel = _k5.copy(ball.vel).sub(vc);
+  const relSpeed = Math.min(preRel.length(), 46);
   const vb = tmpV.crossVectors(ball.angVel, rb).add(ball.vel);
   const vrel = vb.sub(vc);
   const vn = vrel.dot(_kn);
+  const angRecoil = car.contacts === 0 ? 0.25 : 0.4;
   if (vn < 0) {
     const k = 1 / mb + 1 / mc + car.invInertiaTerm(rc, _kn, mc);
     const j = -vn / k;
     ball.vel.addScaledVector(_kn, j / mb); car.vel.addScaledVector(_kn, -j / mc);
-    tmpV2.crossVectors(rc, _kn).multiplyScalar(-j); car.applyAngImpulse(tmpV2, mc);
+    tmpV2.crossVectors(rc, _kn).multiplyScalar(-j * angRecoil); car.applyAngImpulse(tmpV2, mc);
     const vt = tmpV3.copy(vrel).addScaledVector(_kn, -vn); const vtl = vt.length();
     if (vtl > 1e-3) {
       vt.multiplyScalar(1 / vtl);
@@ -1485,16 +1507,25 @@ function collideCarBall(car, ball, tick, arena) {
       const jt = Math.min(vtl / kt, 2.0 * j);
       ball.vel.addScaledVector(vt, -jt / mb); car.vel.addScaledVector(vt, jt / mc);
       tmpV2.crossVectors(rb, vt).multiplyScalar(-jt / (0.4 * mb * R * R)); ball.angVel.add(tmpV2);
-      tmpV2.crossVectors(rc, vt).multiplyScalar(jt); car.applyAngImpulse(tmpV2, mc);
+      tmpV2.crossVectors(rc, vt).multiplyScalar(jt * angRecoil); car.applyAngImpulse(tmpV2, mc);
     }
+  }
+  // Mid-air flip reset when underside of car makes solid contact with the ball
+  if (car.contacts === 0 && !car.hasFlip && _kl.y < -h.y * 0.45 && b.u.dot(_kn) < -0.72 && Math.abs(_kl.x) < h.x * 0.8 && Math.abs(_kl.z) < h.z * 0.8) {
+    car.hasFlip = true; car.jumped = false; car.timeSinceJump = 0;
   }
   const first = tick - car.lastBallTouchTick > 1;
   car.lastBallTouchTick = tick;
   if (first && relSpeed > 0.01) {
-    const hit = _k1.copy(ball.pos).sub(car.pos); hit.y *= 0.35; hit.normalize();
-    const fd = hit.dot(b.f); hit.addScaledVector(b.f, -fd * 0.35).normalize();
-    const extra = relSpeed * curve(EXTRA_IMPULSE_CURVE, relSpeed);
-    ball.vel.addScaledVector(hit, extra);
+    const onRoof = b.u.dot(_kn) > 0.72 && !car.flipping;
+    const dribbleScale = onRoof ? clamp((relSpeed - 1.2) / 2.6, 0, 1) : 1;
+    if (dribbleScale > 0.01) {
+      const hit = _k1.copy(ball.pos).sub(car.pos); hit.y *= 0.35; hit.normalize();
+      const fd = hit.dot(b.f); hit.addScaledVector(b.f, -fd * 0.35).normalize();
+      const flipBoost = car.flipping ? 1.12 : 1.0;
+      const extra = relSpeed * curve(EXTRA_IMPULSE_CURVE, relSpeed) * dribbleScale * flipBoost;
+      ball.vel.addScaledVector(hit, extra);
+    }
   }
   const sp = ball.vel.length(); if (sp > PHYS.ballMax) ball.vel.multiplyScalar(PHYS.ballMax / sp);
   if (!first) return null;
@@ -1553,6 +1584,18 @@ function collideCars(a, b, game) {
     a.vel.addScaledVector(n, -j / m); b.vel.addScaledVector(n, j / m);
     tmpV2.crossVectors(ra, n).multiplyScalar(-j); a.applyAngImpulse(tmpV2, m);
     tmpV2.crossVectors(rb, n).multiplyScalar(j); b.applyAngImpulse(tmpV2, m);
+    // Light car-to-car tangential friction
+    const vt = tmpV3.copy(vrel).addScaledVector(n, -vn); const vtl = vt.length();
+    if (vtl > 1e-3) {
+      vt.multiplyScalar(1 / vtl);
+      const kt = 2 / m + a.invInertiaTerm(ra, vt, m) + b.invInertiaTerm(rb, vt, m);
+      const jt = Math.min(vtl / kt, 0.2 * j);
+      a.vel.addScaledVector(vt, jt / m); b.vel.addScaledVector(vt, -jt / m);
+      tmpV2.crossVectors(ra, vt).multiplyScalar(jt); a.applyAngImpulse(tmpV2, m);
+      tmpV2.crossVectors(rb, vt).multiplyScalar(-jt); b.applyAngImpulse(tmpV2, m);
+    }
+    const wa = a.angVel.length(); if (wa > PHYS.carMaxAng) a.angVel.multiplyScalar(PHYS.carMaxAng / wa);
+    const wb = b.angVel.length(); if (wb > PHYS.carMaxAng) b.angVel.multiplyScalar(PHYS.carMaxAng / wb);
   }
   const now = game.time;
   for (const [att, vic] of [[a, b], [b, a]]) if (att.ovT > 0 && att.team !== vic.team && game.allowDemos) return { type: 'demo', attacker: att, victim: vic, overdrive: true };
@@ -1569,6 +1612,7 @@ function collideCars(a, b, game) {
     const rs = Math.min(closing, 46);
     tmpV3.set(nd.x, 0, nd.z); if (tmpV3.lengthSq() < 1e-4) tmpV3.copy(att.basis.f); tmpV3.normalize();
     vic.vel.addScaledVector(tmpV3, curve(BUMP_CURVE, rs) * 0.6).add(tmpV2.set(0, curve(BUMP_UP_CURVE, rs) * (vic.onGround ? 1 : 0.4), 0));
+    if (vic.onGround) vic.groundLock = Math.max(vic.groundLock, 0.06);
     result = { type: 'bump', attacker: att, victim: vic, strength: rs };
     break;
   }
@@ -1616,22 +1660,60 @@ class Renderer {
         uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThresh: { value: 1 }, uPrefilter: { value: 0 } },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
         fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uThresh; uniform float uPrefilter; varying vec2 vUv;
-          vec3 pf(vec3 c){ c = min(c, vec3(40.0)); float br = max(c.r, max(c.g, c.b)); float knee = uThresh*0.5;
-            float soft = clamp(br - uThresh + knee, 0.0, 2.0*knee); soft = soft*soft/(4.0*knee + 1e-4);
-            return c * max(soft, br - uThresh) / max(br, 1e-4); }
-          void main(){ vec2 o = uTexel*0.5;
-            vec3 s = texture2D(tSrc, vUv).rgb*4.0 + texture2D(tSrc, vUv+vec2(-o.x,-o.y)).rgb + texture2D(tSrc, vUv+vec2(o.x,-o.y)).rgb
-                   + texture2D(tSrc, vUv+vec2(-o.x,o.y)).rgb + texture2D(tSrc, vUv+vec2(o.x,o.y)).rgb;
-            s /= 8.0; if(uPrefilter > 0.5) s = pf(s); gl_FragColor = vec4(s, 1.0); }`
+          float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+          vec3 pf(vec3 c){
+            c = min(c, vec3(28.0));
+            float br = max(c.r, max(c.g, c.b));
+            float knee = uThresh * 0.55;
+            float soft = clamp(br - uThresh + knee, 0.0, 2.0 * knee);
+            soft = soft * soft / (4.0 * knee + 1e-4);
+            return c * max(soft, br - uThresh) / max(br, 1e-4);
+          }
+          vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d){
+            float wa = 1.0 / (1.0 + luma(a)); float wb = 1.0 / (1.0 + luma(b));
+            float wc = 1.0 / (1.0 + luma(c)); float wd = 1.0 / (1.0 + luma(d));
+            return (a*wa + b*wb + c*wc + d*wd) / (wa + wb + wc + wd);
+          }
+          void main(){
+            vec2 o = uTexel;
+            vec3 a = texture2D(tSrc, vUv + vec2(-2.0,  2.0)*o).rgb;
+            vec3 b = texture2D(tSrc, vUv + vec2( 0.0,  2.0)*o).rgb;
+            vec3 c = texture2D(tSrc, vUv + vec2( 2.0,  2.0)*o).rgb;
+            vec3 d = texture2D(tSrc, vUv + vec2(-2.0,  0.0)*o).rgb;
+            vec3 e = texture2D(tSrc, vUv).rgb;
+            vec3 f = texture2D(tSrc, vUv + vec2( 2.0,  0.0)*o).rgb;
+            vec3 g = texture2D(tSrc, vUv + vec2(-2.0, -2.0)*o).rgb;
+            vec3 h = texture2D(tSrc, vUv + vec2( 0.0, -2.0)*o).rgb;
+            vec3 i = texture2D(tSrc, vUv + vec2( 2.0, -2.0)*o).rgb;
+            vec3 j = texture2D(tSrc, vUv + vec2(-1.0,  1.0)*o).rgb;
+            vec3 k = texture2D(tSrc, vUv + vec2( 1.0,  1.0)*o).rgb;
+            vec3 l = texture2D(tSrc, vUv + vec2(-1.0, -1.0)*o).rgb;
+            vec3 m = texture2D(tSrc, vUv + vec2( 1.0, -1.0)*o).rgb;
+            vec3 s;
+            if(uPrefilter > 0.5){
+              vec3 g0 = karis(pf(a), pf(b), pf(d), pf(e));
+              vec3 g1 = karis(pf(b), pf(c), pf(e), pf(f));
+              vec3 g2 = karis(pf(d), pf(e), pf(g), pf(h));
+              vec3 g3 = karis(pf(e), pf(f), pf(h), pf(i));
+              vec3 g4 = karis(pf(j), pf(k), pf(l), pf(m));
+              s = (g0 + g1 + g2 + g3) * 0.125 + g4 * 0.5;
+            } else {
+              s = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+            }
+            gl_FragColor = vec4(max(s, vec3(0.0)), 1.0);
+          }`
       }),
       up: new THREE.ShaderMaterial({
         uniforms: { tSrc: { value: null }, tBase: { value: null }, uTexel: { value: new THREE.Vector2() }, uMix: { value: 1 } },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
         fragmentShader: `uniform sampler2D tSrc; uniform sampler2D tBase; uniform vec2 uTexel; uniform float uMix; varying vec2 vUv;
-          void main(){ vec2 o = uTexel*0.5; vec3 s = vec3(0.0);
-            s += texture2D(tSrc, vUv+vec2(-o.x*2.0,0.0)).rgb + texture2D(tSrc, vUv+vec2(o.x*2.0,0.0)).rgb + texture2D(tSrc, vUv+vec2(0.0,-o.y*2.0)).rgb + texture2D(tSrc, vUv+vec2(0.0,o.y*2.0)).rgb;
-            s += (texture2D(tSrc, vUv+vec2(-o.x,o.y)).rgb + texture2D(tSrc, vUv+vec2(o.x,o.y)).rgb + texture2D(tSrc, vUv+vec2(-o.x,-o.y)).rgb + texture2D(tSrc, vUv+vec2(o.x,-o.y)).rgb)*2.0;
-            s /= 12.0; gl_FragColor = vec4(texture2D(tBase, vUv).rgb + s*uMix, 1.0); }`
+          void main(){ vec2 o = uTexel * 1.15;
+            vec3 s = texture2D(tSrc, vUv).rgb * 4.0;
+            s += (texture2D(tSrc, vUv + vec2(-o.x, 0.0)).rgb + texture2D(tSrc, vUv + vec2(o.x, 0.0)).rgb
+                + texture2D(tSrc, vUv + vec2(0.0, -o.y)).rgb + texture2D(tSrc, vUv + vec2(0.0, o.y)).rgb) * 2.0;
+            s += texture2D(tSrc, vUv + vec2(-o.x,  o.y)).rgb + texture2D(tSrc, vUv + vec2(o.x,  o.y)).rgb
+               + texture2D(tSrc, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tSrc, vUv + vec2(o.x, -o.y)).rgb;
+            s /= 16.0; gl_FragColor = vec4(texture2D(tBase, vUv).rgb + s * uMix, 1.0); }`
       }),
       comp: new THREE.ShaderMaterial({
         uniforms: {
@@ -1642,8 +1724,24 @@ class Renderer {
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
         fragmentShader: `uniform sampler2D tScene, tBloom; uniform float uBloom, uExposure, uContrast, uSat, uVignette, uAberr, uRadial, uTime, uFlash, uGrain;
           uniform vec3 uTint, uLift; uniform vec2 uRes; varying vec2 vUv;
-          vec3 aces(vec3 x){ const float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14; return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0); }
-          vec3 toSRGB(vec3 c){ return mix(c*12.92, 1.055*pow(c, vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
+          // Fitted ACES Filmic (Stephen Hill RRT + ODT) for richer highlight hue preservation
+          vec3 acesFitted(vec3 color){
+            mat3 ACESIn = mat3(
+              0.59719, 0.07600, 0.02840,
+              0.35458, 0.90834, 0.13383,
+              0.04823, 0.01566, 0.83777
+            );
+            mat3 ACESOut = mat3(
+              1.60475, -0.10208, -0.00327,
+             -0.53108,  1.10813, -0.07276,
+             -0.07367, -0.00605,  1.07602
+            );
+            vec3 v = ACESIn * max(color, vec3(0.0));
+            vec3 a = v * (v + 0.0245786) - 0.000090537;
+            vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+            return clamp(ACESOut * (a / b), 0.0, 1.0);
+          }
+          vec3 toSRGB(vec3 c){ return mix(c*12.92, 1.055*pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
           float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
           void main(){
             vec2 uv = vUv; vec2 d = uv - 0.5; float r2 = dot(d, d);
@@ -1653,15 +1751,25 @@ class Renderer {
             else col = texture2D(tScene, uv).rgb;
             if(uRadial > 0.001){ vec3 acc = col; float w = 1.0; for(int i=1;i<7;i++){ float s = float(i)/6.0 * uRadial * smoothstep(0.02, 0.3, r2);
                 acc += texture2D(tScene, uv - d*s).rgb * (1.0 - float(i)/8.0); w += 1.0 - float(i)/8.0; } col = acc / w; }
-            col += texture2D(tBloom, uv).rgb * uBloom;
-            col *= uExposure;
-            col = aces(col);
+            // Multi-scale bloom + subtle horizontal anamorphic stadium glare
+            vec3 bl = texture2D(tBloom, uv).rgb;
+            vec3 anam = (texture2D(tBloom, uv + vec2(0.018, 0.0)).rgb + texture2D(tBloom, uv - vec2(0.018, 0.0)).rgb
+                       + texture2D(tBloom, uv + vec2(0.042, 0.0)).rgb * 0.5 + texture2D(tBloom, uv - vec2(0.042, 0.0)).rgb * 0.5) * 0.085;
+            col += (bl + anam * vec3(0.88, 0.94, 1.08)) * uBloom;
+            col *= uExposure * 1.12;
+            col = acesFitted(col);
             col = toSRGB(col);
-            col = (col - 0.5) * uContrast + 0.5 + uLift;
+            // Smooth filmic S-curve micro-contrast blended with linear contrast
+            vec3 scurve = col * col * (3.0 - 2.0 * col);
+            col = mix(col, scurve, clamp((uContrast - 1.0) * 1.6, 0.0, 0.35));
+            col = (col - 0.5) * (1.0 + (uContrast - 1.0) * 0.65) + 0.5 + uLift;
             float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
             col = mix(vec3(l), col, uSat) * uTint;
-            col *= 1.0 - uVignette * smoothstep(0.15, 0.85, r2*2.2);
-            col += (h12(uv*uRes + fract(uTime*7.13)*97.0) - 0.5) * uGrain;
+            // Natural optical vignette
+            col *= 1.0 - uVignette * smoothstep(0.18, 0.92, r2 * 2.1);
+            // Luma-weighted subtle film grain (less noise in bright highlights)
+            float gMask = mix(1.0, 0.25, smoothstep(0.35, 0.9, l));
+            col += (h12(uv*uRes + fract(uTime*7.13)*97.0) - 0.5) * uGrain * gMask;
             col += uFlash;
             gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
           }`
@@ -1797,15 +1905,29 @@ function buildEnvMap(renderer, def, skyMat) {
   const sc = new THREE.Scene();
   const sky = new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16), skyMat.clone()); sky.material.side = THREE.BackSide; sky.material.uniforms = THREE.UniformsUtils.clone(skyMat.uniforms); sc.add(sky);
   const lc = new THREE.Color(def.c.line), ac = new THREE.Color(def.c.accent);
+  const sunCol = new THREE.Color(def.light.sun), hemiSky = new THREE.Color(def.light.hemiSky);
+  const sdir = new V3(...def.light.sunDir).normalize();
   const panel = (x, y, z, w, h, col, inten) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(inten), side: THREE.DoubleSide }));
     m.position.set(x, y, z); m.lookAt(0, 0, 0); sc.add(m);
   };
-  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; panel(Math.cos(a) * 30, 18, Math.sin(a) * 30, 14, 3, i % 2 ? lc : ac, 2.5); }
-  panel(0, 40, 0, 30, 30, new THREE.Color(def.light.hemiSky), 0.6);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: new THREE.Color(def.c.base2).multiplyScalar(0.5) }));
+  // Bright HDR key sun / main light source for crisp clearcoat & chrome reflections
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(4.5, 24), new THREE.MeshBasicMaterial({ color: sunCol.clone().multiplyScalar(8.5), side: THREE.DoubleSide }));
+  sunDisc.position.copy(sdir).multiplyScalar(38); sunDisc.lookAt(0, 0, 0); sc.add(sunDisc);
+  // 4 stadium floodlight banks in upper corners for realistic automotive highlights
+  const floodCol = sunCol.clone().lerp(new THREE.Color(0xffffff), 0.45);
+  for (const [fx, fz] of [[26, 30], [-26, 30], [26, -30], [-26, -30]]) {
+    panel(fx, 24, fz, 10, 4.5, floodCol, def.indoor ? 4.2 : 5.5);
+  }
+  // Arena perimeter accent strips & team endzone bounce lights (-Z blue, +Z orange)
+  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; panel(Math.cos(a) * 32, 14, Math.sin(a) * 32, 14, 2.2, i % 2 ? lc : ac, 2.2); }
+  panel(0, 9, -36, 26, 8, new THREE.Color(0x2f8fff), 2.4);
+  panel(0, 9, 36, 26, 8, new THREE.Color(0xff8a1f), 2.4);
+  // Soft overhead sky diffuser + grounded pitch bounce
+  panel(0, 42, 0, 38, 38, hemiSky, 1.0);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: new THREE.Color(def.c.base2).lerp(new THREE.Color(def.light.hemiGround), 0.4).multiplyScalar(0.65) }));
   floor.rotation.x = -PI / 2; floor.position.y = -6; sc.add(floor);
-  const rt = pm.fromScene(sc, 0.03);
+  const rt = pm.fromScene(sc, 0.02);
   pm.dispose(); sc.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
   return rt.texture;
 }
@@ -1832,21 +1954,45 @@ const SKY_FRAG = `uniform vec3 uTop, uHor, uBot, uSunDir, uSunCol; uniform float
 ${GLSL_NOISE}
 void main(){
   vec3 d = normalize(vDir); float h = d.y;
-  vec3 col = mix(uHor, uTop, pow(clamp(h, 0.0, 1.0), 0.55));
-  col = mix(col, uBot, smoothstep(0.0, -0.3, h));
+  // Physical-inspired Rayleigh zenith gradient + warm/cool atmospheric horizon haze
+  float zenith = pow(clamp(h, 0.0, 1.0), 0.48);
+  vec3 col = mix(uHor, uTop, zenith);
+  float horizonBand = exp(-abs(h) * 8.5);
+  col = mix(col, uHor * 1.15, horizonBand * 0.35);
+  col = mix(col, uBot, smoothstep(0.02, -0.28, h));
+  // Mie forward scattering & solar corona
   vec3 sdir = normalize(uSunDir); float sd = max(dot(d, sdir), 0.0);
-  col += uSunCol * (pow(sd, 5.0) * 0.22 + pow(sd, 60.0) * 0.5);
-  if(uSunSize > 0.0) col += uSunCol * smoothstep(1.0 - uSunSize, 1.0 - uSunSize * 0.55, sd) * 10.0;
-  if(uStars > 0.0){ vec3 p = d * 260.0; vec3 ip = floor(p); float s = hash13(ip); float dd = length(fract(p) - 0.5);
-    float st = smoothstep(0.982, 1.0, s) * smoothstep(0.4, 0.0, dd) * (0.65 + 0.35 * sin(uTime * 2.0 + s * 300.0));
-    col += st * uStars * 3.0 * mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.85, 0.7), hash13(ip + 3.0)) * smoothstep(-0.1, 0.05, h); }
+  float mie = pow(sd, 3.0) * 0.16 + pow(sd, 16.0) * 0.28 + pow(sd, 96.0) * 0.75;
+  col += uSunCol * mie * (0.65 + 0.55 * horizonBand);
+  if(uSunSize > 0.0) col += uSunCol * smoothstep(1.0 - uSunSize, 1.0 - uSunSize * 0.45, sd) * 14.0;
+  // Multi-scale twinkling starfield
+  if(uStars > 0.0){
+    vec3 p = d * 260.0; vec3 ip = floor(p); float s = hash13(ip); float dd = length(fract(p) - 0.5);
+    float st = smoothstep(0.982, 1.0, s) * smoothstep(0.4, 0.0, dd) * (0.65 + 0.35 * sin(uTime * 2.2 + s * 300.0));
+    vec3 p2 = d * 480.0; vec3 ip2 = floor(p2); float s2 = hash13(ip2); float dd2 = length(fract(p2) - 0.5);
+    float st2 = smoothstep(0.972, 1.0, s2) * smoothstep(0.38, 0.0, dd2) * 0.45;
+    vec3 starCol = mix(vec3(0.7, 0.82, 1.0), vec3(1.0, 0.86, 0.7), hash13(ip + 3.0));
+    col += (st * 3.2 + st2 * 1.4) * uStars * starCol * smoothstep(-0.08, 0.08, h);
+  }
   if(uNebula > 0.0){ float n = fbm3(d * 2.2 + vec3(0.0, uTime * 0.004, 0.0)); float n2 = fbm3(d * 4.5 + 11.0);
-    vec3 nc = mix(vec3(0.45, 0.08, 0.6), vec3(0.05, 0.45, 0.8), n2); col += nc * pow(n, 3.0) * uNebula * 2.6;
-    col += vec3(0.8, 0.25, 0.5) * pow(fbm3(d * 1.3 + 5.0), 5.0) * uNebula * 3.0; }
-  if(uClouds > 0.0 && h > 0.0){ vec2 cp = d.xz / (h + 0.15) * 1.3 + vec2(uTime * 0.006, 0.0);
-    float c = smoothstep(0.42, 0.78, fbm(cp * 1.4) * 0.7 + fbm(cp * 4.0) * 0.3);
-    vec3 cc = mix(mix(uHor, vec3(1.0), 0.45) * (0.75 + 0.6 * pow(sd, 3.0)), uTop * 0.4, uCloudDark);
-    col = mix(col, cc, c * uClouds * smoothstep(0.0, 0.12, h)); }
+    vec3 nc = mix(vec3(0.45, 0.08, 0.65), vec3(0.05, 0.48, 0.85), n2); col += nc * pow(n, 2.8) * uNebula * 2.8;
+    col += vec3(0.85, 0.25, 0.55) * pow(fbm3(d * 1.3 + 5.0), 4.8) * uNebula * 3.2; }
+  // Volumetric-lit clouds with directional sun self-shadowing & silver lining
+  if(uClouds > 0.0 && h > 0.0){
+    vec2 cp = d.xz / (h + 0.14) * 1.25 + vec2(uTime * 0.0055, 0.0);
+    float cBase = fbm(cp * 1.35) * 0.68 + fbm(cp * 3.8 + 4.2) * 0.32;
+    float c = smoothstep(0.40, 0.78, cBase);
+    vec2 sunStep = normalize(sdir.xz + vec2(1e-4)) * 0.16;
+    float cLit = fbm((cp + sunStep) * 1.35) * 0.68 + fbm((cp + sunStep) * 3.8 + 4.2) * 0.32;
+    float selfShade = clamp((cBase - cLit) * 2.8 + 0.55, 0.15, 1.0);
+    float silverLining = pow(sd, 6.0) * (1.0 - c * 0.65) * 1.1;
+    vec3 cloudShadowCol = mix(uTop * 0.55, uHor * 0.5, 0.45);
+    vec3 cloudLightCol = mix(uHor, vec3(1.0), 0.55) + uSunCol * (0.4 + silverLining);
+    vec3 cc = mix(cloudShadowCol, cloudLightCol, selfShade);
+    cc = mix(cc, uTop * 0.35 + uSunCol * silverLining * 0.35, uCloudDark);
+    float distFade = smoothstep(0.0, 0.16, h);
+    col = mix(col, cc, c * uClouds * distFade);
+  }
   if(uAurora > 0.0 && h > 0.0){
     for(int k=0;k<3;k++){ float fk = float(k);
       vec2 ap = d.xz / (h + 0.25) * (0.55 + fk * 0.18) + vec2(uTime * 0.012 * (1.0 + fk), fk * 3.7);
@@ -1854,8 +2000,8 @@ void main(){
       float curtain = smoothstep(0.42, 0.62, band) * smoothstep(0.66, 0.5, band);
       float rays = 0.55 + 0.45 * sin(ap.x * 40.0 + fbm(ap * 3.0) * 8.0 + uTime * 0.6);
       float hgt = smoothstep(0.04, 0.22, h) * smoothstep(0.95, 0.35, h);
-      vec3 ac = mix(vec3(0.15, 1.0, 0.55), vec3(0.65, 0.25, 1.0), smoothstep(0.15, 0.7, h + fk * 0.08));
-      col += ac * curtain * rays * hgt * uAurora * (1.4 - fk * 0.35); }
+      vec3 ac = mix(vec3(0.12, 1.0, 0.58), vec3(0.62, 0.22, 1.0), smoothstep(0.15, 0.7, h + fk * 0.08));
+      col += ac * curtain * rays * hgt * uAurora * (1.55 - fk * 0.35); }
   }
   if(uWater > 0.0){
     float up = clamp(h, -1.0, 1.0);
@@ -1864,12 +2010,12 @@ void main(){
     float shafts = pow(max(0.0, sin(ang * 9.0 + sin(uTime * 0.21) * 1.5) * sin(ang * 5.0 - uTime * 0.13 + 1.0)), 3.0) * smoothstep(0.05, 0.6, up);
     vec2 sp = d.xz / max(0.08, up + 0.05) * 2.0;
     float surf = 0.0; if(up > 0.0){ vec3 v1 = voronoi(sp * 1.4 + vec2(uTime * 0.15, uTime * 0.1)); vec3 v2 = voronoi(sp * 1.9 - vec2(uTime * 0.1, -uTime * 0.13) + 4.0); surf = pow(1.0 - smoothstep(0.0, 0.32, min(v1.y - v1.x, v2.y - v2.x)), 3.0) * smoothstep(0.25, 0.85, up); }
-    col = mix(col, wc, uWater) + uSunCol * (shafts * 0.35 + surf * 0.9 + pow(max(up, 0.0), 6.0) * 1.2) * uWater;
+    col = mix(col, wc, uWater) + uSunCol * (shafts * 0.42 + surf * 1.05 + pow(max(up, 0.0), 6.0) * 1.35) * uWater;
   }
   if(uLava > 0.0){
-    float glow = smoothstep(0.25, -0.05, h); col += vec3(1.0, 0.28, 0.04) * glow * 0.9 * uLava;
+    float glow = smoothstep(0.28, -0.05, h); col += vec3(1.0, 0.28, 0.04) * glow * 1.05 * uLava;
     float smoke = fbm(d.xz / (abs(h) + 0.2) * 1.2 + vec2(uTime * 0.01, -uTime * 0.008));
-    col += vec3(1.0, 0.35, 0.08) * pow(smoke, 3.0) * smoothstep(0.5, 0.0, h) * 1.4 * uLava;
+    col += vec3(1.0, 0.35, 0.08) * pow(smoke, 2.8) * smoothstep(0.5, 0.0, h) * 1.55 * uLava;
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -1998,66 +2144,91 @@ float lmask(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - 
 `;
 const FLOOR_MAP = `
 vec2 fp = vWPos.xz; vec3 base; float fRough = 0.5; float fMetal = 0.0; vec3 fEmis = vec3(0.0); vec3 fPert = vec3(0.0);
+vec3 Vw = normalize(cameraPosition - vWPos);
+float NdotV = clamp(Vw.y, 0.02, 1.0);
 float d2 = sdArena(fp);
 vec3 teamCol = fp.y < 0.0 ? uBlue : uOrange;
 float endT = smoothstep(0.25, 1.0, abs(fp.y) / uL);
 if(uType == 0){
   vec4 hc = hexCoords(fp * 0.5); float hd = hexDist(hc.xy); float edge = smoothstep(0.43, 0.5, hd);
-  float n = fbm(fp * 0.07); float puddle = smoothstep(0.55, 0.7, fbm(fp * 0.04 + 3.0));
-  base = mix(uBase1, uBase2, n * 0.8) * (1.0 - edge * 0.5);
+  float n = fbm(fp * 0.07); float micro = vnoise(fp * 14.0);
+  float puddle = smoothstep(0.52, 0.68, fbm(fp * 0.045 + 3.0));
+  base = mix(uBase1, uBase2, n * 0.85) * (0.9 + 0.2 * micro) * (1.0 - edge * 0.55);
+  base *= mix(1.0, 0.62, puddle);
   float pulse = 0.5 + 0.5 * sin(uTime * 1.3 - length(fp) * 0.11 + hash12(hc.zw) * 6.28);
-  fEmis += mix(uGrid, teamCol, endT) * edge * (0.04 + 0.1 * pulse * pulse);
-  fRough = mix(0.3, 0.06, puddle); fMetal = 0.5;
-  fPert = vec3(hc.x, 0.0, hc.y) * edge * 0.25;
+  fEmis += mix(uGrid, teamCol, endT) * edge * (0.045 + 0.12 * pulse * pulse);
+  fRough = mix(0.38 + (micro - 0.5) * 0.12, 0.04, puddle); fMetal = mix(0.45, 0.12, puddle);
+  fPert = (vec3(hc.x, 0.0, hc.y) * edge * 0.35 + vec3(micro - 0.5, 0.0, vnoise(fp * 14.0 + 9.0) - 0.5) * 0.08) * (1.0 - puddle * 0.88);
 } else if(uType == 1){
   float stripe = smoothstep(0.46, 0.54, abs(fract(fp.y / 9.0) - 0.5) * 2.0);
   float stripe2 = smoothstep(0.46, 0.54, abs(fract(fp.x / 14.0) - 0.5) * 2.0);
   float n = fbm(fp * 0.35), n2 = vnoise(fp * 9.0), blade = vnoise(fp * vec2(28.0, 4.0));
-  base = mix(uBase1, uBase2, mix(stripe, stripe2, 0.25) * 0.8 + n * 0.3);
-  base *= 0.82 + 0.28 * n2 + 0.12 * blade; base = mix(base, base * vec3(1.1, 1.05, 0.7), smoothstep(0.6, 0.85, fbm(fp * 0.05)) * 0.35);
-  fRough = 0.92; fPert = vec3(n2 - 0.5, 0.0, blade - 0.5) * 0.45;
+  float sMix = mix(stripe, stripe2, 0.22);
+  base = mix(uBase1, uBase2, sMix * 0.82 + n * 0.28);
+  base *= 0.82 + 0.26 * n2 + 0.14 * blade;
+  base = mix(base, base * vec3(1.12, 1.06, 0.72), smoothstep(0.58, 0.84, fbm(fp * 0.05)) * 0.38);
+  // Subtle backlit microfiber grass sheen at grazing angles
+  float sheen = pow(1.0 - NdotV, 3.0) * (0.14 + 0.08 * sMix);
+  base += vec3(0.18, 0.28, 0.09) * sheen;
+  fRough = mix(0.88, 0.76, sMix) + (n2 - 0.5) * 0.08;
+  fPert = vec3(n2 - 0.5, 0.0, blade - 0.5) * 0.55;
 } else if(uType == 2){
   vec2 q = fp * 1.6; vec2 cell = floor(q); vec2 g = fract(q) - 0.5;
   float chk = mod(cell.x + cell.y, 2.0);
   vec2 rd = chk < 0.5 ? vec2(g.x + g.y, g.x - g.y) : vec2(g.x - g.y, g.x + g.y);
   float bump = 1.0 - smoothstep(0.04, 0.11, length(vec2(rd.x * 0.32, rd.y * 1.0)));
   float grime = fbm(fp * 0.25); float rust = smoothstep(0.58, 0.85, warpfbm(fp * 0.04));
-  base = mix(uBase1, uBase2, bump * 0.7) * (0.75 + 0.45 * grime);
-  base = mix(base, vec3(0.32, 0.14, 0.05), rust * 0.65);
+  float oil = smoothstep(0.66, 0.78, fbm(fp * 0.08 + 11.0)) * (1.0 - rust);
+  base = mix(uBase1, uBase2, bump * 0.75) * (0.76 + 0.44 * grime);
+  base = mix(base, vec3(0.32, 0.13, 0.04), rust * 0.7);
+  base *= 1.0 - oil * 0.45;
   vec2 pl = abs(fract(fp / 6.0) - 0.5); float seam = smoothstep(0.485, 0.495, max(pl.x, pl.y));
-  base *= 1.0 - seam * 0.6;
+  base *= 1.0 - seam * 0.65;
   float hazard = step(0.5, fract((fp.x + fp.y) * 0.35)) * (1.0 - step(2.2, abs(abs(fp.y) - (uL - 14.0))));
   base = mix(base, mix(vec3(0.05), vec3(0.9, 0.6, 0.0), hazard), (1.0 - step(2.2, abs(abs(fp.y) - (uL - 14.0)))) * 0.7);
-  fMetal = 0.9 - rust * 0.7; fRough = 0.3 + grime * 0.3 + rust * 0.45;
-  fPert = vec3(rd.x, 0.0, rd.y) * bump * 0.9 + vec3(0.0, 0.0, seam * 0.3);
+  fMetal = clamp(0.88 - rust * 0.76 - oil * 0.35, 0.05, 0.92);
+  fRough = clamp(mix(0.24 + grime * 0.28 + rust * 0.48, 0.06, oil) - bump * 0.06, 0.05, 0.95);
+  fPert = (vec3(rd.x, 0.0, rd.y) * bump * 0.95 + vec3(0.0, 0.0, seam * 0.35)) * (1.0 - oil * 0.7);
 } else if(uType == 3){
   float w = fbm(fp * 0.12);
   float rip = sin(fp.x * 1.9 + fp.y * 0.4 + w * 9.0);
   float grain = hash12(floor(fp * 60.0));
   base = mix(uBase1, uBase2, 0.5 + 0.25 * rip + (w - 0.5) * 0.8) * (0.9 + 0.2 * grain);
   float packed = smoothstep(4.0, 10.0, -sdArena(fp)); base = mix(base, base * vec3(1.06, 1.02, 0.95), packed * 0.4);
-  fRough = 0.95; fPert = vec3(cos(fp.x * 1.9 + w * 9.0) * 0.25, 0.0, 0.0) + vec3(grain - 0.5, 0.0, 0.0) * 0.1;
-  fEmis += vec3(1.0, 0.9, 0.7) * pow(grain, 60.0) * 0.4;
+  // View-dependent desert quartz micro-sparkle
+  float glint = pow(hash12(floor(fp * 48.0 + floor(Vw.xz * 6.0))), 42.0) * smoothstep(0.15, 0.7, NdotV);
+  fRough = clamp(0.92 - packed * 0.12 - glint * 0.5, 0.2, 0.96);
+  fPert = vec3(cos(fp.x * 1.9 + w * 9.0) * 0.32, 0.0, 0.0) + vec3(grain - 0.5, 0.0, hash12(floor(fp * 60.0) + 7.0) - 0.5) * 0.12;
+  fEmis += vec3(1.0, 0.88, 0.65) * glint * 0.55;
 } else if(uType == 4){
-  float star = pow(hash12(floor(fp * 5.0)), 60.0) * smoothstep(0.35, 0.0, length(fract(fp * 5.0) - 0.5));
-  float neb = fbm(fp * 0.05 + vec2(uTime * 0.01, 0.0)); float neb2 = fbm(fp * 0.12 + 5.0);
-  vec3 nc = mix(vec3(0.3, 0.06, 0.55), vec3(0.0, 0.35, 0.6), neb2) * pow(neb, 2.0);
-  base = uBase1 + nc * 0.25;
+  // Parallax deep-space nebula & starfield beneath polished dark-glass deck
+  vec2 pOff = -Vw.xz / max(NdotV, 0.25) * 1.35;
+  vec2 fpDeep = fp + pOff;
+  float star = pow(hash12(floor(fpDeep * 5.0)), 56.0) * smoothstep(0.36, 0.0, length(fract(fpDeep * 5.0) - 0.5));
+  float neb = fbm(fpDeep * 0.05 + vec2(uTime * 0.01, 0.0)); float neb2 = fbm(fpDeep * 0.12 + 5.0);
+  vec3 nc = mix(vec3(0.32, 0.06, 0.58), vec3(0.0, 0.38, 0.65), neb2) * pow(neb, 2.0);
+  base = uBase1 + nc * 0.28;
   vec2 gl = abs(fract(fp / 4.0) - 0.5); float grid = smoothstep(0.47, 0.5, max(gl.x, gl.y));
-  fEmis += nc * 0.35 + vec3(star) * 1.4 + uGrid * grid * (0.06 + 0.05 * sin(uTime + fp.x * 0.1));
-  fRough = 0.08; fMetal = 0.4;
+  fEmis += nc * 0.38 + vec3(star) * 1.6 + uGrid * grid * (0.065 + 0.055 * sin(uTime + fp.x * 0.1));
+  fRough = 0.07; fMetal = 0.38;
 } else if(uType == 5){
-  vec3 v = voronoi(fp * 0.16); float crack = 1.0 - smoothstep(0.0, 0.05, v.y - v.x);
-  vec3 v2 = voronoi(fp * 0.55 + 7.0); float crack2 = (1.0 - smoothstep(0.0, 0.025, v2.y - v2.x)) * step(0.45, v.z);
-  float deep = smoothstep(0.35, 0.75, fbm(fp * 0.035 + 2.0)); float frost = smoothstep(0.58, 0.85, fbm(fp * 0.11 + 4.0));
+  // Multi-layer parallax glacial ice: surface cracks + deep refracted cracks & frozen bubbles
+  vec2 refr = -Vw.xz / max(NdotV, 0.28) * 0.55;
+  vec3 v = voronoi(fp * 0.16); float crack = 1.0 - smoothstep(0.0, 0.048, v.y - v.x);
+  vec3 vDeep = voronoi((fp + refr) * 0.16 + 0.12); float crackDeep = 1.0 - smoothstep(0.0, 0.065, vDeep.y - vDeep.x);
+  vec3 v2 = voronoi(fp * 0.55 + 7.0); float crack2 = (1.0 - smoothstep(0.0, 0.024, v2.y - v2.x)) * step(0.45, v.z);
+  float deep = smoothstep(0.32, 0.75, fbm((fp + refr * 1.6) * 0.035 + 2.0));
+  float frost = smoothstep(0.56, 0.84, fbm(fp * 0.11 + 4.0));
   float wallFrost = smoothstep(7.0, 1.0, -d2);
-  float bubbles = pow(hash12(floor(fp * 7.0)), 40.0) * smoothstep(0.4, 0.0, length(fract(fp * 7.0) - 0.5));
-  base = mix(uBase1, uBase1 * vec3(0.3, 0.45, 0.75), deep);
-  base = mix(base, uBase2, clamp(frost * 0.5 + wallFrost * 0.85, 0.0, 1.0));
-  base += vec3(0.75, 0.92, 1.0) * (crack * 0.35 + crack2 * 0.18) + bubbles * 0.4;
-  fEmis += uGrid * crack * 0.1 * (0.55 + 0.45 * sin(uTime * 0.7 + v.z * 6.28)) + vec3(0.2, 0.5, 0.8) * deep * 0.04;
-  fRough = clamp(mix(0.03, 0.55, max(frost, wallFrost)) + crack2 * 0.15, 0.02, 1.0); fMetal = 0.05;
-  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * crack * 0.7 + vec3(v2.x - 0.5, 0.0, 0.0) * crack2 * 0.4;
+  vec2 bp = fp + refr * 0.9;
+  float bubbles = pow(hash12(floor(bp * 7.0)), 38.0) * smoothstep(0.4, 0.0, length(fract(bp * 7.0) - 0.5));
+  base = mix(uBase1, uBase1 * vec3(0.24, 0.42, 0.74), deep);
+  base += vec3(0.35, 0.65, 0.92) * crackDeep * 0.22;
+  base = mix(base, uBase2, clamp(frost * 0.52 + wallFrost * 0.85, 0.0, 1.0));
+  base += vec3(0.8, 0.95, 1.0) * (crack * 0.38 + crack2 * 0.2) + bubbles * 0.45;
+  fEmis += uGrid * (crack * 0.11 + crackDeep * 0.06) * (0.55 + 0.45 * sin(uTime * 0.7 + v.z * 6.28)) + vec3(0.18, 0.48, 0.8) * deep * 0.05;
+  fRough = clamp(mix(0.035, 0.72, max(frost, wallFrost)) + crack2 * 0.14, 0.03, 0.92); fMetal = 0.06;
+  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * crack * 0.75 + vec3(v2.x - 0.5, 0.0, 0.0) * crack2 * 0.42;
 } else if(uType == 6){
   float n = fbm(fp * 0.3); float rip = sin(fp.x * 1.3 + fp.y * 0.35 + fbm(fp * 0.15) * 7.0) * 0.5 + 0.5;
   vec4 hc = hexCoords(fp * 0.14); float tile = smoothstep(0.43, 0.48, hexDist(hc.xy));
@@ -2065,12 +2236,17 @@ if(uType == 0){
   base = mix(uBase1, uBase2, rip * 0.35 + n * 0.55);
   vec3 stone = vec3(0.32, 0.42, 0.44) * (0.75 + 0.5 * hash12(hc.zw)) * (0.85 + 0.3 * vnoise(fp * 3.0));
   base = mix(base, mix(stone, stone * 0.35, tile), tileMask * 0.85);
+  // Chromatic-dispersed dual-layer underwater caustics
   vec2 cp = fp * 0.2;
-  vec3 c1 = voronoi(cp + vec2(uTime * 0.11, uTime * 0.07)); vec3 c2 = voronoi(cp * 1.37 - vec2(uTime * 0.08, -uTime * 0.1) + 3.0);
-  float caus = pow(1.0 - smoothstep(0.0, 0.3, min(c1.y - c1.x, c2.y - c2.x)), 2.6);
-  fEmis += vec3(0.4, 0.9, 1.0) * caus * 0.16 * (0.7 + 0.3 * sin(uTime + fp.x * 0.05));
-  base *= 0.62 + caus * 0.45;
-  fRough = mix(0.92, 0.6, tileMask); fPert = vec3(cos(fp.x * 1.3 + fbm(fp * 0.15) * 7.0) * 0.3, 0.0, 0.0) * (1.0 - tileMask) + vec3(hc.x, 0.0, hc.y) * tile * tileMask * 0.6;
+  vec2 t1 = vec2(uTime * 0.11, uTime * 0.07), t2 = vec2(-uTime * 0.08, uTime * 0.1);
+  vec3 c1 = voronoi(cp + t1); vec3 c2 = voronoi(cp * 1.37 + t2 + 3.0);
+  vec3 c1b = voronoi(cp + vec2(0.04, 0.02) + t1);
+  float causG = pow(1.0 - smoothstep(0.0, 0.28, min(c1.y - c1.x, c2.y - c2.x)), 2.5);
+  float causB = pow(1.0 - smoothstep(0.0, 0.3, min(c1b.y - c1b.x, c2.y - c2.x)), 2.5);
+  vec3 causCol = vec3(causG * 0.42, causG * 0.92, causB * 1.05);
+  fEmis += causCol * 0.22 * (0.7 + 0.3 * sin(uTime + fp.x * 0.05));
+  base *= 0.62 + causG * 0.48;
+  fRough = mix(0.86, 0.42, tileMask); fPert = vec3(cos(fp.x * 1.3 + fbm(fp * 0.15) * 7.0) * 0.34, 0.0, 0.0) * (1.0 - tileMask) + vec3(hc.x, 0.0, hc.y) * tile * tileMask * 0.65;
 } else if(uType == 7){
   vec2 q = fp / vec2(3.0, 2.0); vec2 row = vec2(q.x + 0.5 * mod(floor(q.y), 2.0), q.y); vec2 cell = floor(row); vec2 f = fract(row);
   float e = min(min(f.x, 1.0 - f.x) * 3.0, min(f.y, 1.0 - f.y) * 2.0); float gap = 1.0 - smoothstep(0.04, 0.13, e);
@@ -2083,20 +2259,25 @@ if(uType == 0){
   float ang = atan(fp.y, fp.x); float seg = floor(ang * 16.0 / 3.14159);
   float glyph = lmask(rr - 16.0, 0.55) * step(0.35, hash12(vec2(seg, 2.0))) * step(0.25, abs(fract(ang * 16.0 / 3.14159) - 0.5) * 2.0) * (1.0 - step(0.82, abs(fract(ang * 16.0 / 3.14159) - 0.5) * 2.0));
   float pulse = 0.55 + 0.45 * sin(uTime * 1.4 - rr * 0.25);
-  fEmis += vec3(0.35, 1.0, 0.5) * (ring * 0.6 + glyph * 1.1) * pulse;
+  fEmis += vec3(0.35, 1.0, 0.5) * (ring * 0.65 + glyph * 1.2) * pulse;
   base *= 1.0 - (ring + glyph) * 0.35;
-  fRough = mix(0.72, 0.95, moss); fPert = vec3(f.x - 0.5, 0.0, f.y - 0.5) * gap * 0.9 + vec3(n - 0.5, 0.0, 0.0) * 0.25;
+  float dampStone = smoothstep(0.45, 0.75, fbm(fp * 0.08 + 5.0)) * (1.0 - moss);
+  fRough = mix(mix(0.68, 0.28, dampStone), 0.94, moss);
+  fPert = vec3(f.x - 0.5, 0.0, f.y - 0.5) * gap * 0.95 + vec3(n - 0.5, 0.0, 0.0) * 0.28;
 } else {
   vec3 v = voronoi(fp * 0.19); float edge = v.y - v.x;
-  float crack = 1.0 - smoothstep(0.0, 0.04, edge); float act = smoothstep(0.38, 0.62, fbm(fp * 0.045 + 3.0 + uTime * 0.01));
+  float crack = 1.0 - smoothstep(0.0, 0.042, edge); float core = 1.0 - smoothstep(0.0, 0.016, edge);
+  float act = smoothstep(0.38, 0.62, fbm(fp * 0.045 + 3.0 + uTime * 0.01));
   float heat = 0.5 + 0.5 * sin(uTime * 1.5 + v.z * 6.28 + fbm(fp * 0.08 + uTime * 0.04) * 4.0);
   vec3 rock = mix(uBase1, uBase2, v.z * 0.6 + fbm(fp * 1.5) * 0.4) * (0.65 + 0.35 * smoothstep(0.0, 0.3, edge));
-  vec3 lava = mix(vec3(1.0, 0.22, 0.02), vec3(1.0, 0.7, 0.18), heat);
-  base = mix(rock, vec3(0.06, 0.015, 0.0), crack);
-  fEmis += lava * crack * (0.25 + act * 1.5) * (0.55 + heat * 0.8) + lava * pow(1.0 - smoothstep(0.0, 0.2, edge), 2.0) * 0.08 * act;
+  // Physical blackbody magma gradient: incandescent yellow-white core -> molten orange -> red crust
+  vec3 lava = mix(vec3(0.95, 0.16, 0.01), vec3(1.0, 0.65, 0.14), heat);
+  lava = mix(lava, vec3(1.0, 0.95, 0.72), core * act * (0.45 + 0.55 * heat));
+  base = mix(rock, vec3(0.05, 0.012, 0.0), crack);
+  fEmis += lava * crack * (0.3 + act * 1.8) * (0.55 + heat * 0.8) + lava * pow(1.0 - smoothstep(0.0, 0.22, edge), 2.2) * 0.11 * act;
   base = mix(base, base * vec3(1.4, 0.8, 0.6), act * 0.25);
-  fRough = 0.5 - crack * 0.25 + fbm(fp * 2.0) * 0.2; fMetal = 0.15;
-  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * smoothstep(0.12, 0.0, edge) * 1.2;
+  fRough = clamp(0.42 - crack * 0.25 + fbm(fp * 2.0) * 0.22, 0.12, 0.88); fMetal = 0.18;
+  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * smoothstep(0.14, 0.0, edge) * 1.3;
 }
 base = mix(base, base * (0.55 + teamCol * 0.9), endT * 0.35);
 float lw = 0.13; float ln = 0.0;
@@ -2109,11 +2290,14 @@ ln += lmask(d2 + uRf + 0.7, lw * 1.2);
 ln += lmask(abs(fp.y) - uL - 0.15, lw * 1.3) * step(abs(fp.x), uGW);
 ln = clamp(ln, 0.0, 1.0);
 vec3 lc = mix(uLine, teamCol * 1.3 + 0.2, step(uL - 10.5, abs(fp.y)) * 0.6);
-if(uType == 1 || uType == 3 || uType == 7){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.7, ln); }
+if(uType == 1 || uType == 3 || uType == 7){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.68, ln); }
 else { base = mix(base, lc * 0.4, ln); fEmis += lc * ln * uGlow; }
-if(abs(fp.y) > uL){ base = mix(base, teamCol * 0.25, 0.5); float gp = fp.y < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * (0.12 + gp * 2.5) * (0.6 + 0.4 * sin(abs(fp.y) * 3.0 - uTime * 4.0)); }
-fRough = mix(fRough, 1.0, 0.35); fMetal *= 0.55;
-float ao = smoothstep(0.0, 3.2, -d2 - uRf + 0.4); base *= mix(0.45, 1.0, ao);
+if(abs(fp.y) > uL){ base = mix(base, teamCol * 0.25, 0.5); float gp = fp.y < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * (0.14 + gp * 2.6) * (0.6 + 0.4 * sin(abs(fp.y) * 3.0 - uTime * 4.0)); }
+// Geometric specular anti-aliasing to prevent distant highlight shimmering without washing out near roughness
+float aaRough = clamp(length(fwidth(fp)) * 0.22, 0.0, 0.38);
+fRough = clamp(max(fRough, aaRough), 0.035, 0.98);
+// Perimeter & wall-fillet ambient occlusion
+float ao = smoothstep(0.0, 3.6, -d2 - uRf + 0.45); base *= mix(0.42, 1.0, ao);
 float cring = lmask(length(fp) - 9.5, 0.6) * (uType == 0 || uType == 4 || uType == 5 || uType == 8 ? 1.0 : 0.0); fEmis += mix(uGrid, uLine, 0.5) * cring * 0.08 * (1.0 + sin(uTime * 2.0));
 diffuseColor.rgb = base;
 `;
@@ -2124,37 +2308,46 @@ varying vec2 vWuv;
 float lmask2(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
 `;
 const WALL_MAP = `
-vec2 w = vWuv; float h = vWPos.y; float fRough = 0.4; float fMetal = 0.2; vec3 fEmis = vec3(0.0);
+vec2 w = vWuv; float h = vWPos.y; float fRough = 0.45; float fMetal = 0.22; vec3 fEmis = vec3(0.0); vec2 wBevel = vec2(0.0);
 vec3 teamCol = vWPos.z < 0.0 ? uBlue : uOrange; float endT = smoothstep(uL * 0.35, uL, abs(vWPos.z));
 vec4 hc = hexCoords(vec2(w.x, h) * (uType == 2 ? 0.35 : 0.55)); float hd = hexDist(hc.xy); float edge = smoothstep(0.42, 0.5, hd);
 float pad = 1.0 - smoothstep(uPadH - 0.2, uPadH + 0.2, h);
 float n = fbm(vec2(w.x * 0.2, h * 0.3));
 vec3 base = mix(uWall * (0.8 + 0.4 * n), uGlass, 1.0 - pad);
 base = mix(base, base * (0.5 + teamCol), endT * 0.55);
-float alpha = mix(uGlassA + edge * 0.16, 0.96, pad);
-if(uType == 2){ vec2 rv = abs(fract(vec2(w.x / 3.0, h / 3.0)) - 0.5); float rib = smoothstep(0.46, 0.49, max(rv.x, rv.y)); base *= 1.0 - rib * 0.5; fMetal = 0.8; alpha = mix(alpha, 0.96, rib * (1.0 - pad) * 0.6); }
-if(uType == 3){ float strata = sin(h * 2.2 + n * 4.0) * 0.5 + 0.5; base = mix(base, base * vec3(1.1, 0.9, 0.75), strata * pad * 0.5); fRough = 0.9; }
+// Physical Fresnel glass: clear head-on, reflective sheen at grazing angles
+vec3 Vview = normalize(vViewPosition);
+vec3 Nview = normalize(vNormal);
+float fresW = pow(1.0 - clamp(abs(dot(Vview, Nview)), 0.0, 1.0), 3.6);
+float glassAlpha = clamp(uGlassA * 0.72 + fresW * 0.36 + edge * 0.18, 0.0, 0.94);
+float alpha = mix(glassAlpha, 0.97, pad);
+fRough = mix(0.09, 0.52, pad);
+wBevel = hc.xy * edge * (1.0 - pad) * 0.45;
+if(uType == 2){ vec2 rv = abs(fract(vec2(w.x / 3.0, h / 3.0)) - 0.5); float rib = smoothstep(0.46, 0.49, max(rv.x, rv.y)); base *= 1.0 - rib * 0.5; fMetal = 0.82; fRough = mix(fRough, 0.35, rib); alpha = mix(alpha, 0.96, rib * (1.0 - pad) * 0.6); }
+if(uType == 3){ float strata = sin(h * 2.2 + n * 4.0) * 0.5 + 0.5; base = mix(base, base * vec3(1.1, 0.9, 0.75), strata * pad * 0.5); fRough = mix(0.18, 0.88, pad); }
 if(uType == 5){ vec3 v = voronoi(vec2(w.x, h) * 0.45); float cr = 1.0 - smoothstep(0.0, 0.05, v.y - v.x);
-  base = mix(base, vec3(0.88, 0.96, 1.0), cr * 0.55 + smoothstep(uPadH + 2.5, 0.0, h) * 0.35); alpha = mix(alpha, 0.75, cr * 0.45 * (1.0 - pad));
-  fRough = 0.12; fEmis += vec3(0.35, 0.8, 1.0) * cr * 0.3 * (1.0 - pad); }
+  base = mix(base, vec3(0.88, 0.96, 1.0), cr * 0.55 + smoothstep(uPadH + 2.5, 0.0, h) * 0.35); alpha = mix(alpha, 0.78, cr * 0.45 * (1.0 - pad));
+  fRough = 0.08; fEmis += vec3(0.35, 0.82, 1.0) * cr * 0.32 * (1.0 - pad); }
 if(uType == 6){ vec3 c1 = voronoi(vec2(w.x * 0.16 + uTime * 0.05, h * 0.16 - uTime * 0.04)); float cs = pow(1.0 - smoothstep(0.0, 0.3, c1.y - c1.x), 3.0);
   float bub = smoothstep(0.08, 0.0, length(fract(vec2(w.x * 0.7, h * 0.7 - uTime * 0.8 + hash12(floor(vec2(w.x * 0.7, 0.0))) * 9.0)) - 0.5) - 0.06) * step(0.86, hash12(floor(vec2(w.x * 0.7, h * 0.7 - uTime * 0.8 + hash12(floor(vec2(w.x * 0.7, 0.0))) * 9.0))));
-  fEmis += vec3(0.3, 0.8, 1.0) * (cs * 0.35 + bub * 0.6) * (1.0 - pad); alpha = clamp(alpha + bub * 0.3, 0.0, 1.0); fRough = 0.1; }
+  fEmis += vec3(0.3, 0.82, 1.0) * (cs * 0.38 + bub * 0.65) * (1.0 - pad); alpha = clamp(alpha + bub * 0.3, 0.0, 1.0); fRough = 0.08; }
 if(uType == 7){ float vx = floor(w.x * 1.4); float vlen = uH * (0.25 + 0.55 * hash12(vec2(vx, 3.0)));
   float vine = step(0.55, hash12(vec2(vx, 1.0))) * smoothstep(0.42, 0.2, abs(fract(w.x * 1.4) - 0.5 + sin(h * 1.5 + vx) * 0.08)) * smoothstep(uH - vlen, uH - vlen + 0.6, h);
   base = mix(base, vec3(0.1, 0.24, 0.05) * (0.7 + 0.5 * vnoise(vec2(w.x * 8.0, h * 8.0))), vine); alpha = mix(alpha, 0.97, vine);
-  base = mix(base, base * vec3(0.65, 1.0, 0.55), pad * smoothstep(0.45, 0.75, fbm(vec2(w.x * 0.3, h * 0.6)))); fRough = 0.85; }
+  base = mix(base, base * vec3(0.65, 1.0, 0.55), pad * smoothstep(0.45, 0.75, fbm(vec2(w.x * 0.3, h * 0.6)))); fRough = mix(fRough, 0.88, max(pad, vine)); }
 if(uType == 8){ vec3 v = voronoi(vec2(w.x, h) * 0.4); float cr = 1.0 - smoothstep(0.0, 0.06, v.y - v.x);
-  base = mix(base, vec3(0.05, 0.03, 0.03), pad * 0.7); fEmis += vec3(1.0, 0.32, 0.05) * cr * pad * 1.1 * (0.6 + 0.4 * sin(uTime * 2.0 + v.z * 6.0));
-  fEmis += vec3(1.0, 0.3, 0.05) * smoothstep(uH * 0.7, 0.0, h) * 0.05 * (1.0 - pad); }
+  base = mix(base, vec3(0.05, 0.03, 0.03), pad * 0.7); fEmis += vec3(1.0, 0.32, 0.05) * cr * pad * 1.2 * (0.6 + 0.4 * sin(uTime * 2.0 + v.z * 6.0));
+  fEmis += vec3(1.0, 0.3, 0.05) * smoothstep(uH * 0.7, 0.0, h) * 0.06 * (1.0 - pad); }
 float strip = lmask2(h - uPadH, 0.07); float strip2 = lmask2(h - (uH - uRf * 0.5), 0.05);
 vec3 sc = mix(uLine, teamCol, 0.35 + endT * 0.65);
 float pulse = 0.6 + 0.4 * sin(uTime * 2.0 - w.x * 0.08);
 fEmis += sc * (strip * 2.6 * pulse + strip2 * 1.2) + mix(uLine, teamCol, endT) * edge * (1.0 - pad) * 0.22;
-float gp = vWPos.z < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * gp * endT * 1.6 * (edge + 0.2);
+fEmis += mix(uGlass, sc, 0.45) * fresW * (1.0 - pad) * 0.22;
+float gp = vWPos.z < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * gp * endT * 1.7 * (edge + 0.22);
 alpha = clamp(alpha + strip + strip2 * 0.6, 0.0, 1.0);
 float top = smoothstep(uH - uRf * 1.2, uH, h); alpha *= 1.0 - top * 0.6;
-fRough = mix(fRough, 1.0, 0.3); fMetal *= 0.6;
+// Floor-seam ambient occlusion on lower wall fillet
+float wallAO = smoothstep(0.0, 1.6, h); base *= mix(0.62, 1.0, wallAO);
 diffuseColor.rgb = base; diffuseColor.a = alpha;
 `;
 
@@ -2197,13 +2390,14 @@ class ArenaVisual {
     injectStandard(mat, 'floor' + d.id, U, {
       fragDecl: FLOOR_FRAG, mapFrag: FLOOR_MAP,
       roughFrag: 'float roughnessFactor = fRough;', metalFrag: 'float metalnessFactor = fMetal;',
-      normalFrag: 'normal = normalize(normal + (viewMatrix * vec4(fPert, 0.0)).xyz * 0.6);',
+      normalFrag: 'normal = normalize(normal + (viewMatrix * vec4(fPert, 0.0)).xyz * 0.65);',
       emisFrag: `totalEmissiveRadiance += fEmis;
-        if(uReflOn > 0.5){ vec4 rc = uReflMat * vec4(vWPos, 1.0); vec2 ruv = rc.xy / rc.w + fPert.xz * 0.035;
-          vec3 rcol = min(texture2D(tRefl, ruv, fRough * 10.0).rgb, vec3(2.5));
+        if(uReflOn > 0.5){ vec4 rc = uReflMat * vec4(vWPos, 1.0); vec2 ruv = clamp(rc.xy / rc.w + fPert.xz * 0.028, vec2(0.001), vec2(0.999));
+          vec3 rcol = min(texture2D(tRefl, ruv, fRough * 6.5).rgb, vec3(3.0));
           float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
-          float gloss = (1.0 - fRough) * (1.0 - fRough);
-          totalEmissiveRadiance += rcol * uReflect * 0.6 * gloss * mix(0.3, 1.0, fres) * (1.0 - ln * 0.6); }`
+          float gloss = pow(clamp(1.0 - fRough, 0.0, 1.0), 2.2);
+          vec3 reflTint = mix(vec3(1.0), base * 1.4 + 0.25, fMetal * 0.6);
+          totalEmissiveRadiance += rcol * reflTint * uReflect * 0.72 * gloss * mix(0.22, 1.0, fres) * (1.0 - ln * 0.65); }`
     });
     const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.add(m); this.floor = m;
   }
@@ -2252,7 +2446,9 @@ class ArenaVisual {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.FrontSide });
     injectStandard(mat, 'wall' + d.id, wallUniforms, {
       vertexDecl: 'attribute vec2 wuv; varying vec2 vWuv;', vertexMain: 'vWuv = wuv;', fragDecl: WALL_FRAG, mapFrag: WALL_MAP,
-      roughFrag: 'float roughnessFactor = fRough;', metalFrag: 'float metalnessFactor = fMetal;', emisFrag: 'totalEmissiveRadiance += fEmis;'
+      roughFrag: 'float roughnessFactor = fRough;', metalFrag: 'float metalnessFactor = fMetal;',
+      normalFrag: 'normal = normalize(normal + vec3(wBevel, 0.0) * 0.35);',
+      emisFrag: 'totalEmissiveRadiance += fEmis;'
     });
     // Cap the floor-to-wall fillet cheeks at x = +/-gw on both goal mouths
     for (const side of [-1, 1]) {
@@ -2327,13 +2523,25 @@ class ArenaVisual {
     }
   }
   buildLights() {
-    const d = this.def;
-    this.hemi = new THREE.HemisphereLight(d.light.hemiSky, d.light.hemiGround, d.light.hemi); this.add(this.hemi);
-    const sun = this.sun = new THREE.DirectionalLight(d.light.sun, d.light.sunI);
-    sun.castShadow = true; const sc = sun.shadow.camera; sc.left = -32; sc.right = 32; sc.top = 32; sc.bottom = -32; sc.near = 1; sc.far = 220;
-    sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+    const d = this.def, s = this.shape;
+    this.hemi = new THREE.HemisphereLight(d.light.hemiSky, d.light.hemiGround, d.light.hemi * 0.92); this.add(this.hemi);
+    const sun = this.sun = new THREE.DirectionalLight(d.light.sun, d.light.sunI * 1.08);
+    sun.castShadow = true; const sc = sun.shadow.camera; sc.left = -34; sc.right = 34; sc.top = 34; sc.bottom = -34; sc.near = 1; sc.far = 220;
+    sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.025; sun.shadow.radius = 2.4;
     this.sunDir = new V3(...d.light.sunDir).normalize();
     this.add(sun); this.add(sun.target);
+    // Counter-directional rim/fill light for crisp 3-point specular separation on cars and ball
+    const rimCol = new THREE.Color(d.light.hemiSky).lerp(new THREE.Color(d.c.accent), 0.38);
+    this.rim = new THREE.DirectionalLight(rimCol, Math.min(1.15, d.light.sunI * 0.36));
+    this.rim.position.set(-this.sunDir.x * 80, 46, -this.sunDir.z * 80);
+    this.add(this.rim);
+    // Physical team-colored bounce lights at both goal mouths (flare on goal pulse)
+    this.blueGoalLight = new THREE.PointLight(this.blue, 24, 34, 1.8);
+    this.blueGoalLight.position.set(0, s.gh * 0.68, -s.L + 1.8);
+    this.add(this.blueGoalLight);
+    this.orangeGoalLight = new THREE.PointLight(this.orange, 24, 34, 1.8);
+    this.orangeGoalLight.position.set(0, s.gh * 0.68, s.L - 1.8);
+    this.add(this.orangeGoalLight);
   }
   updateShadow(focus) {
     const s = this.sun; const ts = 64 / this.renderer.shadowSize;
@@ -2872,6 +3080,9 @@ class ArenaVisual {
   update(t, dt, excite) {
     this.uniforms.uTime.value = t; this.skyMat.uniforms.uTime.value = t;
     if (this.crowdMat) this.crowdMat.uniforms.uExcite.value = excite;
+    const p = this.uniforms.uPulse.value;
+    if (this.blueGoalLight) this.blueGoalLight.intensity = 22 + p.x * 110;
+    if (this.orangeGoalLight) this.orangeGoalLight.intensity = 22 + p.y * 110;
     for (const u of this.updaters) u(t, dt);
   }
   dispose() {
@@ -3027,19 +3238,42 @@ vec3 paintColor(vec3 p, vec3 n){
 
 function makePaintMaterial(custom, team) {
   const fin = custom.finish;
-  const opts = { color: 0xffffff, roughness: 0.32, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.0 };
-  if (fin === 1) Object.assign(opts, { metalness: 0.75, roughness: 0.3, clearcoatRoughness: 0.08 });
-  if (fin === 2) Object.assign(opts, { metalness: 0.0, roughness: 0.78, clearcoat: 0 });
-  if (fin === 3) Object.assign(opts, { metalness: 0.35, roughness: 0.22, iridescence: 1.0, iridescenceIOR: 1.6, iridescenceThicknessRange: [180, 620] });
-  if (fin === 4) Object.assign(opts, { map: TexGen.carbon(), metalness: 0.3, roughness: 0.35 });
+  const opts = { color: 0xffffff, roughness: 0.24, metalness: 0.18, clearcoat: 1.0, clearcoatRoughness: 0.035, envMapIntensity: 1.45 };
+  if (fin === 1) Object.assign(opts, { metalness: 0.82, roughness: 0.26, clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.6 });
+  if (fin === 2) Object.assign(opts, { metalness: 0.04, roughness: 0.68, clearcoat: 0.0, sheen: 0.45, sheenRoughness: 0.62, sheenColor: new THREE.Color(0xffffff), envMapIntensity: 0.85 });
+  if (fin === 3) Object.assign(opts, { metalness: 0.42, roughness: 0.18, clearcoat: 1.0, clearcoatRoughness: 0.03, iridescence: 1.0, iridescenceIOR: 1.55, iridescenceThicknessRange: [200, 650], envMapIntensity: 1.65 });
+  if (fin === 4) Object.assign(opts, { map: TexGen.carbon(), metalness: 0.35, roughness: 0.28, clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.5 });
   const mat = new THREE.MeshPhysicalMaterial(opts);
   if (fin === 4 && mat.map) { mat.map.repeat.set(6, 6); }
   const prim = custom.primary < 0 ? TEAM_BODY[team] : PALETTE[custom.primary];
-  const U = { uPrimary: { value: new THREE.Color(prim) }, uSecondary: { value: new THREE.Color(PALETTE[custom.secondary]) }, uTeam: { value: new THREE.Color(TEAM_GLOW[team]) }, uDecal: { value: custom.decal }, uFlake: { value: fin === 1 ? 1 : 0 } };
+  const U = {
+    uPrimary: { value: new THREE.Color(prim) }, uSecondary: { value: new THREE.Color(PALETTE[custom.secondary]) },
+    uTeam: { value: new THREE.Color(TEAM_GLOW[team]) }, uDecal: { value: custom.decal },
+    uFlake: { value: fin === 1 ? 1 : 0 }, uFinish: { value: fin }
+  };
   injectStandard(mat, 'paint' + fin, U, {
-    vertexDecl: 'varying vec3 vOPos;', vertexMain: 'vOPos = position;', fragDecl: DECAL_GLSL,
-    mapFrag: 'diffuseColor.rgb *= paintColor(vOPos, normalize(vONrm));',
-    roughFrag: `float roughnessFactor = roughness; if(uFlake > 0.5) roughnessFactor += (hash13(floor(vOPos * 900.0)) - 0.5) * 0.25;`
+    vertexDecl: 'varying vec3 vOPos;', vertexMain: 'vOPos = position;',
+    fragDecl: DECAL_GLSL + '\nuniform int uFinish;',
+    mapFrag: `{
+      vec3 pc = paintColor(vOPos, normalize(vONrm));
+      float ndv = clamp(abs(dot(normalize(vViewPosition), normalize(vNormal))), 0.0, 1.0);
+      // Realistic automotive two-tone paint flop (richer/deeper at grazing angles)
+      float flop = pow(1.0 - ndv, 2.2);
+      if(uFinish == 1) pc *= mix(1.08, 0.68, flop);
+      else if(uFinish == 3) pc = mix(pc, mix(pc, uSecondary, 0.45), flop * 0.65);
+      else if(uFinish == 0) pc *= mix(1.04, 0.82, flop);
+      diffuseColor.rgb *= pc;
+    }`,
+    roughFrag: `float roughnessFactor = roughness;
+      if(uFlake > 0.5){
+        float fl = hash13(floor(vOPos * 720.0));
+        roughnessFactor = clamp(roughness + (fl - 0.5) * 0.22 - step(0.92, fl) * 0.14, 0.05, 0.9);
+      }`,
+    normalFrag: `if(uFlake > 0.5){
+      vec3 fpCell = floor(vOPos * 720.0);
+      vec3 fN = vec3(hash13(fpCell) - 0.5, hash13(fpCell + 19.3) - 0.5, hash13(fpCell + 41.7) - 0.5);
+      normal = normalize(normal + fN * 0.085);
+    }`
   });
   return mat;
 }
@@ -3063,11 +3297,11 @@ class CarModel {
   build() {
     const D = this.design, team = this.team, c = this.custom;
     const paint = this.paint = makePaintMaterial(c, team);
-    const dark = sharedMat('dark', () => new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.55, metalness: 0.4 }));
-    const carbon = sharedMat('carbon', () => new THREE.MeshPhysicalMaterial({ map: TexGen.carbon(), roughness: 0.3, metalness: 0.4, clearcoat: 1, clearcoatRoughness: 0.1 }));
-    const glass = sharedMat('glass', () => new THREE.MeshPhysicalMaterial({ color: 0x0b1018, roughness: 0.04, metalness: 0.9, clearcoat: 1, envMapIntensity: 1.6 }));
-    const chrome = sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.14, metalness: 1.0, envMapIntensity: 1.4 }));
-    const accent = new THREE.MeshPhysicalMaterial({ color: PALETTE[c.secondary], roughness: 0.3, metalness: 0.5, clearcoat: 1 });
+    const dark = sharedMat('dark', () => new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.5, metalness: 0.48, envMapIntensity: 1.1 }));
+    const carbon = sharedMat('carbon', () => new THREE.MeshPhysicalMaterial({ map: TexGen.carbon(), roughness: 0.26, metalness: 0.42, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.45 }));
+    const glass = sharedMat('glass', () => new THREE.MeshPhysicalMaterial({ color: 0x050912, roughness: 0.03, metalness: 0.12, clearcoat: 1, clearcoatRoughness: 0.02, reflectivity: 1.0, ior: 1.52, envMapIntensity: 2.2 }));
+    const chrome = sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.1, metalness: 1.0, envMapIntensity: 1.85 }));
+    const accent = new THREE.MeshPhysicalMaterial({ color: PALETTE[c.secondary], roughness: 0.24, metalness: 0.55, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.4 });
     const teamGlow = new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM_GLOW[team]).multiplyScalar(3.2) });
     const headMat = sharedMat('head', () => new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.95, 1.0).multiplyScalar(5) }));
     this.tailMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.05, 0.03).multiplyScalar(3) });
@@ -3185,7 +3419,7 @@ class CarModel {
   }
   makeWheel(r, w, type, chrome, glow) {
     const g = new THREE.Group();
-    const tireMat = sharedMat('tire', () => new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.85, metalness: 0.0, normalMap: TexGen.tread(), normalScale: new THREE.Vector2(0.8, 0.8) }));
+    const tireMat = sharedMat('tire', () => new THREE.MeshStandardMaterial({ color: 0x141518, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.55, normalMap: TexGen.tread(), normalScale: new THREE.Vector2(1.1, 1.1) }));
     const ri = r * 0.66;
     const prof = [[ri, -w / 2], [r - 0.03, -w / 2], [r - 0.008, -w / 2 + 0.012], [r, -w / 2 + 0.03], [r, w / 2 - 0.03], [r - 0.008, w / 2 - 0.012], [r - 0.03, w / 2], [ri, w / 2]].map(p => new THREE.Vector2(p[0], p[1]));
     const tg = new THREE.LatheGeometry(prof, 28); tg.rotateX(PI / 2);
@@ -4811,14 +5045,35 @@ float soccer(vec3 n, out float isPent){
 }`;
 class BallVisual {
   constructor(scene) {
-    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.2 });
+    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.4, clearcoat: 0.75, clearcoatRoughness: 0.14, envMapIntensity: 1.55 });
     this.U = { uSeam: { value: new THREE.Color(0x9fdcff) }, uGlow: { value: 0.4 } };
     injectStandard(mat, 'ball', this.U, {
       vertexDecl: 'varying vec3 vOPos;', vertexMain: 'vOPos = position;', fragDecl: BALL_GLSL,
-      mapFrag: `float isPent; float e = soccer(normalize(vOPos), isPent); float seam = 1.0 - smoothstep(0.004, 0.018, e);
-        vec3 base = mix(vec3(0.82, 0.84, 0.88), vec3(0.16, 0.17, 0.2), isPent); base *= 0.92 + 0.08 * vnoise(vOPos.xy * 12.0 + vOPos.z * 7.0);
-        diffuseColor.rgb = mix(base, vec3(0.05), seam);`,
-      emisFrag: `{ float isPent2; float e2 = soccer(normalize(vOPos), isPent2); float seam2 = 1.0 - smoothstep(0.003, 0.02, e2); totalEmissiveRadiance += uSeam * seam2 * uGlow * 2.5 + uSeam * isPent2 * uGlow * 0.15; }`
+      mapFrag: `float isPent; float bEdge = soccer(normalize(vOPos), isPent);
+        float bSeam = 1.0 - smoothstep(0.004, 0.019, bEdge);
+        float bBevel = smoothstep(0.005, 0.045, bEdge);
+        float bGrain = vnoise(vOPos.xy * 18.0 + vOPos.z * 11.0);
+        vec3 bBase = mix(vec3(0.84, 0.87, 0.92), vec3(0.14, 0.15, 0.19), isPent);
+        bBase *= (0.9 + 0.1 * bGrain) * (0.78 + 0.22 * bBevel);
+        diffuseColor.rgb = mix(bBase, vec3(0.03), bSeam);`,
+      roughFrag: `float roughnessFactor = mix(mix(0.24, 0.56, isPent) + (bGrain - 0.5) * 0.08, 0.82, bSeam);`,
+      metalFrag: `float metalnessFactor = mix(mix(0.55, 0.15, isPent), 0.08, bSeam);`,
+      normalFrag: `{
+        float bH = bBevel * 0.85 + bGrain * 0.08 * isPent;
+        vec3 dPosX = dFdx(vViewPosition); vec3 dPosY = dFdy(vViewPosition);
+        float dHx = dFdx(bH); float dHy = dFdy(bH);
+        vec3 r1 = cross(dPosY, normal); vec3 r2 = cross(normal, dPosX);
+        float det = dot(dPosX, r1);
+        if(abs(det) > 1e-7){
+          vec3 surfGrad = sign(det) * (dHx * r1 + dHy * r2);
+          normal = normalize(abs(det) * normal - surfGrad * 0.55);
+        }
+      }`,
+      emisFrag: `{
+        float seamGlow = 1.0 - smoothstep(0.003, 0.018, bEdge);
+        float fresB = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 3.2);
+        totalEmissiveRadiance += uSeam * (seamGlow * uGlow * 2.8 + isPent * uGlow * 0.14 + fresB * (0.08 + uGlow * 0.22));
+      }`
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(PHYS.ballR, 48, 32), mat); this.mesh.castShadow = true; scene.add(this.mesh);
     // Floor shadow + crisp target ring for reading bounces & aerials
@@ -6812,6 +7067,7 @@ class GameEngine {
   }
   startMatch(cfg) {
     this.lastCfg = { type: 'match', cfg }; this.inGame = true; this.paused = false;
+    this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     const def = ARENAS[cfg.arena] || ARENAS[0];
     this.newWorld(def, { layout: cfg.layout, scale: cfg.teamSize >= 4 ? 1.12 : 1 });
@@ -6833,6 +7089,7 @@ class GameEngine {
     const meId = this.online && this.online.user ? this.online.user.id : null;
     const isHost = meId && msg.hostId === meId;
     this.lastCfg = null; this.inGame = true; this.paused = false; this.tournament = null;
+    this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     const def = ARENAS[s.arena] || ARENAS[0];
     this.newWorld(def, { layout: s.layout || 'default', scale: s.teamSize >= 4 ? 1.12 : 1 });
@@ -6881,6 +7138,7 @@ class GameEngine {
   }
   startFreePlay(cfg) {
     this.lastCfg = { type: 'free', cfg }; this.inGame = true; this.paused = false; this.tournament = null;
+    this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     this.newWorld(ARENAS[cfg.arena] || ARENAS[0], { layout: cfg.layout });
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
@@ -6889,6 +7147,7 @@ class GameEngine {
   }
   startTraining(cfg) {
     this.lastCfg = { type: 'train', cfg }; this.inGame = true; this.paused = false; this.tournament = null;
+    this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     this.newWorld(ARENAS[cfg.arena] || ARENAS[0], { layout: cfg.layout });
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
@@ -6946,7 +7205,7 @@ class GameEngine {
       this.ui.showPause();
       try { if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); } catch (e) { }
       this.audio.stopEngines();
-    } else this.ui.hideOverlay();
+    } else { this.ui.hideOverlay(); this.input.lastCursorMove = performance.now() - 800; }
   }
   onMenuScreen(screen) { if (screen === 'garage') this.enterShowroom(); else this.exitShowroom(); }
   previewArena(i) { if (this.inGame) return; this.ui.setup.arena = i; const key = ARENAS[i].id + '|' + (this.ui.setup.layout || 'default') + '|1'; if (this.arenaKey !== key) { this.startExhibition(); if (this.showroom) { this.exitShowroom(); this.enterShowroom(); } } }
@@ -7156,8 +7415,16 @@ class GameEngine {
       this.audio && this.audio.stopEngines && this.audio.stopEngines();
     }
   }
+  syncCursor() {
+    const auth = $('authGate'), menu = $('menu');
+    const activePlay = this.inGame && !this.paused && !(this.ui.overlayOpen && !this.ui._sb) &&
+      (!auth || auth.classList.contains('hidden')) && (!menu || menu.classList.contains('hidden'));
+    const idle = performance.now() - this.input.lastCursorMove > 1200;
+    document.body.classList.toggle('hide-cursor', !!(activePlay && (idle || this.input.pointerLocked)));
+  }
   update(dt) {
     this.syncOrientation();
+    this.syncCursor();
     if (this.portraitLocked) { this.renderFrame(0); return; }
     this.input.poll();
     this.handleInput(dt);
@@ -7243,7 +7510,7 @@ class GameEngine {
       this.audio.updateAmbience(vdt, ballHeat);
     }
     const av = this.arenaVisual;
-    if (av.refl) { const on = R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]); av.floor.material.envMapIntensity = on ? 0.25 : 0.6; }
+    if (av.refl) { const on = R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]); av.floor.material.envMapIntensity = on ? 0.38 : 0.85; }
     R.render(this.time);
     if (this.inGame) this.ui.updateHud(this, vdt || 0.016);
   }
