@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>HYPERSTRIKE — Rocket Car Soccer</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%233ef2ff'/%3E%3Cstop offset='100%25' stop-color='%23ff8a1f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%23081024'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='url(%23g)' stroke-width='4.5'/%3E%3Cpath d='M35 14L20 35h11l-3 15 16-22H33z' fill='%23e9f1ff'/%3E%3C/svg%3E">
 <style>
 :root{
   --blue:#2f8fff; --blue2:#1a5fd6; --orange:#ff8a1f; --orange2:#e05a00;
@@ -343,6 +344,7 @@ body.portrait-lock #rotateLock{display:flex}
   font-size:14px;outline:none;border-radius:2px;box-sizing:border-box}
 .auth-field input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(62,242,255,.16)}
 .auth-err{min-height:18px;font-size:12px;color:#ff6b7a;margin-bottom:10px;font-weight:700;letter-spacing:.04em}
+.auth-err.ok{color:#4dff88}
 .auth-sub{width:100%;margin-top:4px}
 .auth-srv{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:var(--ink2)}
 .auth-srv summary{cursor:pointer;letter-spacing:.12em;font-weight:700;opacity:.8}
@@ -361,6 +363,10 @@ body.portrait-lock #rotateLock{display:flex}
 .pc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:6px;font-size:10px;color:var(--ink2)}
 .pc-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#4dff88;margin-right:5px;box-shadow:0 0 8px #4dff88}
 .pc-dot.off{background:#ff5a6a;box-shadow:0 0 8px #ff5a6a}
+.pc-acts{display:flex;align-items:center;gap:6px}
+.pc-btn{background:transparent;border:1px solid rgba(255,255,255,.18);color:var(--ink2);font-size:10px;font-weight:800;letter-spacing:.12em;
+  padding:3px 8px;cursor:pointer}
+.pc-btn:hover{border-color:var(--accent);color:var(--accent)}
 .pc-out{background:transparent;border:1px solid rgba(255,255,255,.18);color:var(--ink2);font-size:10px;font-weight:800;letter-spacing:.12em;
   padding:3px 8px;cursor:pointer}
 .pc-out:hover{border-color:#ff6b7a;color:#ff6b7a}
@@ -5487,6 +5493,9 @@ class OnlineManager {
     this._onAuthed(data.token, data.user);
     return data.user;
   }
+  async changePassword(currentPassword, newPassword, confirmPassword) {
+    return await this.api('/api/password', { method: 'POST', body: { currentPassword, newPassword, confirmPassword } });
+  }
   async restoreSession() {
     if (!this.token) return null;
     try {
@@ -5912,13 +5921,15 @@ class UIManager {
     el.classList.remove('hidden');
     const r = u.rank || { name: 'BRONZE I', color: '#cd7f32', rp: 0 };
     const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
-    const sqTag = on.squad ? `<span style="color:var(--gold)">SQUAD ${this.esc(on.squad.code)} (${on.squad.members.length})</span>` : `<span>${on.onlineCount || 1} ONLINE${on.region ? ' · ' + on.region.toUpperCase() : ''}</span>`;
+    const sqTag = on.squad ? `<span style="color:var(--gold)">SQUAD ${this.esc(on.squad.code)} (${on.squad.members.length})</span>` : `<span>${on.onlineCount || 1} ONLINE</span>`;
     el.innerHTML = `
       <div class="pc-top"><span class="pc-name">${this.esc(u.username)}</span><span class="pc-lvl">LVL ${u.level}</span></div>
       <div class="pc-rank"><span style="color:${r.color}">${this.esc(r.name)}</span><span style="color:var(--ink2)">${u.rp} RP</span></div>
       <div class="pc-xpbar"><i style="width:${pct}%"></i></div>
       <div class="pc-xptxt"><span>${u.xp.toLocaleString()} / ${u.xpNext.toLocaleString()} XP</span><span>${pct}%</span></div>
-      <div class="pc-foot"><span><i class="pc-dot ${on.connected ? '' : 'off'}"></i>${sqTag}</span><button class="pc-out" id="btnSignOut">SIGN OUT</button></div>`;
+      <div class="pc-foot"><span><i class="pc-dot ${on.connected ? '' : 'off'}"></i>${sqTag}</span><span class="pc-acts"><button class="pc-btn" id="btnChangePass">PASSWORD</button><button class="pc-out" id="btnSignOut">SIGN OUT</button></span></div>`;
+    const cp = $('btnChangePass');
+    if (cp) cp.onclick = () => { this.g.audio.ui('click'); this.settingsTab = 'account'; this.showMenu('settings'); };
     const so = $('btnSignOut');
     if (so) so.onclick = () => { this.g.audio.ui('click'); this.g.online.logout(); };
   }
@@ -6274,7 +6285,7 @@ class UIManager {
     const pn = $('pname'); if (pn) pn.oninput = () => { Settings.data.playerName = pn.value.toUpperCase().slice(0, 14) || 'PLAYER'; Settings.save(); };
   }
   settingsHtml() {
-    const S = Settings.data; const tabs = [['camera', 'Camera'], ['controls', 'Controls'], ['video', 'Video'], ['audio', 'Audio']];
+    const S = Settings.data; const tabs = [['camera', 'Camera'], ['controls', 'Controls'], ['video', 'Video'], ['audio', 'Audio'], ['account', 'Account']];
     const slider = (k, l, min, max, step, fmt = v => v) => `<div class="set"><label>${l}</label><input type="range" min="${min}" max="${max}" step="${step}" value="${S[k]}" data-sl="${k}"><span class="val" id="v_${k}">${fmt(S[k])}</span></div>`;
     const tog = (k, l) => `<div class="set"><label>${l}</label><button class="toggle ${S[k] ? 'on' : ''}" data-tg="${k}"></button></div>`;
     let h = `<div class="ph"><h2>Settings</h2><span>saved automatically</span></div><div class="tabs">` + tabs.map(([k, l]) => `<button class="${this.settingsTab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`).join('') + '</div>';
@@ -6282,6 +6293,30 @@ class UIManager {
     if (this.settingsTab === 'controls') h += slider('mouseSens', 'Mouse sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('camSens', 'Camera (stick) sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('deadzone', 'Controller deadzone', 0.02, 0.4, 0.01, v => (+v).toFixed(2)) + tog('invertY', 'Invert aerial pitch') + tog('vibration', 'Controller vibration');
     if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:300px">${['low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS');
     if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + slider('ambience', 'Crowd & ambience', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
+    if (this.settingsTab === 'account') {
+      const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
+      h += `<div class="mp-box" style="max-width:440px">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.16em;color:var(--accent);margin-bottom:4px">CHANGE PASSWORD</div>
+        <div class="desc" style="margin-bottom:14px">Signed in as <b>${uname}</b>. Confirm your current password to set a new one.</div>
+        <form id="pwChangeForm" autocomplete="on">
+          <input type="text" name="username" value="${uname}" autocomplete="username" style="display:none" readonly>
+          <div class="auth-field">
+            <label for="pwCurrent">Current Password</label>
+            <input type="password" id="pwCurrent" required autocomplete="current-password" placeholder="Enter current password">
+          </div>
+          <div class="auth-field">
+            <label for="pwNew">New Password</label>
+            <input type="password" id="pwNew" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Enter new password (min 6 chars)">
+          </div>
+          <div class="auth-field">
+            <label for="pwConfirm">Confirm New Password</label>
+            <input type="password" id="pwConfirm" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Re-enter new password">
+          </div>
+          <div class="auth-err" id="pwMsg"></div>
+          <button type="submit" class="cta auth-sub" id="pwSubmit"><span id="pwSubmitTxt">Update Password</span></button>
+        </form>
+      </div>`;
+    }
     return h;
   }
   bindSettings(root = $('menuPanel')) {
@@ -6289,6 +6324,40 @@ class UIManager {
     root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { const k = r.dataset.sl; const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music', 'ambience'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
     root.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.tg; Settings.set(k, !Settings.data[k]); b.classList.toggle('on', Settings.data[k]); });
     root.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); Settings.set('quality', b.dataset.q); root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === b.dataset.q)); });
+    const pwForm = root.querySelector('#pwChangeForm');
+    if (pwForm) {
+      pwForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const curEl = root.querySelector('#pwCurrent');
+        const newEl = root.querySelector('#pwNew');
+        const cfmEl = root.querySelector('#pwConfirm');
+        const msgEl = root.querySelector('#pwMsg');
+        const btn = root.querySelector('#pwSubmit');
+        const btnTxt = root.querySelector('#pwSubmitTxt');
+        const cur = curEl.value, np = newEl.value, cp = cfmEl.value;
+        msgEl.classList.remove('ok');
+        msgEl.textContent = '';
+        if (!cur) { msgEl.textContent = 'Please enter your current password.'; return; }
+        if (np.length < 6 || np.length > 128) { msgEl.textContent = 'New password must be at least 6 characters.'; return; }
+        if (np !== cp) { msgEl.textContent = 'New passwords do not match.'; return; }
+        if (np === cur) { msgEl.textContent = 'New password must be different from your current password.'; return; }
+        btn.disabled = true;
+        btnTxt.textContent = 'Updating...';
+        try {
+          await this.g.online.changePassword(cur, np, cp);
+          curEl.value = ''; newEl.value = ''; cfmEl.value = '';
+          msgEl.classList.add('ok');
+          msgEl.textContent = 'Password updated successfully.';
+          this.g.audio.ui('click');
+          this.toast('PASSWORD UPDATED');
+        } catch (err) {
+          msgEl.textContent = err.message || 'Failed to update password.';
+        } finally {
+          btn.disabled = false;
+          btnTxt.textContent = 'Update Password';
+        }
+      };
+    }
   }
   controlsHtml() {
     const k = (...a) => a.map(x => `<kbd>${x}</kbd>`).join(' ');
