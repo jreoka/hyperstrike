@@ -807,7 +807,10 @@ const server = http.createServer(async (req, res) => {
   // Static index.html serving
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     try {
-      const html = fs.readFileSync(INDEX_FILE);
+      let html = fs.readFileSync(INDEX_FILE, 'utf8');
+      if (ALLOWED_ORIGIN) {
+        html = html.replace('</head>', `<script>window.__HYPERSTRIKE_URL__=${JSON.stringify(ALLOWED_ORIGIN)};</script></head>`);
+      }
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache'
