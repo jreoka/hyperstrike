@@ -4781,14 +4781,15 @@ class CarVisual {
   }
   update(alpha, dt, t, fxSys, override) {
     const car = this.car, m = this.model;
-    if (car.demolished) { m.root.visible = false; this.trail.update(dt); return; }
+    const dead = override ? !!override.dead : car.demolished;
+    if (dead) { m.root.visible = false; this.trail.update(dt); return; }
     m.root.visible = true;
     if (override) { this.visPos.copy(override.pos); this.visQuat.copy(override.quat); }
     else { this.visPos.lerpVectors(car.prevPos, car.pos, alpha); this.visQuat.slerpQuaternions(car.prevQuat, car.quat, alpha); }
     m.root.position.copy(this.visPos); m.root.quaternion.copy(this.visQuat);
     const lat = (override ? 0 : clamp(car.controls.steer * car.vel.length() * 0.004, -0.06, 0.06)) * (car.onGround ? 1 : 0);
     this.bodyTilt.x = damp(this.bodyTilt.x, lat, 8, dt);
-    const pitch = car.onGround ? clamp(-car.controls.throttle * 0.02 - (car.isBoosting ? 0.02 : 0), -0.05, 0.05) : 0;
+    const pitch = override ? 0 : (car.onGround ? clamp(-car.controls.throttle * 0.02 - (car.isBoosting ? 0.02 : 0), -0.05, 0.05) : 0);
     this.bodyTilt.z = damp(this.bodyTilt.z, pitch, 6, dt);
     m.body.rotation.set(this.bodyTilt.x, 0, this.bodyTilt.z);
     m.root.updateMatrixWorld(true);
@@ -4801,7 +4802,7 @@ class CarVisual {
       w.spin.rotation.z = -pw.spin * (0.17 / w.r);
     }
     const boosting = override ? override.boost : car.isBoosting;
-    const nitro = !override && car.nitroT > 0;
+    const nitro = override ? !!override.nitro : car.nitroT > 0;
     if (nitro !== !!this._nitro) { this._nitro = nitro; if (nitro) for (const f of m.flames) { f.outer.material.uniforms.uCol.value.setHex(0x4afff0); f.inner.material.uniforms.uCol.value.setHex(0xffffff); } else m.setTrailColors(this.custom.trail, car.team); }
     this.flameLen = damp(this.flameLen, boosting ? (nitro ? 1.6 : 1) : 0, boosting ? 25 : 10, dt);
     const T = TRAILS[this.custom.trail];
@@ -4813,20 +4814,21 @@ class CarVisual {
       if (T.rainbow && !nitro) f.outer.material.uniforms.uCol.value.setHSL((t * 0.5) % 1, 1, 0.55);
     }
     m.exhaustGlow.color.setRGB(1, 0.35, 0.08).multiplyScalar(0.6 + this.flameLen * 4);
-    m.tailMat.color.setRGB(1, 0.05, 0.03).multiplyScalar(car.controls.throttle < -0.1 ? 6 : 2.5);
-    m.underglow.material.uniforms.uI.value = 0.35 + (car.supersonic ? 0.35 : 0);
-    m.blob.material.uniforms.uA.value = override ? 0.5 : (car.contacts > 0 ? 0.62 : Math.max(0, 0.62 - car.airTime * 2.2));
+    m.tailMat.color.setRGB(1, 0.05, 0.03).multiplyScalar(!override && car.controls.throttle < -0.1 ? 6 : 2.5);
+    const sup = override ? !!override.supersonic : car.supersonic;
+    m.underglow.material.uniforms.uI.value = 0.35 + (sup ? 0.35 : 0);
+    m.blob.material.uniforms.uA.value = override ? clamp(0.62 - Math.max(0, this.visPos.y - 0.5) * 0.12, 0, 0.62) : (car.contacts > 0 ? 0.62 : Math.max(0, 0.62 - car.airTime * 2.2));
     this.trailCol.setHex(T.outer < 0 ? TEAM_GLOW[car.team] : T.outer); if (T.rainbow) this.trailCol.setHSL((t * 0.5) % 1, 1, 0.5); if (nitro) this.trailCol.setHex(0x4afff0);
     const b = this.vb.fromQuat(this.visQuat);
     const rear = tmpV.copy(b.f).multiplyScalar(this.model.design.x0 - 0.05).add(this.visPos).addScaledVector(b.u, -0.02);
-    const sup = car.supersonic && !override;
     if (boosting || sup) { this.trail.push(rear, b.r, boosting ? 1.0 : 0.35, this.trailCol, boosting ? 0.17 : 0.07); }
     else if (this.trail.pts.length) this.trail.push(rear, b.r, 0, this.trailCol, 0.05);
     this.trail.update(dt);
     if (boosting && fxSys) {
+      const vel = override && override.vel ? override.vel : car.vel;
       for (const ex of m.exhausts) {
         const wp = tmpV2.copy(ex); m.body.localToWorld(wp);
-        fxSys.boostPuff(wp, b.f, car.vel, T, car.team, dt);
+        fxSys.boostPuff(wp, b.f, vel, T, car.team, dt);
       }
     }
   }
@@ -5187,43 +5189,117 @@ class PowerVisuals {
       case 'tornadoEnd': fx.dust(e.pos, 25, 0xc8d8e8, 4, 2); break;
     }
   }
+  resetTransient() {
+    for (const [, m] of this.tornadoMeshes) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); }
+    this.tornadoMeshes.clear();
+    this.ice.visible = false; this.ballAura.visible = false;
+    for (const r of this.ballRings) r.visible = false;
+    for (const L of this.lines) L.line.visible = L.head.visible = false;
+    for (const pr of this.projs) pr.fist.visible = pr.boot.visible = false;
+    for (const p of this.pillars) { p.t = p.dur; p.m.visible = false; }
+    for (const [, f] of this.carFx) { f.spikes.visible = f.aura.visible = f.ring.visible = false; }
+  }
+  onReplayEvent(e) {
+    const fx = this.g.fx; const P = e.id ? POWER_BY_ID[e.id] : null;
+    const pos = (this._rp1 || (this._rp1 = new V3())).set(e.x || 0, e.y || 0, e.z || 0);
+    const aux = this._rp2 || (this._rp2 = new V3());
+    switch (e.kind) {
+      case 'use': {
+        const col = P.hex;
+        fx.sparks(pos, 18, col, 5, null, 0.5, 0.07);
+        if (e.id === 'scramble' && e.tx != null) {
+          for (let i = 0; i < 40; i++) { const t = i / 40; fx.c2.setHex(0xffffff); fx.c3.setHex(col); fx.add.spawn(lerp(e.x, e.tx, t), lerp(e.y, e.ty, t) + 0.4, lerp(e.z, e.tz, t), rand(-1, 1), rand(-1, 1), rand(-1, 1), 0.5, 0.2, 0.04, fx.c2, fx.c3, 1, 2, 0, 1); }
+        }
+        if (e.id === 'overdrive' || e.id === 'nitro' || e.id === 'spikes' || e.id === 'magnet') fx.wave(pos.clone(), aux.set(0, 1, 0), col, 4, 0.4);
+        if (e.id === 'tornado') fx.dust(pos, 20, 0xc8d8e8, 3, 3);
+        if (e.id === 'antigrav') { const bp = aux.set(e.bx, e.by, e.bz); fx.wave(bp.clone(), tmpV2.set(0, 1, 0), col, 5, 0.6); fx.flashLight(bp, col, 40, 0.5, 12); }
+        break;
+      }
+      case 'freeze': fx.sparks(pos, 50, 0xbff0ff, 6, null, 0.7, 0.08); fx.wave(pos.clone(), aux.set(0, 1, 0), 0x9fe8ff, 6, 0.5); fx.flashLight(pos, 0x9fe8ff, 60, 0.5, 14); this.iceT0 = this.t; break;
+      case 'shatter': case 'thaw': {
+        fx.c2.setHex(0xe8f8ff); fx.c3.setHex(0x7ad8ff);
+        for (let i = 0; i < (e.kind === 'shatter' ? 70 : 35); i++) { aux.set(rand(-1, 1), rand(-0.3, 1), rand(-1, 1)).normalize(); const sp = e.kind === 'shatter' ? 4 + Math.random() * 9 : 1 + Math.random() * 3; fx.alpha.spawn(e.x + aux.x * 0.9, e.y + aux.y * 0.9, e.z + aux.z * 0.9, aux.x * sp, aux.y * sp + 2, aux.z * sp, 0.9 + Math.random() * 0.8, 0.14, 0.08, fx.c2, fx.c3, 0.9, 0.5, 9, 2); }
+        fx.sparks(pos, 30, 0x9fe8ff, 7, null, 0.4, 0.06); break;
+      }
+      case 'attach': fx.sparks(pos, 25, 0xffd23f, 6, null, 0.4, 0.07); break;
+      case 'release': if (e.launch) { fx.wave(pos.clone(), aux.set(e.fx, e.fy, e.fz), 0xffd23f, 4, 0.35); fx.sparks(pos, 30, 0xffd23f, 10, null, 0.4, 0.07); } break;
+      case 'punchHit': { const dir = aux.set(e.dx, e.dy, e.dz); fx.wave(pos.clone(), dir, 0xff4a3a, 7, 0.45); fx.ballHit(pos, 45, 0xff4a3a, dir); fx.flashLight(pos, 0xff4a3a, 70, 0.35, 14); this.g.camera.addShake(0.25); break; }
+      case 'bootHit': fx.sparks(pos, 50, 0xffb04a, 11, null, 0.5, 0.08); fx.wave(pos.clone(), aux.set(0, 1, 0), 0xffb04a, 6, 0.4); fx.flashLight(pos, 0xffb04a, 60, 0.35, 12); break;
+      case 'hook': fx.sparks(pos, 20, e.hookKind === 'grapple' ? 0x8aff5a : 0xffa04a, 6, null, 0.4, 0.06); break;
+      case 'shock': {
+        const p = aux.set(e.x, Math.max(0.3, e.y), e.z);
+        fx.wave(p.clone(), tmpV2.set(0, 1, 0), 0x7a9aff, 32, 0.6); fx.later(0.06, () => fx.wave(p.clone(), tmpV2.set(0, 1, 0), 0xffffff, 22, 0.5));
+        fx.flashLight(p, 0x7a9aff, 160, 0.5, 26); fx.sparks(p, 90, 0x9ab8ff, 18, null, 0.6, 0.09); fx.dust(p, 30, 0xb8c8ff, 4, 2); this.g.camera.addShake(0.35); break;
+      }
+      case 'swap': {
+        const fr = pos.set(e.fx, e.fy, e.fz), to = aux.set(e.tx, e.ty, e.tz);
+        this.pillar(fr, 0xd07aff); this.pillar(to, 0xd07aff); fx.sparks(fr, 40, 0xd07aff, 8, null, 0.5, 0.08); fx.sparks(to, 40, 0xd07aff, 8, null, 0.5, 0.08);
+        for (const ci of [e.ci, e.ti]) { const v = this.g.carVisuals[ci]; if (v) v.trail.clear(); } break;
+      }
+      case 'scrambled': fx.sparks(pos, 40, 0x5aff9a, 7, null, 0.6, 0.07); break;
+      case 'ovHit': fx.sparks(pos, 40, 0xffe14a, 12, null, 0.4, 0.08); fx.flashLight(pos, 0xffe14a, 50, 0.3, 10); break;
+      case 'tornadoEnd': fx.dust(pos, 25, 0xc8d8e8, 4, 2); break;
+    }
+  }
   update(dt, t, replaying) {
-    this.t = t; const w = this.g.world; const P = w && w.powers; const show = !!P && !replaying && !this.g.showroom;
+    this.t = t; const w = this.g.world; const P = w && w.powers; const show = !!P && !this.g.showroom;
+    const R = replaying ? this.g.replay : null;
     this.group.visible = show;
     const seen = new Set();
-    if (show) for (const T of P.tornados) {
-      let m = this.tornadoMeshes.get(T); if (!m) { m = { outer: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)), inner: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)) }; m.inner.scale.set(0.6, 0.92, 0.6); this.group.add(m.outer); this.group.add(m.inner); this.tornadoMeshes.set(T, m); }
-      seen.add(T); const a = Math.min(1, T.t * 2.5) * Math.min(1, (T.life - T.t) * 1.5);
+    const tornados = show ? (R ? R.tornados : P.tornados) : [];
+    for (const T of tornados) {
+      const key = T.id;
+      let m = this.tornadoMeshes.get(key); if (!m) { m = { outer: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)), inner: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)) }; m.inner.scale.set(0.6, 0.92, 0.6); this.group.add(m.outer); this.group.add(m.inner); this.tornadoMeshes.set(key, m); }
+      seen.add(key); const a = Math.min(1, T.t * 2.5) * Math.min(1, (T.life - T.t) * 1.5);
       for (const mm of [m.outer, m.inner]) { mm.position.copy(T.pos); mm.material.uniforms.uTime.value = t; mm.material.uniforms.uA.value = a; }
       m.outer.rotation.y = t * 4; m.inner.rotation.y = -t * 6;
       const fx = this.g.fx;
-      if (Math.random() < 0.9) { const ang = Math.random() * TAU, y = Math.random() * 14, r = 0.8 + Math.pow(y / 17, 1.7) * 5.5; fx.c2.setHex(0xd8e8f0); fx.c3.setHex(0x8aa0b0);
+      if (dt > 0 && Math.random() < 0.9) { const ang = Math.random() * TAU, y = Math.random() * 14, r = 0.8 + Math.pow(y / 17, 1.7) * 5.5; fx.c2.setHex(0xd8e8f0); fx.c3.setHex(0x8aa0b0);
         fx.alpha.spawn(T.pos.x + Math.cos(ang) * r, y, T.pos.z + Math.sin(ang) * r, -Math.sin(ang) * 14, 3, Math.cos(ang) * 14, 0.5, 0.3, 0.6, fx.c2, fx.c3, 0.35 * a, 0.5, 0, 0); }
-      if (Math.random() < 0.3) fx.dust(T.pos, 2, 0xb8c8d8, 2.5, 1.5);
+      if (dt > 0 && Math.random() < 0.3) fx.dust(T.pos, 2, 0xb8c8d8, 2.5, 1.5);
     }
-    for (const [T, m] of this.tornadoMeshes) if (!seen.has(T)) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); this.tornadoMeshes.delete(T); }
+    for (const [key, m] of this.tornadoMeshes) if (!seen.has(key)) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); this.tornadoMeshes.delete(key); }
     const ball = w && w.ball; const bp = this.g.ballPosV;
-    this.ice.visible = show && ball.iceT > 0 && this.g.ballVisual.mesh.visible;
-    if (this.ice.visible) { const k = Math.min(1, (t - (this.iceT0 || 0)) * 6); this.ice.position.copy(bp); this.ice.scale.setScalar(0.4 + 0.6 * k + Math.sin(t * 3) * 0.01); this.ice.rotation.y = 0.3; this.ice.material.opacity = 0.45 + 0.25 * clamp(ball.iceT, 0, 1); }
-    const anti = show && ball.antiT > 0 && this.g.ballVisual.mesh.visible;
+    const iceT = R ? R.ballIceT : (ball ? ball.iceT : 0);
+    const antiT = R ? R.ballAntiT : (ball ? ball.antiT : 0);
+    const ballStuck = R ? R.ballStuck : !!(ball && ball.stuckTo);
+    this.ice.visible = show && iceT > 0 && this.g.ballVisual.mesh.visible;
+    if (this.ice.visible) { const k = Math.min(1, (t - (this.iceT0 || 0)) * 6); this.ice.position.copy(bp); this.ice.scale.setScalar(0.4 + 0.6 * k + Math.sin(t * 3) * 0.01); this.ice.rotation.y = 0.3; this.ice.material.opacity = 0.45 + 0.25 * clamp(iceT, 0, 1); }
+    const anti = show && antiT > 0 && this.g.ballVisual.mesh.visible;
     this.ballAura.visible = anti; this.ballRings.forEach((r, i) => r.visible = anti);
-    if (anti) { this.ballAura.position.copy(bp); this.ballAura.material.uniforms.uTime.value = t; this.ballAura.material.uniforms.uA.value = Math.min(1, ball.antiT);
+    if (anti) { this.ballAura.position.copy(bp); this.ballAura.material.uniforms.uTime.value = t; this.ballAura.material.uniforms.uA.value = Math.min(1, antiT);
       this.ballRings.forEach((r, i) => { const ph = (t * 0.8 + i * 0.5) % 1; r.position.copy(bp); r.position.y += (ph - 0.5) * 2.4; r.rotation.x = PI / 2; r.scale.setScalar(1 - Math.abs(ph - 0.5) * 0.9); r.material.opacity = 0.8 * (1 - Math.abs(ph - 0.5) * 2); }); }
-    for (const v of this.g.carVisuals) {
+    for (let ci = 0; ci < this.g.carVisuals.length; ci++) {
+      const v = this.g.carVisuals[ci];
       const c = v.car; if (!show && !this.carFx.has(c)) continue; const f = this.carFxFor(v);
-      const alive = show && !c.demolished && !this.g.showroom;
-      f.spikes.visible = alive && c.spikeT > 0; if (f.spikes.visible) f.spikes.scale.setScalar(Math.min(1, (7.5 - c.spikeT) * 5) * (c.spikeT < 1 ? c.spikeT : 1) + 0.001);
-      const ov = alive && c.ovT > 0, scr = alive && c.scrT > 0;
+      const o = R ? R.overrides[ci] : null;
+      const alive = show && !(R ? (!o || o.dead) : c.demolished) && !this.g.showroom;
+      const spikeT = R ? (o ? o.spikeT : 0) : c.spikeT;
+      const ovT = R ? (o ? o.ovT : 0) : c.ovT;
+      const scrT = R ? (o ? o.scrT : 0) : c.scrT;
+      const magT = R ? (o ? o.magT : 0) : c.magT;
+      f.spikes.visible = alive && spikeT > 0; if (f.spikes.visible) f.spikes.scale.setScalar(Math.min(1, (7.5 - spikeT) * 5) * (spikeT < 1 ? spikeT : 1) + 0.001);
+      const ov = alive && ovT > 0, scr = alive && scrT > 0;
       f.aura.visible = ov || scr;
-      if (f.aura.visible) { const u = f.aura.material.uniforms; u.uTime.value = t; u.uMode.value = ov ? 0 : 1; u.uCol.value.setHex(ov ? 0xffe14a : 0x5aff9a); u.uA.value = Math.min(1, ov ? c.ovT : c.scrT) * (c === this.g.player && this.g.camera.mode === 'car' ? 0.45 : 0.8); }
-      f.ring.visible = alive && c.magT > 0;
-      if (f.ring.visible) { const ph = (t * 1.6) % 1; f.ring.scale.setScalar(0.6 + ph * 1.2); f.ring.material.opacity = (1 - ph) * Math.min(1, c.magT); f.ring.position.y = -0.1;
-        if (ball && !ball.stuckTo && Math.random() < 0.7) { const fx = this.g.fx; const to = tmpV.copy(v.visPos).sub(bp); const d = to.length(); if (d < 34) { to.multiplyScalar(1 / d); fx.c2.setHex(0xffffff); fx.c3.setHex(0xff5a7a); fx.add.spawn(bp.x + rand(-0.6, 0.6), bp.y + rand(-0.6, 0.6), bp.z + rand(-0.6, 0.6), to.x * 18, to.y * 18, to.z * 18, Math.min(0.7, d / 18), 0.14, 0.05, fx.c2, fx.c3, 0.8, 0, 0, 1); } } }
-      if (alive && c.ovT > 0 && Math.random() < 0.25) this.g.fx.sparks(tmpV.copy(v.visPos).add(tmpV2.set(rand(-0.6, 0.6), rand(0, 0.4), rand(-0.6, 0.6))), 3, 0xffe14a, 3, null, 0.25, 0.05);
+      if (f.aura.visible) { const u = f.aura.material.uniforms; u.uTime.value = t; u.uMode.value = ov ? 0 : 1; u.uCol.value.setHex(ov ? 0xffe14a : 0x5aff9a); u.uA.value = Math.min(1, ov ? ovT : scrT) * (!R && c === this.g.player && this.g.camera.mode === 'car' ? 0.45 : 0.8); }
+      f.ring.visible = alive && magT > 0;
+      if (f.ring.visible) { const ph = (t * 1.6) % 1; f.ring.scale.setScalar(0.6 + ph * 1.2); f.ring.material.opacity = (1 - ph) * Math.min(1, magT); f.ring.position.y = -0.1;
+        if (dt > 0 && ball && !ballStuck && this.g.ballVisual.mesh.visible && Math.random() < 0.7) { const fx = this.g.fx; const to = tmpV.copy(v.visPos).sub(bp); const d = to.length(); if (d < 34) { to.multiplyScalar(1 / d); fx.c2.setHex(0xffffff); fx.c3.setHex(0xff5a7a); fx.add.spawn(bp.x + rand(-0.6, 0.6), bp.y + rand(-0.6, 0.6), bp.z + rand(-0.6, 0.6), to.x * 18, to.y * 18, to.z * 18, Math.min(0.7, d / 18), 0.14, 0.05, fx.c2, fx.c3, 0.8, 0, 0, 1); } } }
+      if (dt > 0 && alive && ovT > 0 && Math.random() < 0.25) this.g.fx.sparks(tmpV.copy(v.visPos).add(tmpV2.set(rand(-0.6, 0.6), rand(0, 0.4), rand(-0.6, 0.6))), 3, 0xffe14a, 3, null, 0.25, 0.05);
     }
     let li = 0, pi = 0;
-    if (show) for (const S of P.shots) {
-      const from = this.g.visualPos(S.from); const start = tmpV.copy(from).addScaledVector(S.from.basis.f, 0.6).addScaledVector(S.from.basis.u, 0.2);
+    const shots = show ? (R ? R.shots : P.shots) : [];
+    const sb = this._shotBasis || (this._shotBasis = new Basis());
+    for (const S of shots) {
+      let start;
+      if (R) {
+        const fo = R.overrides[S.fromIdx]; if (!fo || fo.dead) continue;
+        sb.fromQuat(fo.quat);
+        start = tmpV.copy(fo.pos).addScaledVector(sb.f, 0.6).addScaledVector(sb.u, 0.2);
+      } else {
+        const from = this.g.visualPos(S.from);
+        start = tmpV.copy(from).addScaledVector(S.from.basis.f, 0.6).addScaledVector(S.from.basis.u, 0.2);
+      }
       if (S.kind === 'grapple' || S.kind === 'tether') {
         const L = this.lines[li++]; if (!L) continue; const end = S.phase === 'pull' ? bp : S.pos; const d = tmpV2.copy(end).sub(start); const len = d.length();
         const col = S.kind === 'grapple' ? 0x8aff5a : 0xffa04a; L.line.material.color.setHex(col).multiplyScalar(2.5); L.head.material.color.setHex(col).multiplyScalar(2.5);
@@ -5231,8 +5307,10 @@ class PowerVisuals {
         L.head.position.copy(end); L.head.quaternion.copy(L.line.quaternion);
       } else {
         const pr = this.projs[pi++]; if (!pr) continue; const m = S.kind === 'punch' ? pr.fist : pr.boot; m.visible = true;
-        m.position.copy(S.pos); const tp = S.to === ball ? bp : S.to.pos; const d = tmpV2.copy(tp).sub(S.pos); if (d.lengthSq() > 1e-4) m.quaternion.setFromUnitVectors(tmpV3.set(1, 0, 0), d.normalize());
-        const fx = this.g.fx; fx.c2.setHex(0xffffff); fx.c3.setHex(S.kind === 'punch' ? 0xff4a3a : 0xffb04a); fx.add.spawn(S.pos.x, S.pos.y, S.pos.z, rand(-0.5, 0.5), rand(-0.5, 0.5), rand(-0.5, 0.5), 0.3, 0.35, 0.05, fx.c2, fx.c3, 1, 1, 0, 0);
+        m.position.copy(S.pos);
+        const tp = R ? (S.toIdx < 0 ? bp : (R.overrides[S.toIdx] ? R.overrides[S.toIdx].pos : S.pos)) : (S.to === ball ? bp : S.to.pos);
+        const d = tmpV2.copy(tp).sub(S.pos); if (d.lengthSq() > 1e-4) m.quaternion.setFromUnitVectors(tmpV3.set(1, 0, 0), d.normalize());
+        if (dt > 0) { const fx = this.g.fx; fx.c2.setHex(0xffffff); fx.c3.setHex(S.kind === 'punch' ? 0xff4a3a : 0xffb04a); fx.add.spawn(S.pos.x, S.pos.y, S.pos.z, rand(-0.5, 0.5), rand(-0.5, 0.5), rand(-0.5, 0.5), 0.3, 0.35, 0.05, fx.c2, fx.c3, 1, 1, 0, 0); }
       }
     }
     for (; li < this.lines.length; li++) this.lines[li].line.visible = this.lines[li].head.visible = false;
@@ -6310,15 +6388,83 @@ class PowerSystem {
 }
 
 class ReplayRecorder {
-  constructor(world) { this.world = world; this.frames = []; this.max = 330; this.every = 2; }
+  constructor(world) { this.world = world; this.frames = []; this.pendingEvents = []; this.max = 330; this.every = 2; }
+  captureEvents() {
+    const w = this.world, evs = w.events;
+    if (!evs || !evs.length) return;
+    for (const e of evs) {
+      switch (e.type) {
+        case 'hit':
+          this.pendingEvents.push({ type: 'hit', x: e.x, y: e.y, z: e.z, strength: e.strength, team: e.car.team });
+          break;
+        case 'bounce':
+          this.pendingEvents.push({ type: 'bounce', x: e.x, y: e.y, z: e.z, nx: e.nx, ny: e.ny, nz: e.nz, strength: e.strength });
+          break;
+        case 'car': {
+          const c = e.car;
+          this.pendingEvents.push({ type: 'car', kind: e.kind, x: c.pos.x, y: c.pos.y, z: c.pos.z, fx: c.basis.f.x, fy: c.basis.f.y, fz: c.basis.f.z, team: c.team, airTime: c.airTime });
+          break;
+        }
+        case 'demo':
+          this.pendingEvents.push({ type: 'demo', x: e.pos.x, y: e.pos.y, z: e.pos.z, team: e.victim.team, ci: w.cars.indexOf(e.victim) });
+          break;
+        case 'bump':
+          this.pendingEvents.push({ type: 'bump', x: e.b.pos.x, y: e.b.pos.y, z: e.b.pos.z, strength: e.strength });
+          break;
+        case 'pickup':
+          this.pendingEvents.push({ type: 'pickup', x: e.pad.pos.x, y: e.pad.pos.y, z: e.pad.pos.z, big: !!e.pad.big });
+          break;
+        case 'respawn':
+          this.pendingEvents.push({ type: 'respawn', ci: w.cars.indexOf(e.car), x: e.car.pos.x, y: e.car.pos.y, z: e.car.pos.z, team: e.car.team });
+          break;
+        case 'power': {
+          if (e.kind === 'get' || e.kind === 'fail') break;
+          if (e.kind === 'use') {
+            this.pendingEvents.push({
+              type: 'power', kind: 'use', id: e.id, x: e.car.pos.x, y: e.car.pos.y, z: e.car.pos.z,
+              tx: e.target && e.target.pos ? e.target.pos.x : null,
+              ty: e.target && e.target.pos ? e.target.pos.y : null,
+              tz: e.target && e.target.pos ? e.target.pos.z : null,
+              bx: w.ball.pos.x, by: w.ball.pos.y, bz: w.ball.pos.z
+            });
+          } else if (e.kind === 'freeze') {
+            this.pendingEvents.push({ type: 'power', kind: 'freeze', x: w.ball.pos.x, y: w.ball.pos.y, z: w.ball.pos.z });
+          } else if (e.kind === 'release') {
+            this.pendingEvents.push({ type: 'power', kind: 'release', launch: !!e.launch, x: e.pos.x, y: e.pos.y, z: e.pos.z, fx: e.car.basis.f.x, fy: e.car.basis.f.y, fz: e.car.basis.f.z });
+          } else if (e.kind === 'punchHit') {
+            this.pendingEvents.push({ type: 'power', kind: 'punchHit', x: e.pos.x, y: e.pos.y, z: e.pos.z, dx: e.dir.x, dy: e.dir.y, dz: e.dir.z });
+          } else if (e.kind === 'hook') {
+            this.pendingEvents.push({ type: 'power', kind: 'hook', hookKind: e.hookKind, x: e.pos.x, y: e.pos.y, z: e.pos.z });
+          } else if (e.kind === 'swap') {
+            this.pendingEvents.push({ type: 'power', kind: 'swap', ci: w.cars.indexOf(e.car), ti: w.cars.indexOf(e.target), fx: e.from.x, fy: e.from.y, fz: e.from.z, tx: e.to.x, ty: e.to.y, tz: e.to.z });
+          } else if (e.kind === 'scrambled') {
+            this.pendingEvents.push({ type: 'power', kind: 'scrambled', x: e.car.pos.x, y: e.car.pos.y, z: e.car.pos.z });
+          } else if (e.pos) {
+            this.pendingEvents.push({ type: 'power', kind: e.kind, x: e.pos.x, y: e.pos.y, z: e.pos.z });
+          }
+          break;
+        }
+      }
+    }
+  }
   record() {
+    this.captureEvents();
     const w = this.world; if (w.tick % this.every) return;
-    const f = { ball: [w.ball.pos.x, w.ball.pos.y, w.ball.pos.z, w.ball.quat.x, w.ball.quat.y, w.ball.quat.z, w.ball.quat.w], cars: [] };
-    for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0]);
+    const b = w.ball, P = w.powers;
+    const f = {
+      ball: [b.pos.x, b.pos.y, b.pos.z, b.quat.x, b.quat.y, b.quat.z, b.quat.w, b.lastTouch ? b.lastTouch.team : -1, b.iceT || 0, b.antiT || 0, b.stuckTo ? 1 : 0],
+      cars: [],
+      powers: P ? {
+        tornados: P.tornados.map(T => [T.id, T.pos.x, T.pos.y, T.pos.z, T.t, T.life]),
+        shots: P.shots.map(S => [S.kind, w.cars.indexOf(S.from), S.to === b ? -1 : w.cars.indexOf(S.to), S.pos.x, S.pos.y, S.pos.z, S.phase === 'pull' ? 1 : 0])
+      } : null,
+      events: this.pendingEvents.length ? this.pendingEvents.splice(0) : null
+    };
+    for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0, c.supersonic ? 1 : 0, c.spikeT || 0, c.magT || 0, c.ovT || 0, c.nitroT || 0, c.scrT || 0]);
     this.frames.push(f); if (this.frames.length > this.max) this.frames.shift();
   }
   snapshot(seconds) { const n = Math.min(this.frames.length, Math.round(seconds * 120 / this.every)); return this.frames.slice(this.frames.length - n); }
-  clear() { this.frames.length = 0; }
+  clear() { this.frames.length = 0; this.pendingEvents.length = 0; }
 }
 
 const BALL_GLSL = `
@@ -7006,10 +7152,9 @@ class OnlineManager {
   _defaultServerUrl() {
     const saved = localStorage.getItem('hyperstrike.serverUrl');
     if (saved) return saved.replace(/\/+$/, '');
+    const envUrl = typeof window.__HYPERSTRIKE_URL__ === 'string' ? window.__HYPERSTRIKE_URL__.trim() : '';
+    if (envUrl) return envUrl.replace(/\/+$/, '');
     if (location.protocol === 'http:' || location.protocol === 'https:') {
-      if (location.hostname.endsWith('github.io') || location.hostname === 'hyperstrike.dill.moe') {
-        return 'https://hyperstrike.dill.moe';
-      }
       return location.origin;
     }
     return 'http://localhost:8080';
@@ -8260,25 +8405,81 @@ class UIManager {
 
 // ===== 13_main.js =====
 class ReplayPlayer {
-  constructor(game) { this.g = game; this.frames = null; this.t = 0; this.overrides = []; this.ballPos = new V3(); this.ballQuat = new QT(); }
+  constructor(game) {
+    this.g = game; this.frames = null; this.t = 0; this.overrides = [];
+    this.ballPos = new V3(); this.ballQuat = new QT();
+    this.ballTeam = -1; this.ballIceT = 0; this.ballAntiT = 0; this.ballStuck = false;
+    this.tornados = []; this.shots = []; this.lastEvFrame = -1;
+  }
   start(frames, goalZ, boom) {
-    this.frames = frames; this.t = 0; this.goalZ = goalZ; this.boom = boom || null; this.boomT = -1; const g = this.g;
+    this.frames = frames; this.t = 0; this.goalZ = goalZ; this.boom = boom || null; this.boomT = -1; this.lastEvFrame = -1;
+    this.tornados = []; this.shots = [];
+    const g = this.g;
     g.camera.mode = 'replay'; g.camera.replayShot = 0; g.camera.replayT = 0; g.camera.snap();
-    g.ballVisual.mesh.visible = true; for (const v of g.carVisuals) v.trail.clear(); g.fx.clear();
-    this.overrides = g.world.cars.map(() => ({ pos: new V3(), quat: new QT(), boost: false, dead: false }));
+    g.ballVisual.mesh.visible = true; g.ballVisual.trail.clear();
+    for (const v of g.carVisuals) v.trail.clear();
+    g.fx.clear();
+    if (g.powerVis) g.powerVis.resetTransient();
+    this.overrides = g.world.cars.map(() => ({ pos: new V3(), quat: new QT(), vel: new V3(), boost: false, dead: false, supersonic: false, spikeT: 0, magT: 0, ovT: 0, nitroT: 0, scrT: 0, nitro: false }));
     this.active = true; this.apply(0, 0);
+    g.ballVisual.lastPos.copy(this.ballPos);
+  }
+  dispatchEvents(upTo) {
+    const end = Math.min(upTo, this.frames.length - 1);
+    for (let fi = this.lastEvFrame + 1; fi <= end; fi++) {
+      const evs = this.frames[fi].events;
+      if (evs) for (const e of evs) this.g.replayEvent(e);
+    }
+    if (end > this.lastEvFrame) this.lastEvFrame = end;
   }
   apply(i, k) {
     const f0 = this.frames[i], f1 = this.frames[Math.min(i + 1, this.frames.length - 1)];
     const b0 = f0.ball, b1 = f1.ball;
     this.ballPos.set(lerp(b0[0], b1[0], k), lerp(b0[1], b1[1], k), lerp(b0[2], b1[2], k));
     this.ballQuat.set(b0[3], b0[4], b0[5], b0[6]).slerp(tmpQ.set(b1[3], b1[4], b1[5], b1[6]), k);
+    this.ballTeam = b0[7] !== undefined ? b0[7] : -1;
+    this.ballIceT = lerp(b0[8] || 0, b1[8] || 0, k);
+    this.ballAntiT = lerp(b0[9] || 0, b1[9] || 0, k);
+    this.ballStuck = !!b0[10];
     this.overrides.forEach((o, ci) => {
       const c0 = f0.cars[ci], c1 = f1.cars[ci]; if (!c0 || !c1) return;
-      o.pos.set(lerp(c0[0], c1[0], k), lerp(c0[1], c1[1], k), lerp(c0[2], c1[2], k));
-      o.quat.set(c0[3], c0[4], c0[5], c0[6]).slerp(tmpQ.set(c1[3], c1[4], c1[5], c1[6]), k);
-      o.boost = !!c0[7]; o.dead = !!c0[8];
+      const dx = c1[0] - c0[0], dy = c1[1] - c0[1], dz = c1[2] - c0[2];
+      const jump = dx * dx + dy * dy + dz * dz > 25;
+      if (jump) { o.pos.set(c0[0], c0[1], c0[2]); o.quat.set(c0[3], c0[4], c0[5], c0[6]); o.vel.set(0, 0, 0); }
+      else {
+        o.pos.set(lerp(c0[0], c1[0], k), lerp(c0[1], c1[1], k), lerp(c0[2], c1[2], k));
+        o.quat.set(c0[3], c0[4], c0[5], c0[6]).slerp(tmpQ.set(c1[3], c1[4], c1[5], c1[6]), k);
+        o.vel.set(dx * 60, dy * 60, dz * 60);
+      }
+      o.boost = !!c0[7]; o.dead = !!c0[8]; o.supersonic = !!c0[9];
+      o.spikeT = lerp(c0[10] || 0, c1[10] || 0, k);
+      o.magT = lerp(c0[11] || 0, c1[11] || 0, k);
+      o.ovT = lerp(c0[12] || 0, c1[12] || 0, k);
+      o.nitroT = lerp(c0[13] || 0, c1[13] || 0, k);
+      o.scrT = lerp(c0[14] || 0, c1[14] || 0, k);
+      o.nitro = o.nitroT > 0;
     });
+    const p0 = f0.powers, p1 = f1.powers;
+    this.tornados.length = 0; this.shots.length = 0;
+    if (p0) {
+      for (const t0 of p0.tornados) {
+        const t1 = p1 && p1.tornados.find(x => x[0] === t0[0]);
+        this.tornados.push({
+          id: t0[0],
+          pos: new V3(t1 ? lerp(t0[1], t1[1], k) : t0[1], t1 ? lerp(t0[2], t1[2], k) : t0[2], t1 ? lerp(t0[3], t1[3], k) : t0[3]),
+          t: t1 ? lerp(t0[4], t1[4], k) : t0[4],
+          life: t0[5]
+        });
+      }
+      for (const s0 of p0.shots) {
+        const s1 = p1 && p1.shots.find(x => x[0] === s0[0] && x[1] === s0[1] && x[2] === s0[2]);
+        this.shots.push({
+          kind: s0[0], fromIdx: s0[1], toIdx: s0[2],
+          pos: new V3(s1 ? lerp(s0[3], s1[3], k) : s0[3], s1 ? lerp(s0[4], s1[4], k) : s0[4], s1 ? lerp(s0[5], s1[5], k) : s0[5]),
+          phase: s0[6] ? 'pull' : 'fly'
+        });
+      }
+    }
   }
   update(dt) {
     const n = this.frames.length;
@@ -8286,6 +8487,7 @@ class ReplayPlayer {
     const slow = this.t * 60 > n - 50 ? 0.45 : 1;
     this.t += dt * slow; const fi = this.t * 60;
     if (fi >= n - 1) {
+      this.dispatchEvents(n - 1);
       this.apply(n - 1, 0);
       if (!this.boom) return true;
       const g = this.g, b = this.boom; this.boomT = 0;
@@ -8293,9 +8495,14 @@ class ReplayPlayer {
       g.audio.goal(); g.camera.addShake(0.8); g.ui.flash(0.5);
       g.ballVisual.mesh.visible = false; return false;
     }
-    const i = Math.floor(fi); this.apply(i, fi - i); return false;
+    const i = Math.floor(fi); this.dispatchEvents(i); this.apply(i, fi - i); return false;
   }
-  stop() { this.active = false; this.g.fx.clear(); for (const v of this.g.carVisuals) v.trail.clear(); }
+  stop() {
+    this.active = false; this.tornados.length = 0; this.shots.length = 0;
+    this.g.fx.clear(); this.g.ballVisual.trail.clear();
+    for (const v of this.g.carVisuals) v.trail.clear();
+    if (this.g.powerVis) this.g.powerVis.resetTransient();
+  }
 }
 
 class GameEngine {
@@ -8775,6 +8982,57 @@ class GameEngine {
       case 'ovHit': au.power('ovHit', e.pos); break;
     }
   }
+  replayEvent(e) {
+    const fx = this.fx, au = this.audio, def = this.arenaDef, dustCol = def.dust;
+    const pos = (this._rpPos || (this._rpPos = new V3())).set(e.x || 0, e.y || 0, e.z || 0);
+    const aux = this._rpAux || (this._rpAux = new V3());
+    switch (e.type) {
+      case 'hit': {
+        fx.ballHit(pos, e.strength, TEAM_GLOW[e.team], null);
+        au.ballHit(e.strength, pos);
+        this.ballVisual.flash(e.strength);
+        if (e.strength > 25) this.camera.addShake(0.12);
+        break;
+      }
+      case 'bounce': {
+        au.bounce(e.strength, pos);
+        if (e.strength > 5 && e.ny > 0.7 && def.dusty) fx.dust(pos, Math.floor(e.strength * 1.2), dustCol, 0.8, 2);
+        else if (e.strength > 10) fx.sparks(pos, Math.floor(e.strength), 0x9fdcff, e.strength * 0.4, aux.set(e.nx, e.ny, e.nz), 0.3, 0.05);
+        break;
+      }
+      case 'car': {
+        if (e.kind === 'jump') au.jump(pos); else if (e.kind === 'djump') au.djump(pos);
+        else if (e.kind === 'flip') au.flip(pos);
+        else if (e.kind === 'sonic') { au.sonic(pos); fx.wave(pos.clone(), aux.set(e.fx, e.fy, e.fz), TEAM_GLOW[e.team], 2.2, 0.32); }
+        else if (e.kind === 'land') { au.land(pos, clamp((e.airTime || 0) + 0.4, 0.3, 1)); fx.dust(pos, 8, dustCol, 0.8, 0.8); }
+        else if (e.kind === 'crash') { au.wallHit(8, pos); fx.sparks(pos, 12, 0xffc070, 5, null, 0.4, 0.05); }
+        break;
+      }
+      case 'demo': {
+        fx.demolition(pos, e.team); au.demo(pos); this.camera.addShake(0.35);
+        const v = this.carVisuals[e.ci]; if (v) v.trail.clear();
+        break;
+      }
+      case 'bump': au.wallHit(e.strength, pos); fx.sparks(pos, 10, 0xffffff, 5, null, 0.3, 0.05); break;
+      case 'pickup': {
+        if (this.renderer.camera.position.distanceTo(pos) < 35) au.pickup(e.big, pos);
+        fx.pickup(pos, e.big); break;
+      }
+      case 'respawn': {
+        fx.sparks(pos, 40, TEAM_GLOW[e.team], 6, null, 0.6, 0.08);
+        const v = this.carVisuals[e.ci]; if (v) v.trail.clear();
+        break;
+      }
+      case 'power': {
+        if (this.powerVis) this.powerVis.onReplayEvent(e);
+        if (e.kind === 'use') { if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id, pos); }
+        else if (e.kind === 'swap') au.power('swap', aux.set(e.tx, e.ty, e.tz));
+        else if (e.kind === 'scrambled') au.power('scramble', pos);
+        else if (e.kind !== 'tornadoEnd') au.power(e.kind, pos);
+        break;
+      }
+    }
+  }
   frame(now) {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
@@ -8839,13 +9097,13 @@ class GameEngine {
       if (this.showroom) { v.setVisible(false); continue; }
       if (replaying) {
         const o = this.replay.overrides[i]; if (!o) continue;
-        if (o.dead) { v.model.root.visible = false; continue; }
         v.update(1, vdt, this.time, this.fx, o);
       } else v.update(alpha, vdt, this.time, this.fx, null);
     }
     if (replaying) { this.ballPosV.copy(this.replay.ballPos); this.ballQuatV.copy(this.replay.ballQuat); }
     else { this.ballPosV.lerpVectors(w.ball.prevPos, w.ball.pos, alpha); this.ballQuatV.slerpQuaternions(w.ball.prevQuat, w.ball.quat, alpha); }
-    if (!this.showroom) this.ballVisual.update(this.ballPosV, this.ballQuatV, vdt, w.ball.lastTouch ? w.ball.lastTouch.team : -1, w.shape);
+    const ballTeam = replaying ? this.replay.ballTeam : (w.ball.lastTouch ? w.ball.lastTouch.team : -1);
+    if (!this.showroom) this.ballVisual.update(this.ballPosV, this.ballQuatV, vdt, ballTeam, w.shape);
     else this.ballVisual.shadow.visible = false;
     if (!this.ballVisual.mesh.visible) this.ballVisual.shadow.visible = false;
     if (this.showroom) {
@@ -8854,11 +9112,12 @@ class GameEngine {
       s.vis.update(1, vdt, this.time, s.boost ? this.fx : null, { pos: s.car.pos, quat: s.car.quat, boost: !!s.boost });
     }
     this.arenaExcite = Math.max(0, this.arenaExcite - vdt * 0.25);
-    const ballHeat = clamp(Math.abs(w.ball.pos.z) / w.shape.L, 0, 1);
+    const ballHeat = clamp(Math.abs(this.ballPosV.z) / w.shape.L, 0, 1);
     this.arenaVisual.update(this.time, vdt, Math.max(this.arenaExcite, ballHeat * 0.3));
     this.padVisual && this.padVisual.update(this.time, vdt);
     const U = this.arenaVisual.uniforms.uPulse.value; U.x = damp(U.x, 0, 1.5, vdt); U.y = damp(U.y, 0, 1.5, vdt);
-    if (this.mode && this.mode.state === 'goal' && this.mode.stateT < 0.2) { if (this.mode.replayGoalZ !== undefined) { if (this.mode.replayGoalZ < 0) U.x = 1; else U.y = 1; } }
+    const goalPulse = (this.mode && this.mode.state === 'goal' && this.mode.stateT < 0.2) || (replaying && this.replay.boomT >= 0 && this.replay.boomT < 0.2);
+    if (goalPulse && this.mode.replayGoalZ !== undefined) { if (this.mode.replayGoalZ < 0) U.x = 1; else U.y = 1; }
     const p = this.player;
     if (p && cam.mode === 'car') cam.target = p;
     const scorerIdx = replaying && this.mode.lastScorer ? w.cars.indexOf(this.mode.lastScorer) : -1;
@@ -8873,14 +9132,20 @@ class GameEngine {
     if (this.mode && this.mode.state === 'goal' && !p && !this.mode.exhibition) { cam.mode = 'goal'; cam.goalInfo = { x: 0, z: this.mode.replayGoalZ || 0 }; }
     cam.update(Math.max(vdt, this.paused ? 0 : 0.0001), ctx);
     R.camera.updateMatrixWorld();
-    this.arenaVisual.updateShadow(p && !p.demolished ? p.pos : this.ballPosV);
+    this.arenaVisual.updateShadow(replaying ? this.ballPosV : (p && !p.demolished ? p.pos : this.ballPosV));
     const fxp = R.fx;
     const sup = p && p.supersonic && cam.mode === 'car';
     fxp.aberr = damp(fxp.aberr, sup ? 0.0035 : (p && p.isBoosting ? 0.0012 : 0), 4, vdt || 0.016);
     fxp.radial = damp(fxp.radial, sup && p.isBoosting ? 0.018 : 0, 4, vdt || 0.016);
-    const boosting = w.cars.filter(c => c.isBoosting && !c.demolished).sort((a, b) => a.pos.distanceToSquared(R.camera.position) - b.pos.distanceToSquared(R.camera.position));
-    this.fx.boostLights.forEach((l, i) => { const c = boosting[i]; if (c && !this.showroom && !replaying) { const v = this.carVisuals.find(v => v.car === c); const T = TRAILS[v ? v.custom.trail : 0]; l.position.copy(this.visualPos(c)).addScaledVector(c.basis.f, -1.0); l.intensity = 5; l.color.setHex(c.nitroT > 0 ? 0x4afff0 : T.outer < 0 ? TEAM_GLOW[c.team] : T.rainbow ? 0xffffff : T.outer); } else l.intensity = 0; });
-    if (!this.showroom) this.ballVisual.updateTrail(this.ballPosV, R.camera.position, vdt, w.ball.lastTouch ? TEAM_GLOW[w.ball.lastTouch.team] : 0x9fdcff); else this.ballVisual.trail.clear();
+    if (replaying && !this.showroom) {
+      const bl = this._blBasis || (this._blBasis = new Basis());
+      const rBoost = this.replay.overrides.map((o, idx) => ({ o, v: this.carVisuals[idx] })).filter(x => x.o && x.v && x.o.boost && !x.o.dead).sort((a, b) => a.o.pos.distanceToSquared(R.camera.position) - b.o.pos.distanceToSquared(R.camera.position));
+      this.fx.boostLights.forEach((l, i) => { const x = rBoost[i]; if (x) { const T = TRAILS[x.v.custom.trail]; bl.fromQuat(x.o.quat); l.position.copy(x.o.pos).addScaledVector(bl.f, -1.0); l.intensity = 5; l.color.setHex(x.o.nitro ? 0x4afff0 : T.outer < 0 ? TEAM_GLOW[x.v.car.team] : T.rainbow ? 0xffffff : T.outer); } else l.intensity = 0; });
+    } else {
+      const boosting = w.cars.filter(c => c.isBoosting && !c.demolished).sort((a, b) => a.pos.distanceToSquared(R.camera.position) - b.pos.distanceToSquared(R.camera.position));
+      this.fx.boostLights.forEach((l, i) => { const c = boosting[i]; if (c && !this.showroom) { const v = this.carVisuals.find(v => v.car === c); const T = TRAILS[v ? v.custom.trail : 0]; l.position.copy(this.visualPos(c)).addScaledVector(c.basis.f, -1.0); l.intensity = 5; l.color.setHex(c.nitroT > 0 ? 0x4afff0 : T.outer < 0 ? TEAM_GLOW[c.team] : T.rainbow ? 0xffffff : T.outer); } else l.intensity = 0; });
+    }
+    if (!this.showroom) this.ballVisual.updateTrail(this.ballPosV, R.camera.position, vdt, ballTeam >= 0 ? TEAM_GLOW[ballTeam] : 0x9fdcff); else this.ballVisual.trail.clear();
     if (!replaying) for (const c of w.cars) if (c.onGround && c.sliding > 0.5 && c.vel.length() > 6 && Math.random() < 0.5) { const rp = tmpV.copy(this.visualPos(c)).addScaledVector(c.basis.f, -0.5).addScaledVector(c.basis.u, -0.3); this.fx.tireSmoke(rp, this.arenaDef.dusty ? this.arenaDef.dust : 0xc8c8cc); }
     if (this.powerVis) this.powerVis.update(vdt, this.time, replaying);
     this.fx.ambientEmit(vdt, R.camera.position);
