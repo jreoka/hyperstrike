@@ -611,6 +611,7 @@ vec4 hexCoords(vec2 uv){ vec2 r = vec2(1.0, 1.7320508); vec2 h = r*0.5; vec2 a =
 
 /* ---------------- Settings ---------------- */
 const SETTINGS_KEY = 'hyperstrike.settings.v2';
+const QUALITY_RES_SCALE = { low: 0.75, medium: 0.85, high: 1.0, ultra: 1.25 };
 const DEFAULT_SETTINGS = {
   fov: 100, camDist: 2.9, camHeight: 1.1, camAngle: -4, camStiffness: 0.45, swivelSpeed: 5, ballCamDefault: false, camShake: true,
   mouseSens: 1.0, camSens: 1.0, invertY: false, deadzone: 0.14, vibration: true,
@@ -1818,7 +1819,7 @@ class Renderer {
     this.resize();
   }
   resize() {
-    const dpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : this.quality === 'medium' ? 1.25 : 1) * Settings.data.resScale * (this.quality === 'low' ? 0.75 : 1);
+    const dpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : this.quality === 'medium' ? 1.25 : 1) * Settings.data.resScale;
     const w = innerWidth, h = innerHeight;
     this.r.setPixelRatio(dpr); this.r.setSize(w, h, false);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -1840,6 +1841,62 @@ class Renderer {
       this.reflRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(W * this.reflScale)), Math.max(2, Math.floor(H * this.reflScale)), { type, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
     }
     Events.emit('resize', W, H);
+  }
+  async compileShaders(onProgress) {
+    const paintTick = () => new Promise(res => {
+      let done = false;
+      const fin = () => { if (!done) { done = true; res(); } };
+      requestAnimationFrame(() => setTimeout(fin, 0));
+      setTimeout(fin, 50);
+    });
+    const hasLight = (obj) => {
+      let found = false;
+      obj.traverse(c => { if (c.isLight) found = true; });
+      return found;
+    };
+    const seen = new Set();
+    const targets = [];
+    const visit = (obj) => {
+      const ch = obj.children;
+      for (let i = 0; i < ch.length; i++) visit(ch[i]);
+      if (!obj.material || hasLight(obj)) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      const kind = (obj.isInstancedMesh ? 'I' : '') + (obj.isSkinnedMesh ? 'S' : '') + (obj.isPoints ? 'P' : '') + (obj.isLine ? 'L' : '');
+      let fresh = false;
+      for (let i = 0; i < mats.length; i++) {
+        const m = mats[i];
+        if (!m) continue;
+        const key = m.id + ':' + kind;
+        if (!seen.has(key)) { seen.add(key); fresh = true; }
+      }
+      if (fresh) targets.push({ obj });
+    };
+    visit(this.scene);
+    for (const m of [this.mats.down, this.mats.up, this.mats.comp]) targets.push({ fsMat: m });
+    const total = targets.length || 1;
+    let lastYield = performance.now();
+    if (onProgress) onProgress(0);
+    await paintTick();
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      try {
+        if (t.fsMat) {
+          this.quad.material = t.fsMat;
+          this.r.compile(this.quad, this.fsCam, this.fsScene);
+        } else {
+          this.r.compile(t.obj, this.camera, this.scene);
+        }
+      } catch (e) { }
+      const p = (i + 1) / total;
+      const now = performance.now();
+      if (now - lastYield >= 24 || i === targets.length - 1) {
+        if (onProgress) onProgress(p);
+        await paintTick();
+        lastYield = performance.now();
+      }
+    }
+    this.quad.material = null;
+    try { this.r.compile(this.scene, this.camera); } catch (e) { }
   }
   // Planar mirror for glossy floors (y = 0). Fills `refl.tex` + `refl.mat` uniforms; returns false when unavailable.
   renderReflection(refl, hide) {
@@ -7035,7 +7092,20 @@ class UIManager {
     root.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.settingsTab = b.dataset.stab; const sel = `[data-stab="${b.dataset.stab}"]`; if (root.id === 'menuPanel') this.renderPanel(sel); else this.showPauseSettings(sel); });
     root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { const k = r.dataset.sl; const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music', 'ambience'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
     root.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.tg; Settings.set(k, !Settings.data[k]); b.classList.toggle('on', Settings.data[k]); });
-    root.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); Settings.set('quality', b.dataset.q); root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === b.dataset.q)); });
+    root.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      this.g.audio.ui('click');
+      const q = b.dataset.q;
+      const rs = QUALITY_RES_SCALE[q];
+      if (rs !== undefined) {
+        Settings.data.resScale = rs;
+        const sl = root.querySelector('[data-sl="resScale"]');
+        if (sl) sl.value = rs;
+        const lab = root.querySelector('#v_resScale');
+        if (lab) lab.textContent = Math.round(rs * 100) + '%';
+      }
+      Settings.set('quality', q);
+      root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === q));
+    });
     const pwForm = root.querySelector('#pwChangeForm');
     if (pwForm) {
       pwForm.onsubmit = async (e) => {
@@ -7474,8 +7544,10 @@ class GameEngine {
     this.loadArena(ARENAS[setup.arena] || ARENAS[0]);
     this.ui.progress(0.6, 'Assembling vehicles'); await tick();
     this.startExhibition();
-    this.ui.progress(0.8, 'Compiling shaders'); await tick();
-    try { this.renderer.r.compile(this.renderer.scene, this.renderer.camera); } catch (e) { }
+    this.ui.progress(0.8, 'Compiling shaders 0%'); await tick();
+    await this.renderer.compileShaders(p => {
+      this.ui.progress(0.8 + p * 0.18, `Compiling shaders ${Math.round(p * 100)}%`);
+    });
     this.renderFrame(0.016);
     this.ui.progress(1, 'Ready'); await tick();
     canvas.addEventListener('click', () => {
