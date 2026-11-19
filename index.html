@@ -2665,18 +2665,19 @@ class ArenaVisual {
             gl_FragColor = vec4(c, a); }`,
         transparent: true, depthWrite: false, side: THREE.DoubleSide
       });
+      const t = 0.32, inset = 0.06, netBack = t - inset, netD = s.gd - netBack, netZ = side * (s.L + netBack + netD / 2);
       const back = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, s.gh), netMat); back.position.set(0, s.gh / 2, z1); back.renderOrder = 3; this.add(back);
-      for (const sx of [-1, 1]) { const sw = new THREE.Mesh(new THREE.PlaneGeometry(s.gd, s.gh), netMat); sw.rotation.y = PI / 2; sw.position.set(sx * s.gw, s.gh / 2, side * (s.L + s.gd / 2)); sw.renderOrder = 3; this.add(sw); }
-      const roof = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, s.gd), netMat); roof.rotation.x = PI / 2; roof.position.set(0, s.gh, side * (s.L + s.gd / 2)); roof.renderOrder = 3; this.add(roof);
+      for (const sx of [-1, 1]) { const sw = new THREE.Mesh(new THREE.PlaneGeometry(netD, s.gh), netMat); sw.rotation.y = PI / 2; sw.position.set(sx * s.gw, s.gh / 2, netZ); sw.renderOrder = 3; this.add(sw); }
+      const roof = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, netD), netMat); roof.rotation.x = PI / 2; roof.position.set(0, s.gh, netZ); roof.renderOrder = 3; this.add(roof);
       const fm = new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.4), emissive: col, emissiveIntensity: 2.2, roughness: 0.3, metalness: 0.6 });
-      const t = 0.32; const parts = [];
-      parts.push(placed(new THREE.BoxGeometry(t, s.gh + t, t), -(s.gw + t / 2), (s.gh + t) / 2, z0 + side * t / 2));
-      parts.push(placed(new THREE.BoxGeometry(t, s.gh + t, t), (s.gw + t / 2), (s.gh + t) / 2, z0 + side * t / 2));
-      parts.push(placed(new THREE.BoxGeometry(s.gw * 2 + t * 2, t, t), 0, s.gh + t / 2, z0 + side * t / 2));
+      const fz = z0 + side * (t / 2 - inset); const parts = [];
+      parts.push(placed(new THREE.BoxGeometry(t, s.gh, t), -(s.gw + t / 2), s.gh / 2, fz));
+      parts.push(placed(new THREE.BoxGeometry(t, s.gh, t), (s.gw + t / 2), s.gh / 2, fz));
+      parts.push(placed(new THREE.BoxGeometry(s.gw * 2 + t * 2, t, t), 0, s.gh + t / 2, fz));
       this.add(new THREE.Mesh(mergeGeoms(parts), fm));
       const dm = new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: 0.4, metalness: 0.8 });
       const ip = [];
-      for (const sx of [-1, 1]) { ip.push(placed(new THREE.BoxGeometry(0.12, 0.12, s.gd), sx * s.gw, s.gh, side * (s.L + s.gd / 2))); ip.push(placed(new THREE.BoxGeometry(0.12, s.gh, 0.12), sx * s.gw, s.gh / 2, z1)); }
+      for (const sx of [-1, 1]) { ip.push(placed(new THREE.BoxGeometry(0.12, 0.12, netD), sx * s.gw, s.gh, netZ)); ip.push(placed(new THREE.BoxGeometry(0.12, s.gh, 0.12), sx * s.gw, s.gh / 2, z1)); }
       ip.push(placed(new THREE.BoxGeometry(s.gw * 2, 0.12, 0.12), 0, s.gh, z1));
       this.add(new THREE.Mesh(mergeGeoms(ip), dm));
       const gl = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, 0.35), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(3), transparent: true, opacity: 0.9 }));
