@@ -507,7 +507,7 @@ body.portrait-lock #rotateLock{display:flex}
     </form>
     <details class="auth-srv">
       <summary>Server Connection</summary>
-      <input type="text" id="authServerUrl" placeholder="https://hyperstrike-ord.fly.dev">
+      <input type="text" id="authServerUrl" placeholder="https://hyperstrike.dill.moe">
     </details>
   </div>
 </div>
@@ -5450,7 +5450,7 @@ class OnlineManager {
     if (saved) return saved.replace(/\/+$/, '');
     if (location.protocol === 'http:' || location.protocol === 'https:') {
       if (location.hostname.endsWith('github.io') || location.hostname === 'hyperstrike.dill.moe') {
-        return 'https://hyperstrike-ord.fly.dev';
+        return 'https://hyperstrike.dill.moe';
       }
       return location.origin;
     }
