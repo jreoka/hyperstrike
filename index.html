@@ -5086,14 +5086,14 @@ class PowerVisuals {
     this.g = game; this.scene = game.renderer.scene; this.group = new THREE.Group(); this.scene.add(this.group);
     this.t = 0; this.tornadoMeshes = new Map(); this.carFx = new Map(); this.lines = []; this.projs = []; this.pillars = [];
     const add = (o) => { this.group.add(o); return o; };
-    const tg = new THREE.LatheGeometry(Array.from({ length: 26 }, (_, i) => { const y = i / 25 * 17; return new THREE.Vector2(0.7 + Math.pow(y / 17, 1.7) * 6.2 + Math.sin(y * 0.9) * 0.25, y); }), 40);
+    const tg = new THREE.LatheGeometry(Array.from({ length: 26 }, (_, i) => { const y = i / 25 * 17; return new THREE.Vector2(0.4 + Math.pow(y / 17, 1.7) * 6.5 + Math.sin(y * 0.9) * 0.22, y); }), 40);
     this.tornadoGeo = tg;
     this.tornadoMat = (inner) => new THREE.ShaderMaterial({
       uniforms: { uTime: { value: 0 }, uA: { value: 1 }, uCol: { value: new THREE.Color(inner ? 0xe8fbff : 0x9fe0ff) }, uDir: { value: inner ? -1 : 1 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
       vertexShader: `varying vec2 vUv; varying float vDist; uniform float uTime; void main(){ vUv = uv; vec3 p = position; float w = sin(uTime * 2.3 + p.y * 0.35) * p.y * 0.05; p.x += w; p.z += cos(uTime * 1.9 + p.y * 0.3) * p.y * 0.05; vec4 mv = modelViewMatrix*vec4(p,1.0); vDist = -mv.z; gl_Position = projectionMatrix*mv; }`,
       fragmentShader: `uniform float uTime, uA, uDir; uniform vec3 uCol; varying vec2 vUv; varying float vDist; ${GLSL_NOISE}
         void main(){ float sw = vnoise(vec2(vUv.x * 12.0 + vUv.y * 7.0 * uDir - uTime * 5.0 * uDir, vUv.y * 5.0 - uTime * 2.0)); float st = smoothstep(0.5, 0.92, sw);
-          float fade = smoothstep(0.0, 0.1, vUv.y) * smoothstep(1.0, 0.7, vUv.y) * smoothstep(2.0, 9.0, vDist);
+          float fade = smoothstep(0.0, 0.03, vUv.y) * smoothstep(1.0, 0.7, vUv.y) * smoothstep(0.8, 2.8, vDist);
           gl_FragColor = vec4(uCol * (0.05 + st * 0.6) * fade * uA, 1.0); }`
     });
     this.ice = add(new THREE.Mesh(new THREE.IcosahedronGeometry(PHYS.ballR * 1.32, 1), (() => {
@@ -5161,7 +5161,7 @@ class PowerVisuals {
         const c = e.car; const col = P.hex;
         fx.sparks(c.pos, 18, col, 5, null, 0.5, 0.07);
         if (e.id === 'scramble' && e.target) { const a = c.pos, b = e.target.pos; for (let i = 0; i < 40; i++) { const t = i / 40; fx.c2.setHex(0xffffff); fx.c3.setHex(col); fx.add.spawn(lerp(a.x, b.x, t), lerp(a.y, b.y, t) + 0.4, lerp(a.z, b.z, t), rand(-1, 1), rand(-1, 1), rand(-1, 1), 0.5, 0.2, 0.04, fx.c2, fx.c3, 1, 2, 0, 1); } }
-        if (e.id === 'overdrive' || e.id === 'nitro' || e.id === 'spikes' || e.id === 'magnet') fx.wave(tmpV.copy(c.pos), tmpV2.set(0, 1, 0), col, 4, 0.4);
+        if (e.id === 'overdrive' || e.id === 'nitro' || e.id === 'spikes' || e.id === 'magnet' || e.id === 'tornado') fx.wave(tmpV.copy(c.pos), tmpV2.set(0, 1, 0), col, 4, 0.4);
         if (e.id === 'tornado') fx.dust(c.pos, 20, 0xc8d8e8, 3, 3);
         if (e.id === 'antigrav') { const b = this.g.world.ball; fx.wave(tmpV.copy(b.pos), tmpV2.set(0, 1, 0), col, 5, 0.6); fx.flashLight(b.pos, col, 40, 0.5, 12); }
         break;
@@ -5210,7 +5210,7 @@ class PowerVisuals {
         if (e.id === 'scramble' && e.tx != null) {
           for (let i = 0; i < 40; i++) { const t = i / 40; fx.c2.setHex(0xffffff); fx.c3.setHex(col); fx.add.spawn(lerp(e.x, e.tx, t), lerp(e.y, e.ty, t) + 0.4, lerp(e.z, e.tz, t), rand(-1, 1), rand(-1, 1), rand(-1, 1), 0.5, 0.2, 0.04, fx.c2, fx.c3, 1, 2, 0, 1); }
         }
-        if (e.id === 'overdrive' || e.id === 'nitro' || e.id === 'spikes' || e.id === 'magnet') fx.wave(pos.clone(), aux.set(0, 1, 0), col, 4, 0.4);
+        if (e.id === 'overdrive' || e.id === 'nitro' || e.id === 'spikes' || e.id === 'magnet' || e.id === 'tornado') fx.wave(pos.clone(), aux.set(0, 1, 0), col, 4, 0.4);
         if (e.id === 'tornado') fx.dust(pos, 20, 0xc8d8e8, 3, 3);
         if (e.id === 'antigrav') { const bp = aux.set(e.bx, e.by, e.bz); fx.wave(bp.clone(), tmpV2.set(0, 1, 0), col, 5, 0.6); fx.flashLight(bp, col, 40, 0.5, 12); }
         break;
@@ -5251,12 +5251,13 @@ class PowerVisuals {
       const key = T.id;
       let m = this.tornadoMeshes.get(key); if (!m) { m = { outer: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)), inner: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)) }; m.inner.scale.set(0.6, 0.92, 0.6); this.group.add(m.outer); this.group.add(m.inner); this.tornadoMeshes.set(key, m); }
       seen.add(key); const a = Math.min(1, T.t * 2.5) * Math.min(1, (T.life - T.t) * 1.5);
-      for (const mm of [m.outer, m.inner]) { mm.position.copy(T.pos); mm.material.uniforms.uTime.value = t; mm.material.uniforms.uA.value = a; }
+      const tp = (!R && T.owner) ? tmpV.copy(this.g.visualPos(T.owner)).add(tmpV2.set(0, T.owner.half.y, 0)) : T.pos;
+      for (const mm of [m.outer, m.inner]) { mm.position.copy(tp); mm.material.uniforms.uTime.value = t; mm.material.uniforms.uA.value = a; }
       m.outer.rotation.y = t * 4; m.inner.rotation.y = -t * 6;
       const fx = this.g.fx;
-      if (dt > 0 && Math.random() < 0.9) { const ang = Math.random() * TAU, y = Math.random() * 14, r = 0.8 + Math.pow(y / 17, 1.7) * 5.5; fx.c2.setHex(0xd8e8f0); fx.c3.setHex(0x8aa0b0);
-        fx.alpha.spawn(T.pos.x + Math.cos(ang) * r, y, T.pos.z + Math.sin(ang) * r, -Math.sin(ang) * 14, 3, Math.cos(ang) * 14, 0.5, 0.3, 0.6, fx.c2, fx.c3, 0.35 * a, 0.5, 0, 0); }
-      if (dt > 0 && Math.random() < 0.3) fx.dust(T.pos, 2, 0xb8c8d8, 2.5, 1.5);
+      if (dt > 0 && Math.random() < 0.9) { const ang = Math.random() * TAU, y = Math.random() * 14, r = 0.5 + Math.pow(y / 17, 1.7) * 5.8; fx.c2.setHex(0xd8e8f0); fx.c3.setHex(0x8aa0b0);
+        fx.alpha.spawn(tp.x + Math.cos(ang) * r, tp.y + y, tp.z + Math.sin(ang) * r, -Math.sin(ang) * 14, 3, Math.cos(ang) * 14, 0.5, 0.3, 0.6, fx.c2, fx.c3, 0.35 * a, 0.5, 0, 0); }
+      if (dt > 0 && Math.random() < 0.3) fx.dust(tp, 2, 0xb8c8d8, 2.5, 1.5);
     }
     for (const [key, m] of this.tornadoMeshes) if (!seen.has(key)) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); this.tornadoMeshes.delete(key); }
     const ball = w && w.ball; const bp = this.g.ballPosV;
@@ -5691,7 +5692,7 @@ class BotAI {
     let nearOpp = 1e9, oppBallD = 1e9; for (const o of w.cars) if (o.team !== car.team && !o.demolished) { nearOpp = Math.min(nearOpp, o.pos.distanceTo(car.pos)); oppBallD = Math.min(oppBallD, o.pos.distanceTo(ball.pos)); }
     let go = false;
     switch (id) {
-      case 'tornado': go = (db < 24 && fdot > 0.75 && align > 0.3) || (nearOpp < 10 && fdot > 0.5); break;
+      case 'tornado': go = db < 16 || nearOpp < 11; break;
       case 'freeze': go = (threat && ownGoalDist < 35) || (ball.pos.y > 5 && w.pred.goalTeam === 1 - car.team && Math.random() < 0.02); break;
       case 'spikes': go = db < 13 && fdot > 0.6; break;
       case 'magnet': go = db < 20 && align > 0.2; break;
@@ -6156,7 +6157,7 @@ class World {
 
 // ===== 10b_powers.js — MAYHEM power-ups =====
 const POWERS = [
-  { id: 'tornado', name: 'TORNADO', color: '#9fe8ff', hex: 0x9fe8ff, desc: 'Spawns a twister that rolls forward, lifting and spinning everything it catches.',
+  { id: 'tornado', name: 'TORNADO', color: '#9fe8ff', hex: 0x9fe8ff, desc: 'Attaches a twister to the top of your car, sucking up the ball and other cars as you drive.',
     icon: '<path d="M3 4h18M5 8h14M7 12h11M9 16h7M10.5 20h3" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/>' },
   { id: 'freeze', name: 'FREEZE', color: '#7ad8ff', hex: 0x7ad8ff, target: 'ball', range: 80, desc: 'Encases the ball in ice, locking it in place until it thaws or takes a big hit.',
     icon: '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7M9 3.5l3 2.5 3-2.5M9 20.5l3-2.5 3 2.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>' },
@@ -6196,13 +6197,13 @@ class PowerSystem {
   }
   ensure(c) {
     if (c._pw) return; c._pw = true; c.item = null; c.itemNext = rand(1.5, 3.5); c.prevItem = false;
-    c.spikeT = 0; c.magT = 0; c.ovT = 0; c.nitroT = 0; c.scrT = 0; c.speedMul = 1; c.hookT = 0;
+    c.spikeT = 0; c.magT = 0; c.ovT = 0; c.nitroT = 0; c.scrT = 0; c.tornT = 0; c.speedMul = 1; c.hookT = 0;
   }
   ev(kind, o = {}) { this.w.events.push(Object.assign({ type: 'power', kind }, o)); }
   clearEffects() {
     const b = this.w.ball; b.stuckTo = null; b.iceT = 0; b.gScale = 1; b.antiT = 0;
     this.tornados.length = 0; this.shots.length = 0;
-    for (const c of this.w.cars) { this.ensure(c); c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = 0; c.speedMul = 1; }
+    for (const c of this.w.cars) { this.ensure(c); c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = 0; c.speedMul = 1; }
   }
   reset() { this.clearEffects(); for (const c of this.w.cars) { c.item = null; c.itemNext = rand(1.2, 3.2); c.prevItem = false; } }
   pickItem(c) {
@@ -6232,9 +6233,10 @@ class PowerSystem {
     const f = c.basis.f;
     switch (id) {
       case 'tornado': {
-        const dir = new V3(f.x, 0, f.z); if (dir.lengthSq() < 0.01) dir.set(0, 0, c.team === 0 ? 1 : -1); dir.normalize();
-        const pos = w.shape.pushInside(new V3(c.pos.x + dir.x * 8, 0, c.pos.z + dir.z * 8), 7.5);
-        this.tornados.push({ pos, dir, t: 0, life: 6.5, owner: c, id: Math.random() }); break;
+        for (let i = this.tornados.length - 1; i >= 0; i--) if (this.tornados[i].owner === c) this.tornados.splice(i, 1);
+        const pos = new V3(c.pos.x, c.pos.y + c.half.y, c.pos.z);
+        c.tornT = 6.5;
+        this.tornados.push({ pos, t: 0, life: 6.5, owner: c, id: Math.random() }); break;
       }
       case 'freeze': if (b.stuckTo) this.release(false); b.iceT = 3.2; b.vel.set(0, 0, 0); this.ev('freeze', { car: c }); break;
       case 'spikes': c.spikeT = 7.5; break;
@@ -6259,7 +6261,13 @@ class PowerSystem {
     this.ev('release', { car: c, launch: !!launch, pos: b.pos.clone() });
   }
   shatter(by) { const b = this.w.ball; if (b.iceT <= 0) return; b.iceT = 0; this.ev('shatter', { pos: b.pos.clone(), car: by }); }
-  onDemolish(c) { if (this.w.ball.stuckTo === c) this.release(false); c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = 0; c.speedMul = 1; }
+  onDemolish(c) {
+    if (this.w.ball.stuckTo === c) this.release(false);
+    c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = 0; c.speedMul = 1;
+    for (let i = this.tornados.length - 1; i >= 0; i--) {
+      if (this.tornados[i].owner === c) { const T = this.tornados.splice(i, 1)[0]; this.ev('tornadoEnd', { pos: T.pos.clone() }); }
+    }
+  }
   onBallContact(c, hit, iced) {
     const b = this.w.ball;
     if (iced) { if (hit.strength > 6.5 || c.ovT > 0) this.shatter(c); else return; }
@@ -6306,11 +6314,12 @@ class PowerSystem {
     this.ev('swap', { car: a, target: o, from, to });
   }
   affect(obj, T, isCar, dt) {
-    const rx = obj.pos.x - T.pos.x, rz = obj.pos.z - T.pos.z, d = Math.hypot(rx, rz), R = 6.5;
-    if (d > R || obj.pos.y > 19) return 0;
-    const k = Math.sqrt(1 - d / R) * Math.min(1, T.t * 2) * Math.min(1, (T.life - T.t) * 2); const id = 1 / Math.max(d, 0.3);
-    obj.vel.x += (-rz * id * 24 - rx * id * 8) * k * dt; obj.vel.z += (rx * id * 24 - rz * id * 8) * k * dt;
-    obj.vel.y += (PHYS.g + 9) * k * dt; if (obj.vel.y > 13) obj.vel.y = 13;
+    const rx = obj.pos.x - T.pos.x, rz = obj.pos.z - T.pos.z, d = Math.hypot(rx, rz), R = 8.5;
+    if (d > R || obj.pos.y < T.pos.y - 2.5 || obj.pos.y > T.pos.y + 18) return 0;
+    const k = Math.sqrt(1 - d / R) * Math.min(1, T.t * 3) * Math.min(1, (T.life - T.t) * 2); const id = 1 / Math.max(d, 0.3);
+    obj.vel.x += (-rz * id * 24 - rx * id * 14) * k * dt; obj.vel.z += (rx * id * 24 - rz * id * 14) * k * dt;
+    if (T.owner) { obj.vel.x += (T.owner.vel.x - obj.vel.x) * 2.2 * k * dt; obj.vel.z += (T.owner.vel.z - obj.vel.z) * 2.2 * k * dt; }
+    obj.vel.y += (PHYS.g + 9.5) * k * dt; if (obj.vel.y > 13.5) obj.vel.y = 13.5;
     if (isCar) { obj.angVel.y += 6 * k * dt; obj.angVel.x += Math.sin(T.t * 7 + obj.id) * 4 * k * dt; }
     return k;
   }
@@ -6337,11 +6346,14 @@ class PowerSystem {
     }
     for (let i = this.tornados.length - 1; i >= 0; i--) {
       const T = this.tornados[i]; T.t += dt;
-      if (T.t > T.life) { this.tornados.splice(i, 1); this.ev('tornadoEnd', { pos: T.pos.clone() }); continue; }
-      T.pos.addScaledVector(T.dir, 5.5 * dt);
-      if (w.shape.wallDist2D(T.pos.x, T.pos.z) < 7.5) { const g = w.shape.grad2D(T.pos.x, T.pos.z, { x: 0, z: 0 }); const dn = T.dir.x * g.x + T.dir.z * g.z; if (dn < 0) { T.dir.x -= 2 * dn * g.x; T.dir.z -= 2 * dn * g.z; T.dir.normalize(); } }
+      if (T.t > T.life || !T.owner || T.owner.demolished) {
+        if (T.owner) T.owner.tornT = 0;
+        this.tornados.splice(i, 1); this.ev('tornadoEnd', { pos: T.pos.clone() }); continue;
+      }
+      T.pos.set(T.owner.pos.x, T.owner.pos.y + T.owner.half.y, T.owner.pos.z);
+      T.owner.tornT = Math.max(0, T.life - T.t);
       for (const c of w.cars) if (c !== T.owner && !c.demolished) this.affect(c, T, true, dt);
-      if (!b.frozen && b.iceT <= 0) { const k = this.affect(b, T, false, dt); if (k > 0.45 && b.stuckTo && b.stuckTo !== T.owner) this.release(false); }
+      if (!b.frozen && b.iceT <= 0) { const k = this.affect(b, T, false, dt); if (k > 0.35) w.registerTouch(T.owner); if (k > 0.45 && b.stuckTo && b.stuckTo !== T.owner) this.release(false); }
     }
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const S = this.shots[i]; S.t += dt; const c = S.from, tgt = S.to;
@@ -8190,7 +8202,7 @@ class UIManager {
     } else tgtEl.classList.add('hidden');
     $('glitch').classList.toggle('hidden', !(p.scrT > 0));
     const ch = []; const chip = (pid, label, t, max) => { if (t > 0) ch.push([pid, label, t / max]); };
-    chip('spikes', 'SPIKES', p.spikeT, 7.5); chip('magnet', 'MAGNET', p.magT, 6); chip('overdrive', 'OVERDRIVE', p.ovT, 8); chip('nitro', 'NITRO', p.nitroT, 5); chip('scramble', 'SCRAMBLED', p.scrT, 4.5);
+    chip('tornado', 'TORNADO', p.tornT, 6.5); chip('spikes', 'SPIKES', p.spikeT, 7.5); chip('magnet', 'MAGNET', p.magT, 6); chip('overdrive', 'OVERDRIVE', p.ovT, 8); chip('nitro', 'NITRO', p.nitroT, 5); chip('scramble', 'SCRAMBLED', p.scrT, 4.5);
     if (w.ball.iceT > 0) chip('freeze', 'BALL FROZEN', w.ball.iceT, 3.2); if (w.ball.antiT > 0) chip('antigrav', 'ZERO-G BALL', w.ball.antiT, 6);
     const html = ch.map(([pid, l, f]) => `<div class="c" style="--ic:${POWER_BY_ID[pid].color}">${powerIcon(pid)}<span>${l}</span><i><b style="width:${Math.round(f * 20) * 5}%"></b></i></div>`).join('');
     if (html !== this._chips) { this._chips = html; $('fxChips').innerHTML = html; }
