@@ -1252,13 +1252,30 @@ wss.on('connection', (ws) => {
         if (!lb || lb.status !== 'waiting') return;
         const p = lb.players.get(ws.userId);
         if (!p) return;
-        const want = Number(msg.team);
-        if (![0, 1, -1].includes(want)) return;
-        if (want === 0 || want === 1) {
-          let count = 0;
-          for (const pl of lb.players.values()) if (pl.team === want && pl.userId !== ws.userId) count++;
-          if (count >= lb.settings.teamSize) {
-            return send(ws, { type: 'error', text: 'That team is full.' });
+        let want;
+        if (msg.team === 'random') {
+          let blue = 0, orange = 0;
+          for (const pl of lb.players.values()) {
+            if (pl.userId === ws.userId) continue;
+            if (pl.team === 0) blue++;
+            else if (pl.team === 1) orange++;
+          }
+          const avail = [];
+          if (blue < lb.settings.teamSize) avail.push(0);
+          if (orange < lb.settings.teamSize) avail.push(1);
+          if (!avail.length) {
+            return send(ws, { type: 'error', text: 'Both teams are full.' });
+          }
+          want = avail[Math.floor(Math.random() * avail.length)];
+        } else {
+          want = Number(msg.team);
+          if (![0, 1, -1].includes(want)) return;
+          if (want === 0 || want === 1) {
+            let count = 0;
+            for (const pl of lb.players.values()) if (pl.team === want && pl.userId !== ws.userId) count++;
+            if (count >= lb.settings.teamSize) {
+              return send(ws, { type: 'error', text: 'That team is full.' });
+            }
           }
         }
         p.team = want;

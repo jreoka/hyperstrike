@@ -78,6 +78,7 @@ button{font-family:inherit}
 .seg button.on{background:linear-gradient(180deg,rgba(62,242,255,.32),rgba(62,242,255,.08));border-color:var(--accent);color:#fff;box-shadow:0 0 18px rgba(62,242,255,.25) inset}
 .seg.team button.blue.on{background:linear-gradient(180deg,rgba(47,143,255,.45),rgba(47,143,255,.1));border-color:var(--blue)}
 .seg.team button.orange.on{background:linear-gradient(180deg,rgba(255,138,31,.45),rgba(255,138,31,.1));border-color:var(--orange)}
+.seg.team button.rand.on{background:linear-gradient(135deg,rgba(47,143,255,.45) 0%,rgba(47,143,255,.15) 48%,rgba(255,138,31,.15) 52%,rgba(255,138,31,.45) 100%);border-color:var(--accent)}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .card{position:relative;height:90px;border:1px solid var(--line);cursor:pointer;overflow:hidden;transition:all .15s;outline:none;background:#0b1020;text-align:left;padding:0}
 .card .art{position:absolute;inset:0}
@@ -7556,7 +7557,7 @@ const ARENA_ART = [
 
 class UIManager {
   constructor(game) {
-    this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 0, arena: 0, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
+    this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: 0, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
     if (!ARENAS[this.setup.arena]) this.setup.arena = 0; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
     this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
@@ -7692,7 +7693,7 @@ class UIManager {
           ${s.mode === 'mayhem' ? `<div class="desc">Every few seconds each car receives a random power-up. Use it with <kbd>R</kbd> (gamepad <kbd>L3</kbd> / <kbd>D-pad ↑</kbd>). Hover an icon for details.</div>${this.powerGrid()}<div class="sect">New power-up every</div>${this.seg('interval', [[6, '6 sec'], [10, '10 sec'], [15, '15 sec']])}` : ''}
           <div class="sect">Team size</div>${this.seg('teamSize', [[1, '1 v 1'], [2, '2 v 2'], [3, '3 v 3'], [4, '4 v 4'], [5, '5 v 5']])}
           ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
-          <div class="sect">Your side</div>${this.seg('side', [[0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}
+          <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}
           <div class="sect">Arena</div>${this.arenaCards()}
           <div class="desc">${ARENAS[s.arena].desc}</div>
           <div class="sect">Layout</div>${this.layoutSeg()}
@@ -7827,6 +7828,7 @@ class UIManager {
       <div class="mp-row" style="justify-content:space-between;margin-top:6px">
         <span style="font-size:11px;color:var(--ink2)">Spectators: ${specs.length ? specs.map(s => this.esc(s.username)).join(', ') : 'None'}</span>
         <div class="mp-row">
+          <button class="mp-btn ghost" data-lbt="random">Random Team</button>
           <button class="mp-btn ghost" data-lbt="-1">Spectate</button>
           <button class="mp-btn ${myP && myP.ready ? 'alt' : ''}" id="btnLbReady">${myP && myP.ready ? 'Unready' : 'Ready Up'}</button>
           ${amHost ? `<button class="mp-btn" id="btnLbStart" style="background:var(--accent);color:#04101e">START MATCH</button>` : ''}
@@ -7898,7 +7900,7 @@ class UIManager {
     click('btnLbLeave', () => on.leaveLobby());
     click('btnLbReady', () => on.toggleReady());
     click('btnLbStart', () => on.startLobbyMatch());
-    P.querySelectorAll('[data-lbt]').forEach(b => b.onclick = () => on.switchTeam(+b.dataset.lbt));
+    P.querySelectorAll('[data-lbt]').forEach(b => b.onclick = () => on.switchTeam(b.dataset.lbt === 'random' ? 'random' : +b.dataset.lbt));
     P.querySelectorAll('[data-lbkick]').forEach(b => b.onclick = () => on.kickLobby(b.dataset.lbkick));
     P.querySelectorAll('[data-lset]').forEach(b => b.onclick = () => {
       const k = b.dataset.lset, v = JSON.parse(b.dataset.lval);
@@ -8627,9 +8629,10 @@ class GameEngine {
     const def = ARENAS[cfg.arena] || ARENAS[0];
     this.newWorld(def, { layout: cfg.layout, scale: cfg.teamSize >= 4 ? 1.12 : 1 });
     const names = this.botNames(10); let k = 0;
+    const side = cfg.side === 'random' ? (Math.random() < 0.5 ? 0 : 1) : cfg.side;
     for (const team of [0, 1]) for (let i = 0; i < cfg.teamSize; i++) {
-      const isP = team === cfg.side && i === 0;
-      const diff = cfg.tournament && team === cfg.side ? Math.min(3, this.tournament.cfg.difficulty + 1) : cfg.difficulty;
+      const isP = team === side && i === 0;
+      const diff = cfg.tournament && team === side ? Math.min(3, this.tournament.cfg.difficulty + 1) : cfg.difficulty;
       this.addCar(team, { player: isP, name: isP ? (Settings.data.playerName || 'PLAYER') : names[k++], diff });
     }
     this.teamNames = cfg.teamNames || ['BLUE', 'ORANGE'];
