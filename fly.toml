@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for dill-hyperstrike on 2026-11-18T19:10:36-05:00
+#
+# See https://docs.fly.io/reference/configuration for information about how to use this file.
+#
+
 app = 'dill-hyperstrike'
 primary_region = 'ord'
 
@@ -5,12 +10,12 @@ primary_region = 'ord'
   dockerfile = 'Dockerfile'
 
 [env]
+  DATA_DIR = '/data'
   NODE_ENV = 'production'
   PORT = '8080'
-  DATA_DIR = '/data'
   URL = 'https://hyperstrike.dill.moe'
 
-[mounts]
+[[mounts]]
   source = 'hyperstrike_data'
   destination = '/data'
 
@@ -27,12 +32,12 @@ primary_region = 'ord'
     hard_limit = 200
     soft_limit = 160
 
-[[http_service.checks]]
-  interval = '30s'
-  timeout = '5s'
-  grace_period = '10s'
-  method = 'GET'
-  path = '/api/health'
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/api/health'
 
 [[vm]]
   size = 'shared-cpu-1x'
