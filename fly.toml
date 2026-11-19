@@ -1,10 +1,4 @@
-# Fly.io deployment configuration for Hyperstrike (ORD - Chicago, minimal CPU & RAM)
-# Deploy with:
-#   fly apps create hyperstrike-ord   (or change app name below)
-#   fly volumes create hyperstrike_data --region ord --size 1
-#   fly deploy
-
-app = 'hyperstrike-ord'
+app = 'dill-hyperstrike'
 primary_region = 'ord'
 
 [build]
