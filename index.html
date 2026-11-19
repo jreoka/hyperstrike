@@ -4017,15 +4017,23 @@ class AudioSystem {
     e.lfo.connect(e.lfoG).connect(e.am.gain);
     const g1 = ctx.createGain(); g1.gain.value = 0.32; const g2 = ctx.createGain(); g2.gain.value = 0.25; const g3 = ctx.createGain(); g3.gain.value = 0.45;
     e.o1.connect(g1).connect(e.lp); e.o2.connect(g2).connect(e.lp); e.o3.connect(g3).connect(e.lp); e.lp.connect(e.am).connect(e.out);
-    e.bn = this.noiseSrc(); e.bbp = ctx.createBiquadFilter(); e.bbp.type = 'bandpass'; e.bbp.Q.value = 0.8; e.bbp.frequency.value = 900;
-    e.blp = ctx.createBiquadFilter(); e.blp.type = 'lowpass'; e.blp.frequency.value = 2800;
-    e.bg = ctx.createGain(); e.bg.gain.value = 0; e.bn.connect(e.bbp).connect(e.blp).connect(e.bg).connect(dest);
-    e.rum = ctx.createOscillator(); e.rum.type = 'sawtooth'; e.rum.frequency.value = 48; e.rlp = ctx.createBiquadFilter(); e.rlp.type = 'lowpass'; e.rlp.frequency.value = 150;
+    e.bn = this.noiseSrc(true, true); e.bbp = ctx.createBiquadFilter(); e.bbp.type = 'lowpass'; e.bbp.Q.value = 1.6; e.bbp.frequency.value = 650;
+    e.blp = ctx.createBiquadFilter(); e.blp.type = 'highpass'; e.blp.frequency.value = 110;
+    e.blfo = ctx.createOscillator(); e.blfo.type = 'sine'; e.blfo.frequency.value = 26; e.blfoG = ctx.createGain(); e.blfoG.gain.value = 140;
+    e.blfo.connect(e.blfoG).connect(e.bbp.frequency);
+    e.bg = ctx.createGain(); e.bg.gain.value = 0; e.bn.connect(e.blp).connect(e.bbp).connect(e.bg).connect(dest);
+    e.rum = ctx.createOscillator(); e.rum.type = 'sawtooth'; e.rum.frequency.value = 82; e.rlp = ctx.createBiquadFilter(); e.rlp.type = 'lowpass'; e.rlp.frequency.value = 280; e.rlp.Q.value = 1.8;
     e.rg = ctx.createGain(); e.rg.gain.value = 0; e.rum.connect(e.rlp).connect(e.rg).connect(dest);
+    e.bt = ctx.createOscillator(); e.bt.type = 'triangle'; e.bt.frequency.value = 220;
+    e.bt2 = ctx.createOscillator(); e.bt2.type = 'sine'; e.bt2.frequency.value = 330;
+    const bt2g = ctx.createGain(); bt2g.gain.value = 0.55;
+    e.btf = ctx.createBiquadFilter(); e.btf.type = 'lowpass'; e.btf.frequency.value = 1200; e.btf.Q.value = 1.2;
+    e.btg = ctx.createGain(); e.btg.gain.value = 0;
+    e.bt.connect(e.btf); e.bt2.connect(bt2g).connect(e.btf); e.btf.connect(e.btg).connect(dest);
     e.tn = this.noiseSrc(); e.tbp = ctx.createBiquadFilter(); e.tbp.type = 'bandpass'; e.tbp.frequency.value = 2400; e.tbp.Q.value = 4;
     e.tg = ctx.createGain(); e.tg.gain.value = 0; e.tn.connect(e.tbp).connect(e.tg).connect(dest);
     if (isPlayer) { e.wn = this.noiseSrc(false, true); e.wn.loop = true; e.wlp = ctx.createBiquadFilter(); e.wlp.type = 'lowpass'; e.wlp.frequency.value = 600; e.wg = ctx.createGain(); e.wg.gain.value = 0; e.wn.connect(e.wlp).connect(e.wg).connect(this.sfx); e.wn.start(); }
-    for (const o of [e.o1, e.o2, e.o3, e.lfo, e.bn, e.rum, e.tn]) o.start();
+    for (const o of [e.o1, e.o2, e.o3, e.lfo, e.bn, e.blfo, e.rum, e.bt, e.bt2, e.tn]) o.start();
     e.wasBoost = false;
     this.engines.set(car, e); return e;
   }
@@ -4035,7 +4043,7 @@ class AudioSystem {
     const cam = this.camPos || (player && player.pos) || tmpV;
     const sorted = cars.filter(c => c !== player && !c.demolished).sort((a, b) => a.pos.distanceToSquared(cam) - b.pos.distanceToSquared(cam)).slice(0, 3);
     const want = new Set(sorted); if (player) want.add(player);
-    for (const [car, e] of this.engines) if (!want.has(car) || car.demolished) { e.out.gain.setTargetAtTime(0, t, 0.05); e.bg.gain.setTargetAtTime(0, t, 0.05); e.rg.gain.setTargetAtTime(0, t, 0.05); e.tg.gain.setTargetAtTime(0, t, 0.05); if (e.wg) e.wg.gain.setTargetAtTime(0, t, 0.05); }
+    for (const [car, e] of this.engines) if (!want.has(car) || car.demolished) { e.out.gain.setTargetAtTime(0, t, 0.05); e.bg.gain.setTargetAtTime(0, t, 0.05); e.rg.gain.setTargetAtTime(0, t, 0.05); e.btg.gain.setTargetAtTime(0, t, 0.05); e.tg.gain.setTargetAtTime(0, t, 0.05); if (e.wg) e.wg.gain.setTargetAtTime(0, t, 0.05); }
     for (const car of want) {
       if (car.demolished) continue;
       const e = this.engineFor(car, car === player); if (!e) continue;
@@ -4053,8 +4061,17 @@ class AudioSystem {
       const vol = (car === player ? 0.12 : 0.16) * (0.35 + thr * 0.5 + sp / 46);
       e.out.gain.setTargetAtTime(vol, t, 0.05);
       const b = car.isBoosting ? 1 : 0;
-      e.bg.gain.setTargetAtTime(b * (car === player ? 0.28 : 0.45), t, b ? 0.02 : 0.08); e.bbp.frequency.setTargetAtTime((700 + sp * 30) * dop, t, 0.05);
-      e.rg.gain.setTargetAtTime(b * 0.22, t, 0.03);
+      const bRamp = clamp((car.boostT || 0) / 0.6, 0, 1);
+      e.bg.gain.setTargetAtTime(b * (car === player ? 0.14 : 0.22), t, b ? 0.025 : 0.09);
+      e.bbp.frequency.setTargetAtTime((480 + sp * 18 + bRamp * 180) * dop, t, 0.05);
+      e.rum.frequency.setTargetAtTime((78 + sp * 2.1 + bRamp * 18) * dop, t, 0.05);
+      e.rlp.frequency.setTargetAtTime(240 + sp * 9 + bRamp * 120, t, 0.05);
+      e.rg.gain.setTargetAtTime(b * (car === player ? 0.16 : 0.22), t, b ? 0.03 : 0.08);
+      const bf = (185 + sp * 5.8 + bRamp * 55) * dop;
+      e.bt.frequency.setTargetAtTime(bf, t, 0.05);
+      e.bt2.frequency.setTargetAtTime(bf * 1.498, t, 0.05);
+      e.btf.frequency.setTargetAtTime(700 + sp * 28 + bRamp * 350, t, 0.06);
+      e.btg.gain.setTargetAtTime(b * (car === player ? 0.095 : 0.13), t, b ? 0.035 : 0.09);
       if (b && !e.wasBoost) this.boostStart(car === player ? null : car.pos);
       e.wasBoost = !!b;
       const slip = car.onGround ? clamp(((car.slipSpeed || 0) - 2.5) / 8, 0, 1) : 0;
@@ -4064,7 +4081,7 @@ class AudioSystem {
   }
   stopEngines() {
     if (!this.ready) return;
-    for (const [, e] of this.engines) { try { for (const o of [e.o1, e.o2, e.o3, e.lfo, e.bn, e.rum, e.tn, e.wn]) if (o) o.stop(); e.out.disconnect(); e.bg.disconnect(); e.rg.disconnect(); e.tg.disconnect(); if (e.pan) e.pan.disconnect(); if (e.wg) e.wg.disconnect(); } catch (er) { } }
+    for (const [, e] of this.engines) { try { for (const o of [e.o1, e.o2, e.o3, e.lfo, e.bn, e.blfo, e.rum, e.bt, e.bt2, e.tn, e.wn]) if (o) o.stop(); e.out.disconnect(); e.bg.disconnect(); e.rg.disconnect(); e.btg.disconnect(); e.tg.disconnect(); if (e.pan) e.pan.disconnect(); if (e.wg) e.wg.disconnect(); } catch (er) { } }
     this.engines.clear();
   }
   env(g, t, a, peak, d, end = 0.0001) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(end, t + a + d); }
@@ -4073,9 +4090,9 @@ class AudioSystem {
     const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
     const g = ctx.createGain(); this.env(g, t, 0.005, vol, dur); o.connect(g); this.out(g, pos, verb); o.start(t); o.stop(t + dur + 0.05);
   }
-  burst(f, q, dur, vol, pos, verb = 0.3, type = 'bandpass', delay = 0, fEnd = 0) {
+  burst(f, q, dur, vol, pos, verb = 0.3, type = 'bandpass', delay = 0, fEnd = 0, pink = false) {
     if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime + delay;
-    const n = this.noiseSrc(false); const bp = ctx.createBiquadFilter(); bp.type = type; bp.frequency.setValueAtTime(f, t); bp.Q.value = q;
+    const n = this.noiseSrc(false, pink); const bp = ctx.createBiquadFilter(); bp.type = type; bp.frequency.setValueAtTime(f, t); bp.Q.value = q;
     if (fEnd) bp.frequency.exponentialRampToValueAtTime(fEnd, t + dur);
     const g = ctx.createGain(); this.env(g, t, 0.003, vol, dur); n.connect(bp).connect(g); this.out(g, pos, verb); n.start(t); n.stop(t + dur + 0.05);
   }
@@ -4092,7 +4109,11 @@ class AudioSystem {
   flip(pos) { this.burst(1200, 0.6, 0.3, 0.14, pos, 0.15, 'bandpass', 0, 3500); }
   sonic(pos) { this.burst(2800, 0.9, 0.25, 0.12, pos, 0.2, 'bandpass', 0, 700); this.tone('sine', 340, 110, 0.22, 0.09, pos, 0.15); }
   land(pos, s = 1) { this.tone('sine', 85, 38, 0.18, 0.22 * s, pos, 0.2); this.burst(300, 1, 0.1, 0.1 * s, pos, 0.1, 'lowpass'); }
-  boostStart(pos) { this.burst(600, 0.7, 0.35, 0.1, pos, 0.2, 'bandpass', 0, 2200); }
+  boostStart(pos) {
+    this.tone('sine', 150, 62, 0.14, 0.14, pos, 0.15);
+    this.tone('triangle', 140, 320, 0.22, 0.065, pos, 0.18);
+    this.burst(380, 1.1, 0.22, 0.085, pos, 0.15, 'lowpass', 0, 1050, true);
+  }
   pickup(big, pos) {
     if (!this.ready) return;
     const notes = big ? [660, 880, 1100, 1320] : [990, 1320];
