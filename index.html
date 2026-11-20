@@ -347,7 +347,7 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #goalBanner.blue .strip{background:linear-gradient(90deg,var(--blue2),var(--blue) 50%,var(--blue2))}
 #goalBanner.orange .strip{background:linear-gradient(90deg,var(--orange2),var(--orange) 50%,var(--orange2))}
 @keyframes gb{0%{opacity:0;transform:scale(1.5) skewX(-10deg)}10%{opacity:1;transform:scale(1)}85%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.06)}}
-#feed{position:absolute;top:16px;right:20px;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+#feed{position:absolute;top:48px;right:20px;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 #feed .f{padding:6px 16px 6px 14px;background:linear-gradient(270deg,rgba(6,10,22,.9),rgba(6,10,22,.55));font-size:12px;font-weight:800;letter-spacing:.12em;animation:feedIn .35s cubic-bezier(.2,.9,.3,1);border-right:3px solid var(--accent);font-style:italic;
   clip-path:polygon(10px 0,100% 0,100% 100%,0 100%)}
 #feed .f.blue{border-color:var(--blue)}#feed .f.orange{border-color:var(--orange)}
@@ -376,6 +376,16 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #replayTag i{width:11px;height:11px;border-radius:50%;background:#ff3b3b;animation:blink 1s infinite;box-shadow:0 0 10px #ff3b3b}
 #replayTag small{font-size:9px;letter-spacing:.2em;color:var(--ink2);font-style:normal;margin-left:8px}
 #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:9;mix-blend-mode:screen}
+.ping{display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 9px;background:rgba(6,10,22,.66);border:1px solid var(--line);
+  font:700 11px var(--mono);letter-spacing:.04em;color:var(--ink2);white-space:nowrap;pointer-events:none;user-select:none;--pc:var(--good)}
+.ping .bars{display:inline-flex;align-items:flex-end;gap:2px;height:12px}
+.ping .bars i{display:block;width:3px;background:rgba(255,255,255,.16);transition:background .25s}
+.ping .bars i:nth-child(1){height:5px}.ping .bars i:nth-child(2){height:8px}.ping .bars i:nth-child(3){height:12px}
+.ping[data-q="3"] .bars i,.ping[data-q="2"] .bars i:nth-child(-n+2),.ping[data-q="1"] .bars i:nth-child(1){background:var(--pc);box-shadow:0 0 6px var(--pc)}
+.ping[data-q="2"]{--pc:var(--gold)}.ping[data-q="1"],.ping[data-q="0"]{--pc:var(--bad)}
+.ping b{color:#fff;font-weight:800;min-width:2.4em;text-align:right}
+.ping[data-q="0"] b{color:var(--bad)}
+#pingHud{position:absolute;top:14px;right:20px}
 #fps{position:fixed;left:8px;bottom:6px;font:11px var(--mono);color:#7f8;z-index:50;pointer-events:none;opacity:.75}
 
 /* ============ POWER-UPS ============ */
@@ -665,6 +675,7 @@ body.portrait-lock #rotateLock{display:flex}
     <div class="team orange"><span class="tscore" id="scoreOrange">0</span><span class="tname" id="nameOrange">ORANGE</span></div>
   </div>
   <div id="modeInfo" class="hidden"></div>
+  <div id="pingHud" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div>
   <div id="feed"></div>
   <div id="countdown"></div>
   <div id="goalBanner"><div class="big" id="gbBig">GOAL!</div><div class="strip"><span id="gbStrip">BLUE SCORES</span></div><div class="meta" id="gbMeta"></div></div>
@@ -705,7 +716,7 @@ body.portrait-lock #rotateLock{display:flex}
 <div id="menu" class="hidden">
   <header class="topbar">
     <div class="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lgM2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ef2ff"/><stop offset="1" stop-color="#ff3fd8"/></linearGradient></defs><path d="M32 3 57 17.5v29L32 61 7 46.5v-29z" fill="#081024" stroke="url(#lgM2)" stroke-width="3" stroke-linejoin="round"/><g class="orbit"><circle cx="32" cy="32" r="19" fill="none" stroke="url(#lgM2)" stroke-width="2" stroke-dasharray="18 7" opacity=".75"/></g><path d="M35 13 20 35h11l-3 16 16-23H33z" fill="#fff"/></svg><div><div class="word">HYPER<b>STRIKE</b></div><div class="sub">ROCKET CAR SOCCER</div></div></div>
-    <div class="top-right"><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
+    <div class="top-right"><div id="pingMenu" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
   </header>
   <div class="m-body">
     <div class="left"><nav id="mainNav"></nav></div>
@@ -7704,7 +7715,9 @@ class OnlineMatchMode extends MatchMode {
     if (this.state === 'countdown') {
       // Count from the server's authoritative unfreeze tick once a snapshot gave it to us, so
       // the numbers line up with GO! under any lag; numbers only ever count down (no repeats).
-      const left = this.unfreezeTick >= 0 ? (this.unfreezeTick - this.world.tick) * PHYS.dt : 3.0 - this.stateT;
+      // Until then hold on "3": the server may still be waiting for other players to load, and
+      // counting locally first made the numbers race to catch up when the real countdown arrived.
+      const left = this.unfreezeTick >= 0 ? (this.unfreezeTick - this.world.tick) * PHYS.dt : 3.0;
       const n = Math.min(3, Math.ceil(left - 1e-6));
       if (n > 0 && n < this.cdLast) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
       // GO! is triggered by the predicted unfreeze tick (see netStep / rollback)
@@ -7729,10 +7742,16 @@ class OnlineMatchMode extends MatchMode {
     this.unfreezeTick = -1; this.pendingSnap = null;
     this.setState('goal'); w.kickoff = false;
     g.ui.updateScore(this.score, scoringTeam);
-    const scorerName = msg.scorerName || (msg.own ? 'OWN GOAL' : '');
-    const meta = `${msg.speed || 0} KM/H${msg.assistName ? ' · ASSIST ' + msg.assistName : ''}`;
+    // Scorer & assist are decided by the server from its own touch history; identify the cars by
+    // their server index (names are not unique: a player can share a bot's name)
+    const scorerCar = Number.isInteger(msg.scorer) && msg.scorer >= 0 ? w.cars[msg.scorer] || null : null;
+    const assistCar = Number.isInteger(msg.assist) && msg.assist >= 0 ? w.cars[msg.assist] || null : null;
+    const sName = scorerCar ? scorerCar.name : (msg.scorerName || '');
+    const aName = assistCar ? assistCar.name : (msg.assistName || '');
+    const scorerName = sName || (msg.own ? 'OWN GOAL' : '');
+    const meta = `${msg.speed || 0} KM/H${aName ? ' · ASSIST ' + aName : ''}`;
     g.ui.goalBanner(scoringTeam, scorerName, meta);
-    g.ui.feed(`${msg.scorerName || (scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED${msg.own && !msg.scorerName ? ' (OWN GOAL)' : ''}`, scoringTeam);
+    g.ui.feed(`${sName || (scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED${msg.own && !sName ? ' (OWN GOAL)' : ''}`, scoringTeam);
     if (g.player) g.camera.mode = 'car';
     g.arenaExcite = 1.0;
   }
@@ -8110,6 +8129,39 @@ class OnlineManager {
     this.lbSort = 'rp';
     this._reconnectTimer = null;
     this.serverUrl = this._defaultServerUrl();
+    this.ping = null;      // smoothed round-trip time in ms (null = unknown)
+    this._pingTimer = null;
+    this._pingSent = 0;    // timestamp of the probe in flight (0 = none)
+  }
+  // Latency probe: one tiny JSON ping per second, answered immediately by the server. This is
+  // real network round-trip time (the in-match input ack delay also includes the server's
+  // input buffer, so it reads higher than the connection actually is).
+  startPing() {
+    this.stopPing(false);
+    const probe = () => {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      const now = performance.now();
+      // A probe unanswered for 2s means the link is stalling: show at least that much
+      if (this._pingSent && now - this._pingSent > 2000) { this.ping = Math.max(this.ping || 0, now - this._pingSent); this.g.ui.updatePing(); }
+      if (this._pingSent && now - this._pingSent < 4000) return; // still waiting on the last one
+      this._pingSent = now;
+      this.wsSend({ type: 'ping', t: now });
+    };
+    probe();
+    this._pingTimer = setInterval(probe, 1000);
+  }
+  stopPing(clear = true) {
+    clearInterval(this._pingTimer); this._pingTimer = null; this._pingSent = 0;
+    if (clear) { this.ping = null; this.g.ui.updatePing(); }
+  }
+  onPong(t) {
+    if (typeof t !== 'number' || !Number.isFinite(t)) return;
+    const rtt = performance.now() - t;
+    if (!(rtt >= 0) || rtt > 30000) return;
+    if (Math.abs(t - this._pingSent) < 0.5) this._pingSent = 0;
+    // Light smoothing: follows real changes within a couple of seconds, hides single spikes
+    this.ping = this.ping === null ? rtt : this.ping + (rtt - this.ping) * 0.5;
+    this.g.ui.updatePing();
   }
   _defaultServerUrl() {
     const saved = localStorage.getItem('hyperstrike.serverUrl');
@@ -8231,6 +8283,7 @@ class OnlineManager {
     };
     ws.onclose = () => {
       this.connected = false;
+      this.stopPing();
       this.g.ui.updateProfileCard();
       if (this.g.inGame && this.g.mode instanceof OnlineMatchMode && !this.g.mode.endedByServer) {
         this.g.ui.toast('CONNECTION LOST — RECONNECTING...');
@@ -8251,8 +8304,12 @@ class OnlineManager {
   onWsMessage(msg) {
     const g = this.g, ui = g.ui;
     switch (msg.type) {
+      case 'pong':
+        this.onPong(msg.t);
+        break;
       case 'auth_ok':
         this.connected = true;
+        this.startPing();
         if (msg.user) this.user = msg.user;
         this.region = msg.region || '';
         this.onlineCount = msg.online || 1;
@@ -8987,6 +9044,18 @@ class UIManager {
     return `<div class="ph"><h2>Controls</h2><span>keyboard · mouse · gamepad</span></div><table class="keys"><tr><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">ACTION</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">KEYBOARD / MOUSE</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">GAMEPAD</td></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('') + `</table>
       <div class="sect">Mechanics</div><div class="desc"><b>Dodge:</b> jump, then press jump again while holding a direction — front/back/side/diagonal flips add a burst of speed and spin. Jump again with no direction for a double jump.<br><b>Aerials:</b> jump, tilt the nose up and boost. Watch the glowing target ring under the ball to read bounces.<br><b>Wall driving:</b> drive into any curved wall to climb it. Hold throttle to maintain grip.<br><b>Demolition:</b> hit an opponent at supersonic speed (trail appears) to destroy them.<br><b>Flip cancel:</b> pull back during a front flip to stop the rotation.</div>`;
   }
+  updatePing() {
+    const on = this.g.online, ms = on && on.connected ? on.ping : null;
+    const q = ms === null ? 0 : ms < 80 ? 3 : ms < 150 ? 2 : 1;
+    const txt = ms === null ? '--' : String(Math.min(999, Math.round(ms)));
+    for (const id of ['pingHud', 'pingMenu']) {
+      const el = $(id); if (!el) continue;
+      el.classList.toggle('hidden', !on || !on.token);
+      if (el.dataset.q !== String(q)) el.dataset.q = q;
+      const b = el.querySelector('b');
+      if (b && b.textContent !== txt) b.textContent = txt;
+    }
+  }
   showHud(v) { $('hud').classList.toggle('hidden', !v); if (!v) { this.clearTags(); this.clearHudFX(); } }
   updateScore(score, bumpTeam) {
     $('scoreBlue').textContent = score[0]; $('scoreOrange').textContent = score[1];
@@ -9622,6 +9691,12 @@ class GameEngine {
       mid: msg.mid
     }));
     this.audio.setMusicMode('game');
+    // Tell the server once the arena is built and its first frame has rendered (shader compile
+    // happens there); the server holds the kickoff countdown until every player is ready.
+    const mode = this.mode;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (this.mode === mode && this.online && Number.isInteger(msg.mid)) this.online.wsSend({ type: 'match_loaded', m: msg.mid });
+    }));
   }
   startFreePlay(cfg) {
     this.lastCfg = { type: 'free', cfg }; this.inGame = true; this.paused = false; this.tournament = null;

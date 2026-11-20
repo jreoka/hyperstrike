@@ -1258,6 +1258,12 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(raw.toString('utf8')); } catch (_) { return; }
     if (!msg || typeof msg.type !== 'string') return;
 
+    // Latency probe for the client's ping meter: echo the client's timestamp straight back
+    if (msg.type === 'ping') {
+      if (typeof msg.t === 'number' && Number.isFinite(msg.t)) send(ws, { type: 'pong', t: msg.t });
+      return;
+    }
+
     // Auth required before any other WS message
     if (msg.type === 'auth') {
       const user = getUserByToken(msg.token);
@@ -1562,7 +1568,7 @@ wss.on('connection', (ws, req) => {
             mid: sim.id,
             serverSim: true
           });
-          sim.start();
+          sim.startWhenLoaded(matchPlayers.map(mp => mp.userId).filter(id => lb.players.has(id)));
         }).catch(err => {
           console.error('[SIM] Failed to start match:', err);
           if (lb.match === matchObj && !matchObj.finished) {
@@ -1649,7 +1655,7 @@ wss.on('connection', (ws, req) => {
             mid: sim.id,
             serverSim: true
           });
-          sim.start();
+          sim.startWhenLoaded([ws.userId]);
         }).catch(err => {
           console.error('[SIM] Failed to start solo match:', err);
           if (ws.soloGen === gen && ws.readyState === 1) {
@@ -1664,6 +1670,15 @@ wss.on('connection', (ws, req) => {
       }
       case 'solo_pause': {
         if (ws.soloSim) ws.soloSim.setPaused(!!msg.paused);
+        break;
+      }
+
+      // Client finished building the arena for match `m`: the kickoff countdown can begin
+      case 'match_loaded': {
+        const mid = Number.isInteger(msg.m) ? msg.m : null;
+        if (ws.soloSim && ws.soloSim.id === mid) { ws.soloSim.markLoaded(ws.userId); break; }
+        const lb = lobbies.get(ws.lobbyCode);
+        if (lb && lb.sim && lb.sim.id === mid) lb.sim.markLoaded(ws.userId);
         break;
       }
 

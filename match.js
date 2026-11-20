@@ -97,6 +97,7 @@ class ServerMatch {
     this.lastShotCar = null; this.lastShotT = 0;
     this.finished = false;
     this.paused = false;
+    this.statsDirty = false;
     this.createdAt = Date.now();
     this.timer = null;
     this._running = false;
@@ -177,6 +178,9 @@ class ServerMatch {
   pushInput(userId, seq, packed) {
     const h = this.humans.get(userId);
     if (!h || !Number.isSafeInteger(seq) || seq <= 0 || !isValidPackedControls(packed)) return false;
+    // Inputs sent while we wait for every client to load belong to no slot: buffering them
+    // would fill the 4s window and leave the timeline starved and skipping once play starts.
+    if (!this._running) return true;
     if (h.nextSeq === 0) h.nextSeq = seq; // first input starts this player's timeline
     if (seq < h.nextSeq) {
       // Arrived after its slot ran: keep button presses so taps are never lost
@@ -298,7 +302,8 @@ class ServerMatch {
     const S = this.S, w = this.world, s = w.shape;
     const sx = s.W / 40.96, sz = s.L / 51.2;
     const set = S.pick(S.KICKOFF_SETS[Math.min(5, this.settings.teamSize)] || S.KICKOFF_SETS[1]);
-    const order = set.slice().sort(() => Math.random() - 0.5);
+    const order = set.slice();
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
     for (const team of [0, 1]) {
       const mem = w.cars.filter(c => c.team === team);
       mem.forEach((c, i) => {
@@ -391,7 +396,10 @@ class ServerMatch {
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
     this.setState('goal'); w.kickoff = false;
     if (this.overtime) this.matchOver = true;
+    this.statsDirty = true; // push the new goal/assist stats with the very next snapshot
+    const idx = c => (c ? w.cars.indexOf(c) : -1);
     this.opts.onGoal({
+      scorer: idx(scorer), assist: idx(assist),
       goalTeam, scoringTeam, score: this.score.slice(),
       scorerName: scorer ? scorer.name : '', assistName: assist ? assist.name : '',
       scorerId: scorer && scorer.netUserId ? scorer.netUserId : null,
@@ -448,7 +456,10 @@ class ServerMatch {
     const meta = {};
     if (w.powers) { meta.pw = this.powersSnap(); meta.it = w.cars.map(c => c.item || null); meta.inx = w.cars.map(c => Math.round((c.itemNext || 0) * 10) / 10); }
     if (this.events.length) meta.ev = this.events.splice(0);
-    if (this.slot % 30 === 0 || this.state === 'ended') meta.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
+    if (this.slot % 30 === 0 || this.state === 'ended' || this.statsDirty) {
+      this.statsDirty = false;
+      meta.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
+    }
     const shared = S.netEncodeSnapshot(w, {
       state: this.state, overtime: this.overtime, cd: this.countdownTicks(),
       timeLeft: this.timeLeft, otTime: this.otTime, score: this.score, ctls,
