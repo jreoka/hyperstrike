@@ -7178,10 +7178,19 @@ class ReplayRecorder {
   // frames are filled by interpolation to keep replay timing correct.
   recordAt(tick) {
     if (this.lastTick !== undefined && tick <= this.lastTick) return;
-    const f = this.makeFrame(tick), prev = this.frames[this.frames.length - 1];
-    const gap = prev && this.lastTick !== undefined ? Math.round((tick - this.lastTick) / this.every) - 1 : 0;
-    if (gap > 0 && gap <= 10) for (let k = 1; k <= gap; k++) this.push(ReplayRecorder.lerpFrame(prev, f, k / (gap + 1)));
-    this.push(f); this.lastTick = tick;
+    const f = this.makeFrame(tick), prev = this.lastRaw, lt = this.lastTick, E = this.every;
+    this.lastRaw = f; this.lastTick = tick;
+    if (!prev || lt === undefined || tick - lt > 10 * E) { this.push(f); return; }
+    // Resample onto a fixed tick grid so replay frames are exactly `every` ticks apart: during the
+    // server's goal slow-mo, ticks advance unevenly per snapshot, which made replay car speeds
+    // (derived from frame deltas) jitter and the engine sounds wobble.
+    const evs = f.events; f.events = null;
+    let last = null;
+    for (let g = (Math.floor(lt / E) + 1) * E; g <= tick; g += E) {
+      last = g === tick ? f : ReplayRecorder.lerpFrame(prev, f, (g - lt) / (tick - lt));
+      this.push(last);
+    }
+    if (evs) { if (last) last.events = evs; else this.pendingEvents.unshift(...evs); } // no grid frame yet: hand them to the next one
   }
   static lerpFrame(a, b, k) {
     const lv = (x, y) => {
@@ -7223,7 +7232,7 @@ class ReplayRecorder {
     if (this.tail && this.tail.length < this.tailMax) this.tail.push(f);
   }
   snapshot(seconds) { const n = Math.min(this.frames.length, Math.round(seconds * 120 / this.every)); return this.frames.slice(this.frames.length - n); }
-  clear() { this.frames.length = 0; this.pendingEvents.length = 0; this.tail = null; this.lastTick = undefined; }
+  clear() { this.frames.length = 0; this.pendingEvents.length = 0; this.tail = null; this.lastTick = undefined; this.lastRaw = null; }
 }
 
 const BALL_GLSL = `
