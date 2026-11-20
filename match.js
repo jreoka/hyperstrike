@@ -41,12 +41,25 @@ function serializeCar(car) {
 
 // Controls arrive packed: [throttle, steer, pitch, yaw, roll, bits]
 const clamp1 = v => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
+function isValidPackedControls(arr) {
+  if (!Array.isArray(arr) || arr.length !== 6) return false;
+  for (let i = 0; i < 5; i++) {
+    const v = arr[i];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < -1.001 || v > 1.001) return false;
+  }
+  const bits = arr[5];
+  return Number.isInteger(bits) && bits >= 0 && bits <= 31;
+}
 function unpackControls(arr, into) {
   into.throttle = clamp1(arr[0]); into.steer = clamp1(arr[1]); into.pitch = clamp1(arr[2]);
   into.yaw = clamp1(arr[3]); into.roll = clamp1(arr[4]);
   const bits = Number.isInteger(arr[5]) ? arr[5] : 0;
   into.jump = !!(bits & 1); into.boost = !!(bits & 2); into.handbrake = !!(bits & 4);
   into.airRollFree = !!(bits & 8); into.item = !!(bits & 16);
+}
+function clearControls(into) {
+  into.throttle = 0; into.steer = 0; into.pitch = 0; into.yaw = 0; into.roll = 0;
+  into.jump = false; into.boost = false; into.handbrake = false; into.airRollFree = false; into.item = false;
 }
 
 class ServerMatch {
@@ -82,16 +95,17 @@ class ServerMatch {
         const car = this.addCar(team, p.username.toUpperCase(), body);
         car.netUserId = p.userId;
         car.explosion = p.car && Number.isInteger(p.car.explosion) ? p.car.explosion : 0;
-        this.humans.set(p.userId, { car, queue: [], lastSeq: 0, username: p.username });
+        this.humans.set(p.userId, { car, queue: [], lastSeq: 0, lastQueuedSeq: 0, idleSlots: 0, username: p.username });
         this.carInfo.push({ userId: p.userId, botId: null, team, name: car.name, car: p.car || null });
       }
       if (s.botFill) {
         for (let i = teamPlayers.length; i < s.teamSize; i++) {
           const name = S.BOT_NAMES[(botIdx++) % S.BOT_NAMES.length];
-          const car = this.addCar(team, name, Math.floor(Math.random() * 6));
+          const car = this.addCar(team, name, Math.floor(Math.random() * S.HITBOXES.length));
           const botId = `bot_${team}_${i}`;
           car.netBotId = botId;
-          car.bot = new S.BotAI(car, s.botDiff || 1, botIdx % S.PERSONALITIES.length);
+          const diff = (opts.teammateDiff !== undefined && teamPlayers.length > 0) ? opts.teammateDiff : (s.botDiff || 1);
+          car.bot = new S.BotAI(car, diff, botIdx % S.PERSONALITIES.length);
           car.explosion = 0;
           this.carInfo.push({ userId: null, botId, team, name, car: null, body: car.design });
         }
@@ -107,6 +121,8 @@ class ServerMatch {
     this.slot = 0; this.events = [];
     this.lastShotCar = null; this.lastShotT = 0;
     this.finished = false;
+    this.paused = false;
+    this.createdAt = Date.now();
     this.timer = null;
   }
 
@@ -124,12 +140,17 @@ class ServerMatch {
     const slotSec = this.S.PHYS.dt * TICKS_PER_INPUT;
     this.timer = setInterval(() => {
       const now = process.hrtime.bigint();
+      if (this.paused) { last = now; acc = 0; return; }
       acc += Number(now - last) / 1e9; last = now;
       let n = 0;
       while (acc >= slotSec && n < 8 && !this.finished) { this.runSlot(); acc -= slotSec; n++; }
       if (n >= 8) acc = 0; // server hiccup: don't spiral
     }, 5);
     if (this.timer.unref) this.timer.unref();
+  }
+
+  setPaused(p) {
+    this.paused = !!p;
   }
 
   stop() {
@@ -141,7 +162,7 @@ class ServerMatch {
   // ---- inputs ----
   pushInput(userId, seq, packed) {
     const h = this.humans.get(userId);
-    if (!h || !Number.isInteger(seq) || seq <= (h.lastQueuedSeq || 0) || !Array.isArray(packed) || packed.length !== 6) return false;
+    if (!h || !Number.isSafeInteger(seq) || seq <= (h.lastQueuedSeq || 0) || !isValidPackedControls(packed)) return false;
     h.lastQueuedSeq = seq;
     h.queue.push({ seq, c: packed });
     if (h.queue.length > MAX_INPUT_QUEUE) h.queue.splice(0, h.queue.length - MAX_INPUT_QUEUE);
@@ -160,7 +181,8 @@ class ServerMatch {
   runSlot() {
     for (const h of this.humans.values()) {
       const inp = h.queue.shift();
-      if (inp) { unpackControls(inp.c, h.car.controls); h.lastSeq = inp.seq; }
+      if (inp) { unpackControls(inp.c, h.car.controls); h.lastSeq = inp.seq; h.idleSlots = 0; }
+      else if (++h.idleSlots > 30) clearControls(h.car.controls);
     }
     for (let i = 0; i < TICKS_PER_INPUT; i++) this.tick(this.S.PHYS.dt);
     this.slot++;

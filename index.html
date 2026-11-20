@@ -7268,12 +7268,6 @@ class MatchMode extends ModeBase {
     this.score = [0, 0]; this.timeLeft = cfg.duration || 300; this.overtime = false; this.otTime = 0; this.timerRunning = false;
     this.exhibition = !!cfg.exhibition; this.unlimited = cfg.duration === 0;
     this.startedAt = performance.now();
-    this.soloMatchId = null;
-    if (!this.exhibition && !cfg.isHost && !(this instanceof OnlineMatchMode) && g.online && g.online.user) {
-      const reg = this;
-      g.online.startSoloMatch({ duration: cfg.duration, difficulty: cfg.difficulty || 0, tournament: !!(cfg.tournament || g.tournament) })
-        .then(id => { reg.soloMatchId = id; }).catch(() => {});
-    }
     this.world.allowDemos = true;
     if (!this.exhibition) g.ui.clearHudFX();
     this.beginKickoff();
@@ -7382,23 +7376,6 @@ class MatchMode extends ModeBase {
     const g = this.game; this.setState('ended'); this.world.frozen = true;
     if (this.exhibition) { this.score = [0, 0]; this.beginKickoff(); return; }
     g.ui.showResults(this);
-    if (g.player && g.online && g.online.user && !(this instanceof OnlineMatchMode)) {
-      const win = this.score[0] > this.score[1] ? 0 : 1;
-      const dur = Math.round((performance.now() - (this.startedAt || performance.now())) / 1000);
-      if (!this.soloMatchId) return;
-      g.online.reportSoloMatch({
-        matchId: this.soloMatchId,
-        duration: dur,
-        won: g.player.team === win,
-        goals: g.player.stats.goals,
-        assists: g.player.stats.assists,
-        saves: g.player.stats.saves,
-        shots: g.player.stats.shots,
-        demos: g.player.stats.demos,
-        difficulty: this.cfg.difficulty || 0,
-        tournament: !!g.tournament
-      }).then(res => { if (res && res.user) g.ui.showXpReward(res); }).catch(() => {});
-    }
   }
   clockText() {
     if (this.overtime) { const t = Math.floor(this.otTime); return '+' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); }
@@ -7441,6 +7418,7 @@ class OnlineMatchMode extends MatchMode {
   start() {
     const cfg = this.cfg, w = this.world;
     this.isHost = false;
+    this.isSolo = !!cfg.isSolo;
     this.endedByServer = false;
     this.netBall = null;
     this.inSeq = 0; this.inTick = 0; this.inHist = []; this.curInput = null;
@@ -7528,8 +7506,24 @@ class OnlineMatchMode extends MatchMode {
   onGoal() { }
   finish() { }
   applyRemoteGoal(msg) {
-    super.applyRemoteGoal(msg);
+    const g = this.game, w = this.world;
+    const goalTeam = msg.goalTeam, scoringTeam = msg.scoringTeam;
+    if (Array.isArray(msg.score)) this.score = msg.score.slice();
+    const pos = Array.isArray(msg.pos) ? new V3(msg.pos[0], msg.pos[1], msg.pos[2]) : w.ball.pos.clone();
+    const explosionType = Number.isInteger(msg.explosion) ? msg.explosion : 0;
+    g.fx.goalExplosion(pos, scoringTeam, explosionType, tmpV.set(0, 0, goalTeam === 0 ? 1 : -1).clone());
+    g.audio.goal(); g.camera.addShake(0.9); g.ui.flash(0.6); g.vibrate(0.9, 600);
+    if (w.powers) w.powers.clearEffects();
+    w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0); g.ballVisual.mesh.visible = false;
     if (this.netBall) { this.netBall.frozen = true; this.netBall.pos.set(0, -50, 0); this.netBall.vel.set(0, 0, 0); }
+    this.setState('goal'); w.kickoff = false;
+    g.ui.updateScore(this.score, scoringTeam);
+    const scorerName = msg.scorerName || (msg.own ? 'OWN GOAL' : '');
+    const meta = `${msg.speed || 0} KM/H${msg.assistName ? ' · ASSIST ' + msg.assistName : ''}`;
+    g.ui.goalBanner(scoringTeam, scorerName, meta);
+    g.ui.feed(`${msg.scorerName || (scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED${msg.own && !msg.scorerName ? ' (OWN GOAL)' : ''}`, scoringTeam);
+    if (g.player) g.camera.mode = 'car';
+    g.arenaExcite = 1.0;
   }
   deserializeEvent(e) {
     const w = this.world, out = {};
@@ -7930,20 +7924,9 @@ class OnlineManager {
     if (!this.token) return;
     this.api('/api/car', { method: 'POST', body: { car } }).catch(() => {});
   }
-  async startSoloMatch(cfg) {
-    if (!this.token) return null;
-    const res = await this.api('/api/match/start', { method: 'POST', body: cfg });
-    return res && res.matchId ? res.matchId : null;
-  }
-  async reportSoloMatch(payload) {
-    if (!this.token) return null;
-    const res = await this.api('/api/match/report', { method: 'POST', body: payload });
-    if (res && res.user) {
-      this.user = res.user;
-      this.g.ui.updateProfileCard();
-    }
-    return res;
-  }
+  startSoloServerMatch(cfg) { return this.wsSend({ type: 'solo_start', cfg }); }
+  leaveSoloServerMatch() { return this.wsSend({ type: 'solo_leave' }); }
+  pauseSoloServerMatch(paused) { return this.wsSend({ type: 'solo_pause', paused: !!paused }); }
   async fetchLeaderboard(sort = 'rp') {
     this.lbSort = sort;
     const res = await this.api('/api/leaderboard?sort=' + encodeURIComponent(sort));
@@ -8040,6 +8023,23 @@ class OnlineManager {
       case 'match_start':
         this.lobby = msg.lobby;
         g.startOnlineMatch(msg);
+        break;
+      case 'solo_match_start':
+        g.startOnlineMatch(msg);
+        break;
+      case 'solo_match_finished':
+        if (g.mode instanceof OnlineMatchMode && g.mode.isSolo) {
+          g.mode.endedByServer = true;
+          g.mode.score = msg.score || g.mode.score;
+          g.mode.setState('ended');
+          g.world.frozen = true;
+          if (msg.reward && msg.reward.user) {
+            this.user = msg.reward.user;
+            ui.updateProfileCard();
+          }
+          ui.showResults(g.mode, false);
+          if (msg.reward) ui.showXpReward(msg.reward);
+        }
         break;
       case 'snap':
         if (g.mode instanceof OnlineMatchMode && g.world) g.mode.onSnap(msg);
@@ -8894,7 +8894,8 @@ class UIManager {
     this._inPauseSettings = false;
     const pi = { resume: '<path d="M7 4l13 8-13 8z" fill="currentColor"/>', restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.2"/>', exit: '<path d="M14 4h6v16h-6M10 8l-4 4 4 4M6 12h10" fill="none" stroke="currentColor" stroke-width="2.2"/>' };
     const pb = (act, label, icon) => `<button class="navbtn" data-act="${act}"><svg class="ico" viewBox="0 0 24 24">${icon}</svg><span>${label}</span></button>`;
-    this.overlay(`<div class="ov-kicker">GAME</div><h2>PAUSED</h2>${pb('resume', 'RESUME', pi.resume)}${pb('restart', 'RESTART', pi.restart)}${pb('psettings', 'SETTINGS', ICONS.gear)}${pb('menu', 'EXIT TO MENU', pi.exit)}`, 'pause');
+    const isMp = this.g.mode instanceof OnlineMatchMode && !this.g.mode.isSolo;
+    this.overlay(`<div class="ov-kicker">GAME</div><h2>PAUSED</h2>${pb('resume', 'RESUME', pi.resume)}${isMp ? '' : pb('restart', 'RESTART', pi.restart)}${pb('psettings', 'SETTINGS', ICONS.gear)}${pb('menu', 'EXIT TO MENU', pi.exit)}`, 'pause');
   }
   showPauseSettings(refocusSel = null) {
     this._inPauseSettings = true;
@@ -9288,29 +9289,19 @@ class GameEngine {
     this.camera.mode = 'orbit'; this.ui.showHud(false);
   }
   startMatch(cfg) {
-    this.lastCfg = { type: 'match', cfg }; this.inGame = true; this.paused = false;
-    this.input.lastCursorMove = performance.now() - 800;
-    this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
-    const def = ARENAS[cfg.arena] || ARENAS[0];
-    this.newWorld(def, { layout: cfg.layout, scale: cfg.teamSize >= 4 ? 1.12 : 1 });
-    const names = this.botNames(10); let k = 0;
-    const side = cfg.side === 'random' ? (Math.random() < 0.5 ? 0 : 1) : cfg.side;
-    for (const team of [0, 1]) for (let i = 0; i < cfg.teamSize; i++) {
-      const isP = team === side && i === 0;
-      const diff = cfg.tournament && team === side ? Math.min(3, this.tournament.cfg.difficulty + 1) : cfg.difficulty;
-      this.addCar(team, { player: isP, name: isP ? (Settings.data.playerName || 'PLAYER') : names[k++], diff });
+    if (!this.online || !this.online.connected) {
+      this.ui.toast('CONNECTING TO SERVER — TRY AGAIN IN A MOMENT');
+      return;
     }
-    this.teamNames = cfg.teamNames || ['BLUE', 'ORANGE'];
-    this.camera.ballCam = Settings.data.ballCamDefault;
-    this.specMode = 'broadcast';
-    if (cfg.mode === 'mayhem') { this.world.powers = new PowerSystem(this.world, { interval: cfg.interval || 10 }); this.powerVis = new PowerVisuals(this); }
-    this.setMode(new MatchMode(this, { teamSize: cfg.teamSize, duration: cfg.duration, mayhem: cfg.mode === 'mayhem' }));
-    this.audio.setMusicMode('game');
+    this.lastCfg = { type: 'match', cfg };
+    this.online.startSoloServerMatch(cfg);
   }
   startOnlineMatch(msg) {
-    const s = msg.settings, players = msg.players || [];
+    const s = msg.settings;
+    const isSolo = !!msg.solo;
     const meId = this.online && this.online.user ? this.online.user.id : null;
-    this.lastCfg = null; this.inGame = true; this.paused = false; this.tournament = null;
+    if (!isSolo) { this.lastCfg = null; this.tournament = null; }
+    this.inGame = true; this.paused = false;
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     const def = ARENAS[s.arena] || ARENAS[0];
@@ -9327,7 +9318,7 @@ class GameEngine {
         name: info.name
       });
     }
-    this.teamNames = ['BLUE', 'ORANGE'];
+    this.teamNames = Array.isArray(msg.teamNames) && msg.teamNames.length === 2 ? msg.teamNames : ['BLUE', 'ORANGE'];
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.specMode = 'broadcast';
     if (s.mode === 'mayhem') { this.world.powers = new PowerSystem(this.world, { interval: s.interval || 10 }); this.powerVis = new PowerVisuals(this); }
@@ -9337,7 +9328,8 @@ class GameEngine {
       mayhem: s.mode === 'mayhem',
       boostMode: s.boostMode || 'normal',
       mutator: s.mutator || 'normal',
-      botDiff: s.botDiff || 1
+      botDiff: s.botDiff || 1,
+      isSolo
     }));
     this.audio.setMusicMode('game');
   }
@@ -9369,6 +9361,7 @@ class GameEngine {
     this.startMatch({ teamSize: t.cfg.teamSize, side: 0, arena: t.arenaOrder[t.round], difficulty: t.opponentDifficulty(), duration: 180, tournament: true, teamNames: [t.teams[0].name, opp.name], mode: t.cfg.mode, interval: 10 });
   }
   exitToMenu() {
+    if (this.mode instanceof OnlineMatchMode && this.mode.isSolo && this.online && !this.mode.endedByServer) this.online.leaveSoloServerMatch();
     if (this.mode) this.mode.end(); this.mode = null;
     this.inGame = false; this.paused = false;
     try { if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); } catch (e) { }
@@ -9384,7 +9377,10 @@ class GameEngine {
       case 'pause': this.ui.showPause(); break;
       case 'menu':
         this.tournament = null;
-        if (this.mode instanceof OnlineMatchMode && this.online && this.online.lobby && !this.mode.endedByServer) this.online.leaveLobby();
+        if (this.mode instanceof OnlineMatchMode && this.online && !this.mode.endedByServer) {
+          if (this.mode.isSolo) this.online.leaveSoloServerMatch();
+          else if (this.online.lobby) this.online.leaveLobby();
+        }
         this.exitToMenu();
         break;
       case 'mp_lobby':
@@ -9406,6 +9402,9 @@ class GameEngine {
   setPaused(p) {
     if (!this.inGame) return;
     this.paused = p;
+    if (this.mode instanceof OnlineMatchMode && this.mode.isSolo && this.online && !this.mode.endedByServer) {
+      this.online.pauseSoloServerMatch(p);
+    }
     if (p) {
       this.ui.showPause();
       try { if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); } catch (e) { }
