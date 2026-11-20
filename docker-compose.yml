@@ -4,28 +4,21 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hyperstrike
-    restart: unless-stopped
+    restart: always
     init: true
     ports:
-      - "${PORT:-8080}:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       NODE_ENV: production
       PORT: "8080"
       DATA_DIR: /data
-      # Set to your public origin when hosting behind a reverse proxy (e.g. https://hyperstrike.example.com)
-      URL: "${URL:-}"
-      # Set to 1 if running behind a reverse proxy (Nginx, Caddy, Traefik, Cloudflare)
-      TRUST_PROXY: "${TRUST_PROXY:-0}"
-      # Optional: override simulation worker thread count (defaults to all available CPU cores)
-      SIM_WORKERS: "${SIM_WORKERS:-}"
+      URL: "https://hyperstrike.dill.moe"
+      TRUST_PROXY: 1
     volumes:
-      - hyperstrike_data:/data
+      - ./data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  hyperstrike_data:
