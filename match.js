@@ -20,14 +20,14 @@ const CAR_SKIP = new Set([
   'netBotId', 'explosion', 'wheels', 'lastBallTouchTick', 'visErr'
 ]);
 
-const r3 = v => Math.round(v * 1000) / 1000;
-const r4 = v => Math.round(v * 10000) / 10000;
-const r5 = v => Math.round(v * 100000) / 100000;
+const r3 = v => Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
+const r4 = v => Number.isFinite(v) ? Math.round(v * 10000) / 10000 : 0;
+const r5 = v => Number.isFinite(v) ? Math.round(v * 100000) / 100000 : 0;
 
 // Full physics state of one car, used by its owner to reconcile prediction
 function serializeCar(car) {
   const out = {};
-  for (const k of Object.keys(car)) {
+  for (const k in car) {
     if (CAR_SKIP.has(k)) continue;
     const v = car[k];
     if (typeof v === 'number') out[k] = Number.isFinite(v) ? r4(v) : 0;
@@ -35,7 +35,13 @@ function serializeCar(car) {
     else if (v && v.isVector3) out[k] = [r4(v.x), r4(v.y), r4(v.z)];
     else if (v && v.isQuaternion) out[k] = [r5(v.x), r5(v.y), r5(v.z), r5(v.w)];
   }
-  out.wheels = car.wheels.map(w => [w.contact ? 1 : 0, r4(w.len), r4(w.prevLen), r3(w.spin), r4(w.steer), r4(w.normal.x), r4(w.normal.y), r4(w.normal.z)]);
+  const wheels = car.wheels;
+  const wOut = new Array(wheels.length);
+  for (let i = 0; i < wheels.length; i++) {
+    const w = wheels[i];
+    wOut[i] = [w.contact ? 1 : 0, r4(w.len), r4(w.prevLen), r3(w.spin), r4(w.steer), r4(w.normal.x), r4(w.normal.y), r4(w.normal.z)];
+  }
+  out.wheels = wOut;
   return out;
 }
 
@@ -124,6 +130,10 @@ class ServerMatch {
     this.paused = false;
     this.createdAt = Date.now();
     this.timer = null;
+    this._running = false;
+    this._lastNs = 0n;
+    this._acc = 0;
+    this._slotSec = this.S.PHYS.dt * TICKS_PER_INPUT;
   }
 
   addCar(team, name, body) {
@@ -132,21 +142,36 @@ class ServerMatch {
     return car;
   }
 
-  start() {
+  start(opts) {
     this.world.allowDemos = true;
     this.beginKickoff();
-    let last = process.hrtime.bigint();
-    let acc = 0;
-    const slotSec = this.S.PHYS.dt * TICKS_PER_INPUT;
-    this.timer = setInterval(() => {
-      const now = process.hrtime.bigint();
-      if (this.paused) { last = now; acc = 0; return; }
-      acc += Number(now - last) / 1e9; last = now;
-      let n = 0;
-      while (acc >= slotSec && n < 8 && !this.finished) { this.runSlot(); acc -= slotSec; n++; }
-      if (n >= 8) acc = 0; // server hiccup: don't spiral
-    }, 5);
+    this._running = true;
+    this._lastNs = process.hrtime.bigint();
+    this._acc = 0;
+    if (opts && opts.managed) return;
+    this.timer = setInterval(() => this.stepClock(process.hrtime.bigint()), 5);
     if (this.timer.unref) this.timer.unref();
+  }
+
+  stepClock(nowNs) {
+    if (!this._running || this.finished) return;
+    try {
+      if (this.paused) { this._lastNs = nowNs; this._acc = 0; return; }
+      this._acc += Number(nowNs - this._lastNs) / 1e9;
+      this._lastNs = nowNs;
+      let n = 0;
+      const slotSec = this._slotSec;
+      while (this._acc >= slotSec && n < 8 && !this.finished) {
+        this.runSlot();
+        this._acc -= slotSec;
+        n++;
+      }
+      if (n >= 8) this._acc = 0; // server hiccup: don't spiral
+    } catch (err) {
+      console.error('[SIM] Match simulation error:', err);
+      this.stop();
+      if (this.opts.onError) this.opts.onError(err);
+    }
   }
 
   setPaused(p) {
@@ -155,6 +180,7 @@ class ServerMatch {
 
   stop() {
     this.finished = true;
+    this._running = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }
@@ -410,11 +436,19 @@ class ServerMatch {
     if (this.events.length) base.ev = this.events.splice(0);
     if (this.slot % 30 === 0 || this.state === 'ended') base.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
     const shared = JSON.stringify(base).slice(0, -1); // reuse common part, append per-player fields
-    for (const [userId, h] of this.humans) {
-      this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"me":${JSON.stringify(serializeCar(h.car))}}`);
+    if (this.opts.onSnapshot) {
+      const to = [];
+      for (const [userId, h] of this.humans) {
+        to.push([userId, `${shared},"a":${h.lastSeq},"me":${JSON.stringify(serializeCar(h.car))}}`]);
+      }
+      this.opts.onSnapshot(to, shared + '}');
+    } else {
+      for (const [userId, h] of this.humans) {
+        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"me":${JSON.stringify(serializeCar(h.car))}}`);
+      }
+      if (this.opts.spectators) this.opts.spectators(shared + '}');
     }
-    if (this.opts.spectators) this.opts.spectators(shared + '}');
   }
 }
 
-module.exports = { ServerMatch, serializeCar, unpackControls };
+module.exports = { ServerMatch, serializeCar, unpackControls, isValidPackedControls };

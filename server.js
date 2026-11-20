@@ -5,14 +5,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { loadSim } = require('./sim');
-const { ServerMatch } = require('./match');
+const { SimPool } = require('./sim-pool');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const INDEX_FILE = path.join(__dirname, 'index.html');
-loadSim(INDEX_FILE); // extract + smoke-test the game physics for server-side simulation
+const simPool = new SimPool();
 const REGION = process.env.FLY_REGION || 'local';
 const ALLOWED_URL_RAW = (process.env.URL || '').trim();
 let ALLOWED_ORIGIN = '';
@@ -725,6 +724,7 @@ function ensureStats(user) {
 }
 
 function stopSoloMatch(ws) {
+  ws.soloGen = (ws.soloGen || 0) + 1;
   if (ws.soloSim) {
     try { ws.soloSim.stop(); } catch (_) {}
     ws.soloSim = null;
@@ -946,12 +946,15 @@ const server = http.createServer(async (req, res) => {
 
   // Health check for Fly.io (always allowed for internal machine health checks)
   if (req.method === 'GET' && pathname === '/api/health') {
+    const sim = simPool.getStats();
     return sendJson(res, 200, {
       ok: true,
       region: REGION,
       uptime: Math.floor(process.uptime()),
       online: clientsByUserId.size,
-      lobbies: lobbies.size
+      lobbies: lobbies.size,
+      workers: sim.readyWorkers,
+      activeMatches: sim.activeMatches
     });
   }
 
@@ -1201,6 +1204,7 @@ wss.on('connection', (ws, req) => {
   ws.soloSim = null;
   ws.soloMatch = null;
   ws.soloAc = null;
+  ws.soloGen = 0;
   ws.msgCount = 0;
   ws.msgWindowStart = Date.now();
   ws.chatTimes = [];
@@ -1472,45 +1476,69 @@ wss.on('connection', (ws, req) => {
             ip: pws && pws.ip ? pws.ip : 'unknown:' + p.userId
           };
         });
-        lb.match = { startedAt: now, finished: false, participants };
+        const matchObj = { startedAt: now, finished: false, participants };
+        lb.match = matchObj;
         const settings = lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : Object.assign({}, lb.settings);
         const snap = lobbySnapshot(lb);
-        let sim;
-        try {
-          sim = new ServerMatch({
-            settings,
-            players: snap.players.filter(p => p.team === 0 || p.team === 1).map(p => ({ userId: p.id, username: p.username, team: p.team, car: p.car })),
-            broadcast: m => broadcastLobby(lb, m),
-            sendRaw: (userId, raw) => {
-              const pws = clientsByUserId.get(userId);
-              if (pws && pws.readyState === 1 && pws.lobbyCode === lb.code) pws.send(raw);
-            },
-            spectators: raw => {
-              for (const p of lb.players.values()) {
-                if (p.team === 0 || p.team === 1) continue;
-                const pws = clientsByUserId.get(p.userId);
-                if (pws && pws.readyState === 1) pws.send(raw);
-              }
-            },
-            onGoal: info => broadcastLobby(lb, Object.assign({ type: 'match_goal_ack' }, info)),
-            onEnd: ({ score, stats }) => finalizeMultiplayerMatch(lb, score, stats)
-          });
-        } catch (err) {
-          console.error('[SIM] Failed to start match:', err);
-          lb.status = 'waiting'; lb.match = null;
-          return send(ws, { type: 'error', text: 'Server could not start the match.' });
-        }
-        lb.sim = sim;
-        broadcastLobby(lb, {
-          type: 'match_start',
-          lobby: snap,
-          hostId: lb.hostId,
+        const matchPlayers = snap.players
+          .filter(p => p.team === 0 || p.team === 1)
+          .map(p => ({ userId: p.id, username: p.username, team: p.team, car: p.car }));
+        simPool.createMatch({
           settings,
-          players: snap.players,
-          cars: sim.carInfo,
-          serverSim: true
+          players: matchPlayers,
+          broadcast: m => broadcastLobby(lb, m),
+          sendRaw: (userId, raw) => {
+            const pws = clientsByUserId.get(userId);
+            if (pws && pws.readyState === 1 && pws.lobbyCode === lb.code) pws.send(raw);
+          },
+          spectators: raw => {
+            for (const p of lb.players.values()) {
+              if (p.team === 0 || p.team === 1) continue;
+              const pws = clientsByUserId.get(p.userId);
+              if (pws && pws.readyState === 1) pws.send(raw);
+            }
+          },
+          onGoal: info => broadcastLobby(lb, Object.assign({ type: 'match_goal_ack' }, info)),
+          onEnd: ({ score, stats }) => finalizeMultiplayerMatch(lb, score, stats),
+          onError: err => {
+            console.error('[SIM] Match aborted:', err.message);
+            if (lb.match !== matchObj || matchObj.finished) return;
+            matchObj.finished = true;
+            lb.status = 'waiting';
+            lb.sim = null;
+            for (const p of lb.players.values()) p.ready = (p.userId === lb.hostId);
+            broadcastLobby(lb, { type: 'error', text: 'Match ended unexpectedly due to a simulation error.' });
+            broadcastLobby(lb, { type: 'lobby_update', lobby: lobbySnapshot(lb) });
+          }
+        }).then(sim => {
+          if (!lobbies.has(lb.code) || lb.status !== 'in_match' || lb.match !== matchObj || matchObj.finished) {
+            sim.stop();
+            return;
+          }
+          lb.sim = sim;
+          for (const mp of matchPlayers) {
+            if (!lb.players.has(mp.userId)) sim.removePlayer(mp.userId);
+          }
+          const curSnap = lobbySnapshot(lb);
+          broadcastLobby(lb, {
+            type: 'match_start',
+            lobby: curSnap,
+            hostId: lb.hostId,
+            settings,
+            players: curSnap.players,
+            cars: sim.carInfo,
+            serverSim: true
+          });
+          sim.start();
+        }).catch(err => {
+          console.error('[SIM] Failed to start match:', err);
+          if (lb.match === matchObj && !matchObj.finished) {
+            lb.status = 'waiting';
+            lb.match = null;
+            lb.sim = null;
+            broadcastLobby(lb, { type: 'error', text: 'Server could not start the match.' });
+          }
         });
-        sim.start();
         break;
       }
 
@@ -1527,6 +1555,7 @@ wss.on('connection', (ws, req) => {
           leaveLobby(ws);
         }
         stopSoloMatch(ws);
+        const gen = ws.soloGen;
         const raw = (msg.cfg && typeof msg.cfg === 'object') ? msg.cfg : {};
         const tournament = !!raw.tournament;
         const teamSize = Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4 ? raw.teamSize : 2;
@@ -1553,36 +1582,46 @@ wss.on('connection', (ws, req) => {
           mutator: 'normal'
         };
         const teammateDiff = tournament ? Math.min(3, difficulty + 1) : difficulty;
-        let sim;
-        try {
-          sim = new ServerMatch({
-            settings,
-            teammateDiff,
-            players: [{ userId: ws.userId, username: ws.username, team: playerTeam, car: me ? me.car : sanitizeCar(null) }],
-            broadcast: m => send(ws, m),
-            sendRaw: (userId, rawStr) => {
-              if (userId === ws.userId && ws.readyState === 1) ws.send(rawStr);
-            },
-            onGoal: info => send(ws, Object.assign({ type: 'match_goal_ack' }, info)),
-            onEnd: ({ score, stats }) => finalizeSoloMatch(ws, score, stats)
-          });
-        } catch (err) {
-          console.error('[SIM] Failed to start solo match:', err);
-          return send(ws, { type: 'error', text: 'Server could not start the match.' });
-        }
-        ws.soloSim = sim;
-        ws.soloAc = makeAcRec(now);
-        ws.soloMatch = { startedAt: now, duration, difficulty, tournament, playerTeam, finished: false };
-        send(ws, {
-          type: 'solo_match_start',
+        simPool.createMatch({
           settings,
-          cars: sim.carInfo,
-          teamNames,
-          tournament,
-          solo: true,
-          serverSim: true
+          teammateDiff,
+          players: [{ userId: ws.userId, username: ws.username, team: playerTeam, car: me ? me.car : sanitizeCar(null) }],
+          broadcast: m => send(ws, m),
+          sendRaw: (userId, rawStr) => {
+            if (userId === ws.userId && ws.readyState === 1) ws.send(rawStr);
+          },
+          onGoal: info => send(ws, Object.assign({ type: 'match_goal_ack' }, info)),
+          onEnd: ({ score, stats }) => finalizeSoloMatch(ws, score, stats),
+          onError: err => {
+            console.error('[SIM] Solo match aborted:', err.message);
+            if (ws.soloGen !== gen) return;
+            stopSoloMatch(ws);
+            send(ws, { type: 'error', text: 'Match ended unexpectedly due to a simulation error.' });
+          }
+        }).then(sim => {
+          if (ws.soloGen !== gen || ws.readyState !== 1) {
+            sim.stop();
+            return;
+          }
+          ws.soloSim = sim;
+          ws.soloAc = makeAcRec(Date.now());
+          ws.soloMatch = { startedAt: Date.now(), duration, difficulty, tournament, playerTeam, finished: false };
+          send(ws, {
+            type: 'solo_match_start',
+            settings,
+            cars: sim.carInfo,
+            teamNames,
+            tournament,
+            solo: true,
+            serverSim: true
+          });
+          sim.start();
+        }).catch(err => {
+          console.error('[SIM] Failed to start solo match:', err);
+          if (ws.soloGen === gen && ws.readyState === 1) {
+            send(ws, { type: 'error', text: 'Server could not start the match.' });
+          }
         });
-        sim.start();
         break;
       }
       case 'solo_leave': {
@@ -1641,14 +1680,22 @@ setInterval(() => {
   }
 }, 25000).unref();
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[HYPERSTRIKE] Server running on :${PORT} (region=${REGION}, data=${DATA_DIR})`);
+simPool.init(INDEX_FILE).then(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[HYPERSTRIKE] Server running on :${PORT} (region=${REGION}, data=${DATA_DIR}, simWorkers=${simPool.workerCount})`);
+  });
+}).catch((err) => {
+  console.error('[HYPERSTRIKE] Failed to initialize simulation worker pool:', err);
+  process.exit(1);
 });
 
+let shuttingDown = false;
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('[HYPERSTRIKE] Shutting down, flushing DB...');
   flushDb();
-  process.exit(0);
+  simPool.shutdown().finally(() => process.exit(0));
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
