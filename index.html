@@ -54,13 +54,13 @@ button{font-family:inherit;color:inherit}
 /* ============ LOADING ============ */
 #loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4vh;z-index:100;transition:opacity .8s ease,transform .8s ease;overflow:hidden;
   background:radial-gradient(ellipse 80% 60% at 50% 45%,#13234f 0%,#070c1e 55%,#020309 100%)}
-#loading::before{content:"";position:absolute;inset:-50% -10% 0;background:
-  linear-gradient(rgba(62,242,255,.16) 1px,transparent 1px) 0 0/60px 60px,
-  linear-gradient(90deg,rgba(62,242,255,.16) 1px,transparent 1px) 0 0/60px 60px;
-  transform:perspective(500px) rotateX(60deg);transform-origin:50% 100%;top:30%;animation:gridRun 2.4s linear infinite;
-  -webkit-mask-image:linear-gradient(0deg,#000 10%,transparent 85%);mask-image:linear-gradient(0deg,#000 10%,transparent 85%)}
+#loading::before{content:"";position:absolute;left:-60%;right:-60%;top:22%;bottom:-60px;background:
+  linear-gradient(180deg,transparent 0,rgba(62,242,255,.18) 1px,rgba(62,242,255,.18) 2px,transparent 3px) 0 0/60px 60px,
+  linear-gradient(90deg,transparent 0,rgba(62,242,255,.18) 1px,rgba(62,242,255,.18) 2px,transparent 3px) 0 0/60px 60px;
+  transform:perspective(500px) rotateX(60deg) translate3d(0,0,0);transform-origin:50% 100%;will-change:transform;animation:gridRun 2.4s linear infinite;
+  -webkit-mask-image:linear-gradient(0deg,#000 8%,transparent 82%);mask-image:linear-gradient(0deg,#000 8%,transparent 82%)}
 #loading::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 120%,rgba(255,63,216,.22),transparent 55%);pointer-events:none}
-@keyframes gridRun{to{background-position:0 60px,0 0}}
+@keyframes gridRun{from{transform:perspective(500px) rotateX(60deg) translate3d(0,-60px,0)}to{transform:perspective(500px) rotateX(60deg) translate3d(0,0,0)}}
 #loading>*{position:relative;z-index:1}
 #loading.fade{opacity:0;pointer-events:none;transform:scale(1.04)}
 #loading .logo{animation:logoIn 1.1s cubic-bezier(.2,.9,.2,1) both}
@@ -6639,11 +6639,13 @@ class World {
           if (this.onLocalBallHit && c.isPlayer) this.onLocalBallHit(hit);
         }
       }
-      for (let i = 0; i < this.cars.length; i++) for (let j = i + 1; j < this.cars.length; j++) {
-        if (this.cars[i].isRemote && this.cars[j].isRemote) continue;
-        const r = collideCars(this.cars[i], this.cars[j], this);
-        if (r && r.type === 'demo') this.demolish(r.victim, r.attacker, r.overdrive);
-        else if (r && r.type === 'bump') { this.events.push({ type: 'bump', a: r.attacker, b: r.victim, strength: r.strength }); if (P && ball.stuckTo === r.victim && r.attacker.team !== r.victim.team) P.release(false); }
+      if (!this.isOnlineClient) {
+        for (let i = 0; i < this.cars.length; i++) for (let j = i + 1; j < this.cars.length; j++) {
+          if (this.cars[i].isRemote && this.cars[j].isRemote) continue;
+          const r = collideCars(this.cars[i], this.cars[j], this);
+          if (r && r.type === 'demo') this.demolish(r.victim, r.attacker, r.overdrive);
+          else if (r && r.type === 'bump') { this.events.push({ type: 'bump', a: r.attacker, b: r.victim, strength: r.strength }); if (P && ball.stuckTo === r.victim && r.attacker.team !== r.victim.team) P.release(false); }
+        }
       }
       for (const c of this.cars) if (!c.demolished) for (const p of this.pads) {
         if (!p.active || c.boost >= 100) continue;
@@ -7457,10 +7459,10 @@ class OnlineMatchMode extends MatchMode {
     this.inSeq = 0; this.inTick = 0; this.inHist = []; this.curInput = null;
     this.rtt = 0.04; this.qAvg = 1.0; this.clockRate = 1.0;
     this.localBallHitSeq = 0; this.localBallHitAt = 0;
-    this.remoteTime = 0; this.latestServerTime = 0; this.hasServerTime = false;
-    this.lastSnapAt = 0; this.snapJitter = 0.008; this.interpDelay = 0.036;
+    this.remoteTime = 0; this.srvOffset = 0; this.hasServerTime = false;
+    this.lastSnapAt = 0; this.snapJitter = 0.008; this.interpDelay = 0.042;
     this.pendingEvents = []; this.kickCars = null;
-    this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT();
+    this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT(); this._tmpQ3 = new QT();
     w.isOnlineClient = true;
     w.onRemoteStep = (dt) => this.stepRemoteCars(dt);
     w.onLocalBallHit = () => { this.localBallHitSeq = this.inSeq; this.localBallHitAt = performance.now(); };
@@ -7536,10 +7538,12 @@ class OnlineMatchMode extends MatchMode {
   stepRemoteCars(dt) {
     const w = this.world;
     if (!this.hasServerTime) return;
-    const targetT = this.latestServerTime - this.interpDelay;
+    // Track continuous server clock (never stair-stepped packet arrival time) so remote cars never speed-pulse
+    const nowSec = performance.now() * 0.001;
+    const targetT = nowSec + this.srvOffset - this.interpDelay;
     const drift = targetT - this.remoteTime;
     if (Math.abs(drift) > 0.25) this.remoteTime = targetT;
-    else this.remoteTime += dt + clamp(drift * 6, -0.3, 0.3) * dt;
+    else this.remoteTime += dt + clamp(drift * 4, -0.15, 0.15) * dt;
     const rt = this.remoteTime;
     for (const c of w.cars) {
       if (!c.isRemote || !c.snapBuf || !c.snapBuf.length) continue;
@@ -7591,9 +7595,16 @@ class OnlineMatchMode extends MatchMode {
         c.supersonic = s.supersonic; c.sliding = s.sliding; c.onGround = s.onGround; c.item = s.item;
       }
       c.basis.fromQuat(c.quat);
-      // Spin remote car wheels visually based on velocity
+      c.contacts = c.onGround ? 4 : 0;
+      c.airTime = c.onGround ? 0 : c.airTime + dt;
+      // Spin & steer remote car wheels visually based on motion
       const vf = c.vel.dot(c.basis.f);
-      for (const wh of c.wheels) wh.spin += (vf / wh.r) * dt;
+      const yawRate = c.angVel.dot(c.basis.u);
+      const targetSteer = clamp(yawRate * 0.14, -0.45, 0.45);
+      for (const wh of c.wheels) {
+        wh.spin += (vf / wh.r) * dt;
+        if (wh.front) wh.steer = damp(wh.steer, targetSteer, 14, dt);
+      }
     }
   }
   postStep() { }
@@ -7648,26 +7659,32 @@ class OnlineMatchMode extends MatchMode {
         }
       }
     }
-    // Gentle clock-drift pacing to keep server input queue near 1 slot (no starvation, no buffer bloat)
+    // Gentle clock-drift pacing to keep server input queue near 1 slot (measured before shift)
     if (typeof m.q === 'number') {
-      this.qAvg = this.qAvg * 0.85 + m.q * 0.15;
-      if (this.qAvg < 0.55) this.clockRate = 1.015;
-      else if (this.qAvg > 1.85) this.clockRate = 0.985;
+      this.qAvg = this.qAvg * 0.9 + m.q * 0.1;
+      if (this.qAvg < 0.8) this.clockRate = 1.01;
+      else if (this.qAvg > 1.75) this.clockRate = 0.99;
       else this.clockRate = 1.0;
     }
-    // Track server clock & arrival jitter for remote car interpolation buffer
+    // Maintain a steady, jitter-free estimate of server time (srvOffset = serverTime - clientNow)
+    const nowSec = now * 0.001;
     const srvT = (typeof m.k === 'number' ? m.k : 0) * PHYS.dt;
     if (this.lastSnapAt > 0) {
       const dtArr = (now - this.lastSnapAt) * 0.001;
-      const expected = 1 / 60;
-      const jit = Math.abs(dtArr - expected);
-      this.snapJitter = this.snapJitter * 0.9 + Math.min(jit, 0.06) * 0.1;
-      this.interpDelay = clamp(0.032 + this.snapJitter * 1.8, 0.032, 0.095);
+      const jit = Math.abs(dtArr - 1 / 60);
+      this.snapJitter = this.snapJitter * 0.92 + Math.min(jit, 0.06) * 0.08;
+      this.interpDelay = clamp(0.036 + this.snapJitter * 2.0, 0.036, 0.11);
     }
     this.lastSnapAt = now;
-    if (!this.hasServerTime || srvT > this.latestServerTime) {
-      this.latestServerTime = srvT;
-      if (!this.hasServerTime) { this.remoteTime = srvT - this.interpDelay; this.hasServerTime = true; }
+    const rawOff = srvT - nowSec;
+    if (!this.hasServerTime || Math.abs(rawOff - this.srvOffset) > 0.25) {
+      this.srvOffset = rawOff;
+      this.remoteTime = srvT - this.interpDelay;
+      this.hasServerTime = true;
+    } else {
+      // Gently track clock drift; respond slightly faster to fresher (lower-latency) packets
+      const alphaOff = rawOff > this.srvOffset ? 0.08 : 0.02;
+      this.srvOffset += (rawOff - this.srvOffset) * alphaOff;
     }
     // Sync server play/frozen state on kickoff transition
     if (m.st === 'play' && this.state === 'countdown') { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
@@ -7697,7 +7714,10 @@ class OnlineMatchMode extends MatchMode {
       nb.frozen = !!b[13];
       nb.gScale = w.ball.gScale;
       if (!nb.frozen && !w.ball.stuckTo && !(w.ball.iceT > 0)) {
-        let t = clamp(this.rtt * 0.5, 0.004, 0.065);
+        // Extrapolate from exact server snapshot time to steady estimated current server time + half RTT,
+        // so packet arrival jitter never pulls the ball forward or backward
+        const halfRtt = clamp(this.rtt * 0.5, 0.004, 0.065);
+        let t = clamp((nowSec + this.srvOffset + halfRtt) - srvT, 0, 0.12);
         while (t > 1e-4) {
           const s = Math.min(PHYS.dt, t);
           ballIntegrate(nb, s, w.shape, false);
@@ -7710,23 +7730,31 @@ class OnlineMatchMode extends MatchMode {
       if (!holdLocalHit) {
         this.localBallHitSeq = 0;
         const wb = w.ball;
-        const oldPos = this._tmpV.copy(wb.pos);
-        const oldQuat = this._tmpQ.copy(wb.quat);
-        wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
-        const err = oldPos.distanceTo(wb.pos);
-        if (wb.frozen || wb.stuckTo || err >= 4.0) {
+        const err = wb.pos.distanceTo(nb.pos);
+        const velErr = wb.vel.distanceTo(nb.vel);
+        if (wb.frozen || nb.frozen || wb.stuckTo || err >= 4.0) {
+          wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
           wb.prevPos.copy(wb.pos); wb.prevQuat.copy(wb.quat);
           wb.visErrPos.set(0, 0, 0); wb.visErrQuat.identity();
-        } else if (err > 1e-4) {
+        } else if (err > 0.04 || velErr > 0.35) {
+          const oldPos = this._tmpV.copy(wb.pos);
+          const oldQuat = this._tmpQ.copy(wb.quat);
+          wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
           const dPos = this._tmpV2.copy(wb.pos).sub(oldPos);
           wb.prevPos.add(dPos);
           wb.visErrPos.sub(dPos);
           if (wb.visErrPos.lengthSq() > 16) wb.visErrPos.setLength(4);
-          // Quaternion visual error: visErrQuat' * newQuat = oldVisErrQuat * oldQuat => visErrQuat' = oldVisErrQuat * (oldQuat * inv(newQuat))
-          const invNew = this._tmpQ2.copy(wb.quat).invert();
-          const dQ = oldQuat.multiply(invNew);
+          // Shift prevQuat by (newQuat * inv(oldQuat)) to preserve smooth 120Hz spin interpolation
+          const invOld = this._tmpQ2.copy(oldQuat).invert();
+          const shiftQ = this._tmpQ3.copy(wb.quat).multiply(invOld);
+          wb.prevQuat.premultiply(shiftQ).normalize();
+          const dQ = oldQuat.multiply(this._tmpQ2.copy(wb.quat).invert());
           wb.visErrQuat.multiply(dQ).normalize();
-          wb.prevQuat.copy(wb.quat);
+        } else {
+          // Tiny drift during free flight: gently pull velocity/pos without touching prevPos/prevQuat
+          wb.pos.lerp(nb.pos, 0.12);
+          wb.vel.lerp(nb.vel, 0.2);
+          wb.angVel.lerp(nb.angVel, 0.2);
         }
       }
     }
@@ -7796,18 +7824,21 @@ class OnlineMatchMode extends MatchMode {
     Object.assign(car.controls, savedControls);
     // Keep physics state 100% pure; absorb small discrepancies into visual-only error offset
     const err = oldPos.distanceTo(car.pos);
+    const qDot = Math.abs(oldQuat.dot(car.quat));
     if (err >= 3.0) {
       car.prevPos.copy(car.pos); car.prevQuat.copy(car.quat);
       car.visErrPos.set(0, 0, 0); car.visErrQuat.identity();
-    } else if (err > 1e-4) {
+    } else if (err > 0.005 || qDot < 0.9999) {
       const dPos = this._tmpV2.copy(car.pos).sub(oldPos);
       car.prevPos.add(dPos);
       car.visErrPos.sub(dPos);
       if (car.visErrPos.lengthSq() > 9) car.visErrPos.setLength(3);
-      const invNew = this._tmpQ2.copy(car.quat).invert();
-      const dQ = oldQuat.multiply(invNew);
+      // Shift prevQuat by (newQuat * inv(oldQuat)) so 120Hz rotation interpolation stays intact
+      const invOld = this._tmpQ2.copy(oldQuat).invert();
+      const shiftQ = this._tmpQ3.copy(car.quat).multiply(invOld);
+      car.prevQuat.premultiply(shiftQ).normalize();
+      const dQ = oldQuat.multiply(this._tmpQ2.copy(car.quat).invert());
       car.visErrQuat.multiply(dQ).normalize();
-      car.prevQuat.copy(car.quat);
     }
   }
   applyPowers(pw) {

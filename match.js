@@ -102,7 +102,7 @@ class ServerMatch {
         const car = this.addCar(team, p.username.toUpperCase(), body);
         car.netUserId = p.userId;
         car.explosion = p.car && Number.isInteger(p.car.explosion) ? p.car.explosion : 0;
-        this.humans.set(p.userId, { car, queue: [], lastSeq: 0, lastQueuedSeq: 0, idleSlots: 0, username: p.username });
+        this.humans.set(p.userId, { car, queue: [], lastSeq: 0, lastQueuedSeq: 0, idleSlots: 0, qDepth: 1, username: p.username });
         this.carInfo.push({ userId: p.userId, botId: null, team, name: car.name, car: p.car || null });
       }
       if (s.botFill) {
@@ -219,6 +219,7 @@ class ServerMatch {
   // ---- main loop ----
   runSlot() {
     for (const h of this.humans.values()) {
+      h.qDepth = h.queue.length;
       const inp = h.queue.shift();
       if (inp) { unpackControls(inp.c, h.car.controls); h.lastSeq = inp.seq; h.idleSlots = 0; }
       else if (++h.idleSlots > 30) clearControls(h.car.controls);
@@ -452,12 +453,12 @@ class ServerMatch {
     if (this.opts.onSnapshot) {
       const to = [];
       for (const [userId, h] of this.humans) {
-        to.push([userId, `${shared},"a":${h.lastSeq},"q":${h.queue.length},"me":${JSON.stringify(serializeCar(h.car))}}`]);
+        to.push([userId, `${shared},"a":${h.lastSeq},"q":${h.qDepth},"me":${JSON.stringify(serializeCar(h.car))}}`]);
       }
       this.opts.onSnapshot(to, shared + '}');
     } else {
       for (const [userId, h] of this.humans) {
-        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"q":${h.queue.length},"me":${JSON.stringify(serializeCar(h.car))}}`);
+        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"q":${h.qDepth},"me":${JSON.stringify(serializeCar(h.car))}}`);
       }
       if (this.opts.spectators) this.opts.spectators(shared + '}');
     }
