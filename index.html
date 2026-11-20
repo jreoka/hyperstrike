@@ -7624,11 +7624,13 @@ const ARENA_ART = [
   'radial-gradient(circle at 30% 28%,#fffbe0 0%,rgba(255,235,170,.65) 18%,transparent 42%),linear-gradient(180deg,#1c6ad4 0%,#cfe8ff 58%,#e8eef6 59%,#c8d8ec)',
   'radial-gradient(circle at 50% 48%,#ffea40 0%,#ff4a48 22%,#b01070 36%,transparent 37%),repeating-linear-gradient(0deg,transparent 0 6px,rgba(255,54,184,.28) 6px 7px),linear-gradient(180deg,#050114 0%,#7a1058 56%,#120526 57%,#080212)'
 ];
+const RANDOM_ARENA_ART = 'radial-gradient(circle at 30% 30%,rgba(62,242,255,.45),transparent 40%),radial-gradient(circle at 75% 70%,rgba(255,63,216,.45),transparent 42%),repeating-linear-gradient(45deg,transparent 0 12px,rgba(255,255,255,.06) 12px 13px),linear-gradient(160deg,#141a34,#05060f)';
+const resolveArena = a => (Number.isInteger(a) && ARENAS[a]) ? a : Math.floor(Math.random() * ARENAS.length);
 
 class UIManager {
   constructor(game) {
     this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: 0, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
-    if (!ARENAS[this.setup.arena]) this.setup.arena = 0; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
+    if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = 0; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
     this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
@@ -7750,7 +7752,7 @@ class UIManager {
     const gw = sh.gw * k, gz = sh.L * k, gd = sh.gd * k * 0.6;
     return `<svg class="shp" viewBox="0 0 64 64"><path d="${d}" fill="rgba(255,255,255,.12)" stroke="#fff" stroke-width="2"/><rect x="${32 - gw}" y="${32 - gz - gd}" width="${gw * 2}" height="${gd}" fill="#ff8a1f"/><rect x="${32 - gw}" y="${32 + gz}" width="${gw * 2}" height="${gd}" fill="#2f8fff"/></svg>`;
   }
-  arenaCards(key = 'arena') { return '<div class="cards">' + ARENAS.map((a, i) => `<button class="card ${this.setup[key] === i ? 'on' : ''}" data-set="${key}" data-val="${i}"><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`).join('') + '</div>'; }
+  arenaCards(key = 'arena') { return '<div class="cards">' + `<button class="card ${this.setup[key] === -1 ? 'on' : ''}" data-set="${key}" data-val="-1"><div class="art" style="background:${RANDOM_ARENA_ART}"></div><svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg><div class="lbl"><small>SURPRISE ME</small>RANDOM</div></button>` + ARENAS.map((a, i) => `<button class="card ${this.setup[key] === i ? 'on' : ''}" data-set="${key}" data-val="${i}"><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`).join('') + '</div>'; }
   layoutSeg() { return this.seg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()])); }
   powerGrid() { return '<div class="pgrid">' + POWERS.map(pw => `<div title="${pw.desc}"><svg viewBox="0 0 24 24" style="color:${pw.color}">${pw.icon}</svg>${pw.name}</div>`).join('') + '</div>'; }
   renderPanel(refocusSel = null) {
@@ -7765,7 +7767,7 @@ class UIManager {
           ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
           <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}
           <div class="sect">Arena</div>${this.arenaCards()}
-          <div class="desc">${ARENAS[s.arena].desc}</div>
+          <div class="desc">${s.arena < 0 ? 'A random arena is picked each time the match starts.' : ARENAS[s.arena].desc}</div>
           <div class="sect">Layout</div>${this.layoutSeg()}
           <div class="desc">${s.layout === 'default' ? 'Plays on the shape this arena was built with.' : LAYOUTS.find(l => l.id === s.layout).desc + ' The arena theme is rebuilt around this layout.'}</div>
           <div class="sect">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
@@ -7801,10 +7803,10 @@ class UIManager {
     P.innerHTML = h; P.style.animation = 'none'; void P.offsetWidth; P.style.animation = '';
     P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const sc = P.scrollTop; const key = b.dataset.set, raw = b.dataset.val; this.setup[key] = JSON.parse(raw); Settings.data.lastSetup = this.setup; Settings.save(); this.renderPanel(`[data-set="${key}"][data-val='${raw}']`); P.scrollTop = sc; if (key === 'arena' || key === 'layout') this.g.previewArena(this.setup.arena); });
     const on = (id, fn) => { const e = $(id); if (e) e.onclick = () => { this.g.audio.ui('click'); fn(); }; };
-    on('goMatch', () => this.g.startMatch({ teamSize: s.teamSize, side: s.side, arena: s.arena, difficulty: s.difficulty, duration: s.duration, mode: s.mode, interval: s.interval, layout: s.layout }));
+    on('goMatch', () => this.g.startMatch({ teamSize: s.teamSize, side: s.side, arena: resolveArena(s.arena), difficulty: s.difficulty, duration: s.duration, mode: s.mode, interval: s.interval, layout: s.layout }));
     on('goTourney', () => this.g.startTournament({ teamSize: s.tsize, difficulty: s.tdiff, mode: s.tmode }));
-    on('goFree', () => this.g.startFreePlay({ arena: s.arena, unlimitedBoost: s.unlimited, layout: s.layout }));
-    P.querySelectorAll('[data-drill]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.startTraining({ drill: +b.dataset.drill, arena: s.arena, layout: s.layout }); });
+    on('goFree', () => this.g.startFreePlay({ arena: resolveArena(s.arena), unlimitedBoost: s.unlimited, layout: s.layout }));
+    P.querySelectorAll('[data-drill]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.startTraining({ drill: +b.dataset.drill, arena: resolveArena(s.arena), layout: s.layout }); });
     if (this.menuScreen === 'multiplayer') this.bindMultiplayer();
     if (this.menuScreen === 'ranks') this.bindRanks();
     if (this.menuScreen === 'garage') this.bindGarage();
@@ -7857,7 +7859,7 @@ class UIManager {
             <div>
               <b>${this.esc(l.name)}</b> <span class="mp-pill">${this.esc(l.code)}</span>
               ${l.ranked ? '<span class="mp-pill ranked">RANKED</span>' : '<span class="mp-pill">CASUAL</span>'}
-              <div style="font-size:11px;color:var(--ink2);margin-top:3px">Host: ${this.esc(l.host)} · ${l.teamSize}v${l.teamSize} · ${l.mode.toUpperCase()} · ${ARENAS[l.arena] ? ARENAS[l.arena].name : 'Arena'} · ${l.players}/${l.maxPlayers} players</div>
+              <div style="font-size:11px;color:var(--ink2);margin-top:3px">Host: ${this.esc(l.host)} · ${l.teamSize}v${l.teamSize} · ${l.mode.toUpperCase()} · ${ARENAS[l.arena] ? ARENAS[l.arena].name : l.arena === -1 ? 'Random Arena' : 'Arena'} · ${l.players}/${l.maxPlayers} players</div>
             </div>
             <button class="mp-btn" data-joinlb="${this.esc(l.code)}" ${l.status === 'in_match' ? 'disabled' : ''}>${l.status === 'in_match' ? 'IN GAME' : 'JOIN'}</button>
           </div>`).join('');
@@ -7917,7 +7919,7 @@ class UIManager {
       <div class="sect">Team Size</div>${lseg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [4, '4v4']])}
       <div class="sect">Mode</div>${lseg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem']])}
       <div class="sect">Arena</div>
-      <div class="seg">${ARENAS.map((a, i) => `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
+      <div class="seg"><button class="rand ${S.arena === -1 ? 'on' : ''}" ${amHost ? 'data-lset="arena" data-lval="-1"' : 'disabled'}><span>Random</span></button>${ARENAS.map((a, i) => `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
       <div class="sect">Layout</div>${lseg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()]))}
       <div class="sect">Match Length</div>${lseg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
       <div class="sect">Bot Fill & Difficulty</div>
@@ -8614,7 +8616,7 @@ class GameEngine {
     this.ballVisual = new BallVisual(this.renderer.scene);
     this.ui.progress(0.3, 'Generating arena'); await tick();
     const setup = this.ui.setup;
-    this.loadArena(ARENAS[setup.arena] || ARENAS[0]);
+    this.loadArena(ARENAS[resolveArena(setup.arena)]);
     this.ui.progress(0.6, 'Assembling vehicles'); await tick();
     this.startExhibition();
     this.ui.progress(0.8, 'Compiling shaders 0%'); await tick();
@@ -8684,7 +8686,8 @@ class GameEngine {
   setMode(mode) { if (this.mode) this.mode.end(); this.mode = mode; mode.start(); this.ui.setupHud(this); }
   startExhibition() {
     this.inGame = false; this.paused = false;
-    const def = ARENAS[this.ui.setup.arena] || ARENAS[0];
+    const a = this.ui.setup.arena;
+    const def = ARENAS[a] || (a === -1 && this.arenaDef) || ARENAS[resolveArena(a)];
     this.newWorld(def, { layout: this.ui.setup.layout || 'default' });
     const names = this.botNames(6); const size = 3;
     for (const team of [0, 1]) for (let i = 0; i < size; i++) this.addCar(team, { name: names[team * size + i], diff: 2 });
@@ -8836,7 +8839,7 @@ class GameEngine {
     } else { this.ui.hideOverlay(); this.input.lastCursorMove = performance.now() - 800; }
   }
   onMenuScreen(screen) { if (screen === 'garage') this.enterShowroom(); else this.exitShowroom(); }
-  previewArena(i) { if (this.inGame) return; this.ui.setup.arena = i; const key = ARENAS[i].id + '|' + (this.ui.setup.layout || 'default') + '|1'; if (this.arenaKey !== key) { this.startExhibition(); if (this.showroom) { this.exitShowroom(); this.enterShowroom(); } } }
+  previewArena(i) { if (this.inGame) return; this.ui.setup.arena = i; const key = (ARENAS[i] || this.arenaDef || ARENAS[0]).id + '|' + (this.ui.setup.layout || 'default') + '|1'; if (this.arenaKey !== key) { this.startExhibition(); if (this.showroom) { this.exitShowroom(); this.enterShowroom(); } } }
   enterShowroom() {
     if (this.showroom) return;
     const custom = Object.assign({}, Settings.data.car);
