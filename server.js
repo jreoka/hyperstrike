@@ -302,14 +302,14 @@ function sanitizeCar(car) {
     return Math.max(min, Math.min(max, Math.floor(n)));
   };
   return {
-    body: num(car.body, 0, 10, 0),
-    primary: num(car.primary, -1, 30, -1),
-    secondary: num(car.secondary, 0, 30, 0),
-    finish: num(car.finish, 0, 10, 0),
-    decal: num(car.decal, 0, 15, 0),
-    wheels: num(car.wheels, 0, 15, 0),
-    trail: num(car.trail, 0, 15, 0),
-    explosion: num(car.explosion, 0, 15, 0)
+    body: num(car.body, 0, 4, 0),
+    primary: num(car.primary, -1, 11, -1),
+    secondary: num(car.secondary, 0, 11, 0),
+    finish: num(car.finish, 0, 4, 0),
+    decal: num(car.decal, 0, 6, 0),
+    wheels: num(car.wheels, 0, 5, 0),
+    trail: num(car.trail, 0, 6, 0),
+    explosion: num(car.explosion, 0, 4, 0)
   };
 }
 
@@ -372,11 +372,10 @@ function randomCode(len, prefix = '') {
 // MULTIPLAYER STATE: CLIENTS, SQUADS, LOBBIES & ANTI-CHEAT
 // ============================================================
 const clientsByUserId = new Map(); // userId -> ws
-const soloMatches = new Map();     // userId -> { id, startedAt, duration, difficulty, tournament }
 const squads = new Map();          // squadCode -> Squad
 const lobbies = new Map();         // lobbyCode -> Lobby
 
-const VALID_LAYOUTS = new Set(['default', 'pillars', 'wide', 'octagon', 'narrow', 'dome', 'classic', 'bowl', 'hex']);
+const VALID_LAYOUTS = new Set(['default', 'standard', 'octagon', 'hexagon', 'round', 'capsule']);
 const VALID_MODES = new Set(['standard', 'mayhem']);
 const VALID_BOOST = new Set(['normal', 'unlimited', 'recharge']);
 const VALID_MUTATORS = new Set(['normal', 'lowgrav', 'fastball']);
@@ -411,7 +410,7 @@ function sanitizeLobbySettings(raw, current) {
   if (VALID_MODES.has(raw.mode)) s.mode = raw.mode;
   if ([6, 10, 15].includes(raw.interval)) s.interval = raw.interval;
   if (Number.isInteger(raw.arena) && raw.arena >= -1 && raw.arena <= 11) s.arena = raw.arena;
-  if (typeof raw.layout === 'string' && raw.layout.length <= 20) s.layout = raw.layout;
+  if (VALID_LAYOUTS.has(raw.layout)) s.layout = raw.layout;
   if ([0, 120, 180, 300].includes(raw.duration)) s.duration = raw.duration;
   if (typeof raw.botFill === 'boolean') s.botFill = raw.botFill;
   if (Number.isInteger(raw.botDiff) && raw.botDiff >= 0 && raw.botDiff <= 3) s.botDiff = raw.botDiff;
@@ -594,21 +593,19 @@ function pullSquadIntoLobby(leaderWs, lb, preferredTeam) {
 
 // ============================================================
 // SERVER-SIDE ANTI-CHEAT ENGINE
-// Multiplayer matches are fully simulated on the server (see match.js): clients
-// only send controls, so positions, speed, boost, goals, score and the clock
-// cannot be forged. This section handles what remains: malformed/flooded
-// input, solo match sessions, ranked eligibility, and escalating penalties
-// (warn -> kick -> timed matchmaking ban that doubles per offense).
+// ALL matches (multiplayer, solo & tournament) are 100% simulated on the server
+// (see match.js): clients only send controls, so positions, speed, boost,
+// power-ups, goals, score, clock, stats, XP and RP cannot be forged.
+// This section handles malformed/flooded input, ranked eligibility, abandon
+// penalties, and escalating bans (warn -> kick -> timed ban doubling per offense).
 // ============================================================
-function isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
-function isVec3(a) { return Array.isArray(a) && a.length === 3 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]); }
-function isQuat(a) { return Array.isArray(a) && a.length === 4 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]) && isFiniteNum(a[3]); }
-
 const AC_KICK_STRIKES = 12;
 const AC_WARN_STRIKES = 6;
+const AC_DECAY_MS = 15000;
 const AC_BASE_BAN_MS = 10 * 60 * 1000;
 const AC_MAX_BAN_MS = 7 * 24 * 60 * 60 * 1000;
 const AC_INPUT_MAX_PER_SEC = 90;    // client sends 60Hz
+const AC_INPUT_STRIKE_AT = 110;     // sustained flood above rate limit
 
 function acLog(user, reason) {
   console.warn(`[ANTI-CHEAT] ${user ? user.username : '?'}: ${reason}`);
@@ -638,15 +635,25 @@ function acPenalize(user, reason) {
   acLog(user, `KICK+BAN ${Math.round(ms / 60000)}m: ${reason}`);
 }
 
+function makeAcRec(now) {
+  return { strikes: 0, lastDecay: now, inPkt: { pktWindow: now, pktCount: 0 } };
+}
+
+function decayStrikes(rec, now) {
+  if (rec.strikes > 0 && now - rec.lastDecay >= AC_DECAY_MS) {
+    const steps = Math.floor((now - rec.lastDecay) / AC_DECAY_MS);
+    rec.strikes = Math.max(0, rec.strikes - steps);
+    rec.lastDecay += steps * AC_DECAY_MS;
+  } else if (rec.strikes === 0) {
+    rec.lastDecay = now;
+  }
+}
+
 function acRecord(lb, userId) {
   if (!lb.ac) lb.ac = new Map();
   let rec = lb.ac.get(userId);
   if (!rec) {
-    const now = Date.now();
-    rec = {
-      strikes: 0, lastDecay: now, prev: null, lastBoostGainT: 0, boostGains: 0,
-      pktWindow: now, pktCount: 0, demoStart: 0
-    };
+    rec = makeAcRec(Date.now());
     lb.ac.set(userId, rec);
   }
   return rec;
@@ -654,6 +661,7 @@ function acRecord(lb, userId) {
 
 function addStrike(lb, ws, reason, severity = 1) {
   const rec = acRecord(lb, ws.userId);
+  decayStrikes(rec, Date.now());
   rec.strikes += severity;
   if (rec.strikes >= AC_KICK_STRIKES) {
     const user = db.users[ws.usernameLower];
@@ -669,20 +677,37 @@ function addStrike(lb, ws, reason, severity = 1) {
   return true;
 }
 
+function addSoloStrike(ws, reason, severity = 1) {
+  if (!ws.soloAc) ws.soloAc = makeAcRec(Date.now());
+  const rec = ws.soloAc;
+  decayStrikes(rec, Date.now());
+  rec.strikes += severity;
+  if (rec.strikes >= AC_KICK_STRIKES) {
+    const user = db.users[ws.usernameLower];
+    acPenalize(user, reason);
+    stopSoloMatch(ws);
+    send(ws, { type: 'anticheat_kick', reason: `Anti-Cheat Kick: ${reason}` });
+    return false;
+  }
+  if (rec.strikes >= AC_WARN_STRIKES && rec.strikes - severity < AC_WARN_STRIKES) {
+    send(ws, { type: 'anticheat_warn', reason: `Suspicious activity detected (${reason}). Continued violations will kick you.` });
+  }
+  return true;
+}
+
 function packetRateOk(rec, now, maxPerSec) {
   if (now - rec.pktWindow >= 1000) { rec.pktWindow = now; rec.pktCount = 0; }
   rec.pktCount++;
   return rec.pktCount <= maxPerSec;
 }
 
-// Ranked points require a real opponent: at least one human on each side, and
-// no opposing humans connecting from the same IP (alt-account boosting).
-function rankedEligibility(lb) {
+// Ranked points require a real opponent: at least one human on each side at match start,
+// and no opposing humans connecting from the same IP (alt-account boosting).
+function rankedEligibilityFromParticipants(participants) {
   const teams = [[], []];
-  for (const p of lb.players.values()) {
+  for (const p of participants || []) {
     if (p.team !== 0 && p.team !== 1) continue;
-    const pws = clientsByUserId.get(p.userId);
-    teams[p.team].push(pws && pws.ip ? pws.ip : 'unknown:' + p.userId);
+    teams[p.team].push(p.ip || 'unknown:' + p.userId);
   }
   if (!teams[0].length || !teams[1].length) return { ok: false, reason: 'Ranked needs human players on both teams' };
   for (const ip of teams[0]) {
@@ -694,6 +719,77 @@ function rankedEligibility(lb) {
 // ============================================================
 // MATCH REWARDS (SERVER-AUTHORITATIVE XP + INFINITE LEVELS + RP)
 // ============================================================
+function ensureStats(user) {
+  if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
+  return user.stats;
+}
+
+function stopSoloMatch(ws) {
+  if (ws.soloSim) {
+    try { ws.soloSim.stop(); } catch (_) {}
+    ws.soloSim = null;
+  }
+  ws.soloMatch = null;
+  ws.soloAc = null;
+}
+
+function finalizeSoloMatch(ws, simScore, playerStatsMap) {
+  const sm = ws.soloMatch;
+  if (!sm || sm.finished) return;
+  sm.finished = true;
+  if (ws.soloSim) { ws.soloSim.stop(); ws.soloSim = null; }
+  ws.soloMatch = null;
+  ws.soloAc = null;
+
+  const blueScore = Math.max(0, Math.min(99, simScore[0]));
+  const orangeScore = Math.max(0, Math.min(99, simScore[1]));
+  const winnerTeam = blueScore > orangeScore ? 0 : (orangeScore > blueScore ? 1 : -1);
+
+  let reward = null;
+  const user = db.users[ws.usernameLower];
+  if (user && sm.duration > 0) {
+    const stats = ensureStats(user);
+    const st = (playerStatsMap && playerStatsMap[ws.userId]) || {};
+    const goals = Math.min(20, st.goals || 0);
+    const assists = Math.min(20, st.assists || 0);
+    const saves = Math.min(25, st.saves || 0);
+    const shots = Math.min(35, st.shots || 0);
+    const demos = Math.min(20, st.demos || 0);
+    const won = winnerTeam === sm.playerTeam;
+    const lost = winnerTeam >= 0 && winnerTeam !== sm.playerTeam;
+
+    stats.matches++;
+    if (won) stats.wins++;
+    else if (lost) stats.losses++;
+    stats.goals += goals;
+    stats.assists += assists;
+    stats.saves += saves;
+    stats.shots += shots;
+    stats.demos += demos;
+
+    const diffMult = 1 + sm.difficulty * 0.15 + (sm.tournament ? 0.25 : 0);
+    const timeFactor = Math.min(1, sm.duration / 60);
+    const rawXp = (75 + (won ? 65 : 20) + goals * 30 + assists * 20 + saves * 25 + shots * 6 + demos * 10) * diffMult * timeFactor;
+    const xpRes = addXp(user, Math.min(750, Math.round(rawXp)));
+
+    let rpDelta = 0;
+    if (won && (user.rp || 0) < 600) {
+      rpDelta = 8 + sm.difficulty * 3;
+      user.rp = Math.min(600, (user.rp || 0) + rpDelta);
+      user.peakRp = Math.max(user.peakRp || 0, user.rp);
+    }
+    markDirty();
+    reward = { ...xpRes, rpDelta, user: publicUser(user) };
+  }
+
+  send(ws, {
+    type: 'solo_match_finished',
+    score: [blueScore, orangeScore],
+    winnerTeam,
+    reward
+  });
+}
+
 function finalizeMultiplayerMatch(lb, simScore, playerStatsMap) {
   const m = lb.match;
   if (!m || m.finished) return;
@@ -711,16 +807,18 @@ function finalizeMultiplayerMatch(lb, simScore, playerStatsMap) {
   let isRanked = !!lb.settings.ranked && durationSec >= 25;
   let rankedVoid = null;
   if (isRanked) {
-    const elig = rankedEligibility(lb);
+    const elig = rankedEligibilityFromParticipants(m.participants);
     if (!elig.ok) { isRanked = false; rankedVoid = elig.reason; }
   }
 
+  const stayedIds = new Set();
   for (const p of lb.players.values()) {
     p.ready = (p.userId === lb.hostId);
     if (p.team !== 0 && p.team !== 1) continue;
+    stayedIds.add(p.userId);
     const user = db.users[p.usernameLower];
     if (!user) continue;
-    if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
+    ensureStats(user);
 
     const st = (playerStatsMap && playerStatsMap[p.userId]) || {};
     const goals = Math.min(20, st.goals || 0);
@@ -762,6 +860,20 @@ function finalizeMultiplayerMatch(lb, simScore, playerStatsMap) {
       rpDelta,
       user: publicUser(user)
     };
+  }
+
+  // Ranked abandon penalty: players who quit early cannot dodge RP loss
+  if (isRanked && Array.isArray(m.participants)) {
+    for (const part of m.participants) {
+      if (stayedIds.has(part.userId)) continue;
+      const user = db.users[part.usernameLower];
+      if (!user) continue;
+      ensureStats(user);
+      user.stats.matches++;
+      user.stats.mpMatches = (user.stats.mpMatches || 0) + 1;
+      user.stats.losses++;
+      user.rp = Math.max(0, (user.rp || 0) - 22);
+    }
   }
   markDirty();
 
@@ -813,8 +925,13 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
+const TRUST_PROXY = !!process.env.FLY_APP_NAME || process.env.TRUST_PROXY === '1';
 function getClientIp(req) {
-  return (req.headers['fly-client-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').toString().split(',')[0].trim();
+  if (TRUST_PROXY) {
+    const fwd = req.headers['fly-client-ip'] || req.headers['x-forwarded-for'];
+    if (fwd) return fwd.toString().split(',')[0].trim();
+  }
+  return (req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : 'unknown').toString().trim();
 }
 
 function getBearerToken(req) {
@@ -1048,100 +1165,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { leaderboard: list, sort });
     }
 
-    // SOLO MATCH START: the server records when the match began and its settings,
-    // so the report can't claim a longer match or a harder difficulty than was played.
-    if (req.method === 'POST' && pathname === '/api/match/start') {
-      const user = getUserByToken(getBearerToken(req));
-      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
-      if (!checkRateLimit('mstart:' + user.id, 20, 60000)) {
-        return sendJson(res, 429, { error: 'Too many matches started.' });
-      }
-      const body = await readJsonBody(req);
-      const duration = [120, 180, 300].includes(Number(body.duration)) ? Number(body.duration) : 0;
-      const matchId = crypto.randomBytes(16).toString('hex');
-      soloMatches.set(user.id, {
-        id: matchId,
-        startedAt: Date.now(),
-        duration,
-        difficulty: Math.max(0, Math.min(3, Math.floor(Number(body.difficulty) || 0))),
-        tournament: !!body.tournament
-      });
-      return sendJson(res, 200, { matchId });
-    }
-
-    // SOLO / AI / TOURNAMENT MATCH REPORT (ANTI-CHEAT SANITY VALIDATED)
-    if (req.method === 'POST' && pathname === '/api/match/report') {
-      const user = getUserByToken(getBearerToken(req));
-      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
-      if (!checkRateLimit('rep:' + user.id, 6, 60000)) {
-        return sendJson(res, 429, { error: 'Match report rate limit exceeded.' });
-      }
-      const now = Date.now();
-      if (user.lastReportAt && now - user.lastReportAt < 15000) {
-        return sendJson(res, 429, { error: 'Match submitted too quickly.' });
-      }
-      const body = await readJsonBody(req);
-      // The report must match the session the server opened at kickoff (single use)
-      const session = soloMatches.get(user.id);
-      if (!session || typeof body.matchId !== 'string' || body.matchId !== session.id) {
-        return sendJson(res, 400, { error: 'Match was not registered with the server.' });
-      }
-      soloMatches.delete(user.id);
-      if (!session.duration) {
-        return sendJson(res, 400, { error: 'Unlimited matches do not award XP.' });
-      }
-      // Real elapsed time comes from the server clock. The in-game clock pauses
-      // for countdowns and goals, so a real match always takes longer than its length.
-      const elapsedSec = (now - session.startedAt) / 1000;
-      if (elapsedSec < session.duration - 1) {
-        acLog(user, `Solo report too fast (${Math.round(elapsedSec)}s for a ${session.duration}s match)`);
-        return sendJson(res, 400, { error: 'Match ended too early.' });
-      }
-      if (elapsedSec > 3 * 3600) {
-        return sendJson(res, 400, { error: 'Match session expired.' });
-      }
-      const duration = Math.min(elapsedSec, session.duration + 600);
-
-      // Cap stats proportionally to match length to stop stat spoofing
-      const mins = Math.max(1, duration / 60);
-      const goals = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.goals) || 0)));
-      const assists = Math.max(0, Math.min(Math.ceil(mins * 3), Math.floor(Number(body.assists) || 0)));
-      const saves = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.saves) || 0)));
-      const shots = Math.max(goals, Math.min(Math.ceil(mins * 8), Math.floor(Number(body.shots) || 0)));
-      const demos = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.demos) || 0)));
-      const won = !!body.won;
-      // Difficulty and tournament flag come from the session, not the report
-      const difficulty = session.difficulty;
-      const isTournament = session.tournament;
-
-      if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
-      user.stats.matches++;
-      if (won) user.stats.wins++; else user.stats.losses++;
-      user.stats.goals += goals;
-      user.stats.assists += assists;
-      user.stats.saves += saves;
-      user.stats.shots += shots;
-      user.stats.demos += demos;
-      user.lastReportAt = now;
-
-      const diffMult = 1 + difficulty * 0.15 + (isTournament ? 0.25 : 0);
-      const timeFactor = Math.min(1, duration / 60);
-      const rawXp = (75 + (won ? 65 : 20) + goals * 30 + assists * 20 + saves * 25 + shots * 6 + demos * 10) * diffMult * timeFactor;
-      const xpRes = addXp(user, Math.min(750, Math.round(rawXp)));
-
-      // Small casual RP gain vs high-difficulty bots up to Gold I (600 RP) so solo players can warm up,
-      // while Competitive Multiplayer drives higher ranks!
-      let rpDelta = 0;
-      if (won && (user.rp || 0) < 600) {
-        rpDelta = 8 + difficulty * 3;
-        user.rp = Math.min(600, (user.rp || 0) + rpDelta);
-        user.peakRp = Math.max(user.peakRp || 0, user.rp);
-      }
-
-      markDirty();
-      return sendJson(res, 200, { ...xpRes, rpDelta, user: publicUser(user) });
-    }
-
     return sendJson(res, 404, { error: 'Not found' });
   } catch (err) {
     return sendJson(res, 400, { error: err.message || 'Bad request' });
@@ -1175,6 +1198,9 @@ wss.on('connection', (ws, req) => {
   ws.usernameLower = null;
   ws.squadCode = null;
   ws.lobbyCode = null;
+  ws.soloSim = null;
+  ws.soloMatch = null;
+  ws.soloAc = null;
   ws.msgCount = 0;
   ws.msgWindowStart = Date.now();
   ws.chatTimes = [];
@@ -1188,8 +1214,8 @@ wss.on('connection', (ws, req) => {
       ws.msgCount = 0;
     }
     ws.msgCount++;
-    if (ws.msgCount > 110) {
-      return; // drop flood
+    if (ws.msgCount > 200) {
+      return; // drop extreme flood
     }
 
     let msg;
@@ -1207,6 +1233,7 @@ wss.on('connection', (ws, req) => {
       const prev = clientsByUserId.get(user.id);
       if (prev && prev !== ws) {
         send(prev, { type: 'kicked', reason: 'Signed in from another tab/device.' });
+        stopSoloMatch(prev);
         leaveLobby(prev);
         leaveSquad(prev);
         try { prev.close(); } catch (_) {}
@@ -1310,6 +1337,7 @@ wss.on('connection', (ws, req) => {
       case 'lobby_create': {
         const me = db.users[ws.usernameLower];
         if (acBanRemainingMs(me) > 0) return send(ws, { type: 'error', text: acBanMessage(me) });
+        stopSoloMatch(ws);
         if (ws.lobbyCode) leaveLobby(ws);
         let code;
         do { code = randomCode(6); } while (lobbies.has(code));
@@ -1333,6 +1361,7 @@ wss.on('connection', (ws, req) => {
         const lb = lobbies.get(code);
         if (!lb) return send(ws, { type: 'error', text: `Lobby "${code}" not found.` });
         if (lb.status === 'in_match') return send(ws, { type: 'error', text: 'Match is already in progress.' });
+        stopSoloMatch(ws);
         joinLobbyInternal(ws, lb);
         const myP = lb.players.get(ws.userId);
         pullSquadIntoLobby(ws, lb, myP ? myP.team : null);
@@ -1402,7 +1431,7 @@ wss.on('connection', (ws, req) => {
       }
       case 'lobby_kick': {
         const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.hostId !== ws.userId) return;
+        if (!lb || lb.hostId !== ws.userId || lb.status !== 'waiting') return;
         const targetId = String(msg.userId || '');
         if (!targetId || targetId === ws.userId) return;
         const targetWs = clientsByUserId.get(targetId);
@@ -1434,7 +1463,16 @@ wss.on('connection', (ws, req) => {
         }
         lb.status = 'in_match';
         lb.ac = new Map();
-        lb.match = { startedAt: now, finished: false };
+        const participants = active.map(p => {
+          const pws = clientsByUserId.get(p.userId);
+          return {
+            userId: p.userId,
+            usernameLower: p.usernameLower,
+            team: p.team,
+            ip: pws && pws.ip ? pws.ip : 'unknown:' + p.userId
+          };
+        });
+        lb.match = { startedAt: now, finished: false, participants };
         const settings = lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : Object.assign({}, lb.settings);
         const snap = lobbySnapshot(lb);
         let sim;
@@ -1476,14 +1514,102 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      // ---- SOLO / AI / TOURNAMENT (100% SERVER-SIMULATED) ----
+      case 'solo_start': {
+        const me = db.users[ws.usernameLower];
+        if (acBanRemainingMs(me) > 0) return send(ws, { type: 'error', text: acBanMessage(me) });
+        if (!checkRateLimit('sstart:' + ws.userId, 20, 60000)) {
+          return send(ws, { type: 'error', text: 'Too many matches started. Please wait a moment.' });
+        }
+        if (ws.lobbyCode) {
+          const lb = lobbies.get(ws.lobbyCode);
+          if (lb && lb.status === 'in_match') return send(ws, { type: 'error', text: 'Finish or leave your multiplayer match first.' });
+          leaveLobby(ws);
+        }
+        stopSoloMatch(ws);
+        const raw = (msg.cfg && typeof msg.cfg === 'object') ? msg.cfg : {};
+        const tournament = !!raw.tournament;
+        const teamSize = Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4 ? raw.teamSize : 2;
+        const difficulty = Number.isInteger(raw.difficulty) && raw.difficulty >= 0 && raw.difficulty <= 3 ? raw.difficulty : 1;
+        const duration = tournament ? 180 : ([0, 120, 180, 300].includes(Number(raw.duration)) ? Number(raw.duration) : 300);
+        const arena = Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena < ARENA_COUNT ? raw.arena : Math.floor(Math.random() * ARENA_COUNT);
+        const layout = VALID_LAYOUTS.has(raw.layout) ? raw.layout : 'default';
+        const mode = VALID_MODES.has(raw.mode) ? raw.mode : 'standard';
+        const interval = [6, 10, 15].includes(Number(raw.interval)) ? Number(raw.interval) : 10;
+        const playerTeam = tournament ? 0 : (raw.side === 0 || raw.side === 1 ? raw.side : (Math.random() < 0.5 ? 0 : 1));
+        const teamNames = Array.isArray(raw.teamNames) && raw.teamNames.length === 2
+          ? [String(raw.teamNames[0] || 'BLUE').slice(0, 24).toUpperCase(), String(raw.teamNames[1] || 'ORANGE').slice(0, 24).toUpperCase()]
+          : ['BLUE', 'ORANGE'];
+        const settings = {
+          teamSize,
+          mode,
+          interval,
+          arena,
+          layout,
+          duration,
+          botFill: true,
+          botDiff: difficulty,
+          boostMode: 'normal',
+          mutator: 'normal'
+        };
+        const teammateDiff = tournament ? Math.min(3, difficulty + 1) : difficulty;
+        let sim;
+        try {
+          sim = new ServerMatch({
+            settings,
+            teammateDiff,
+            players: [{ userId: ws.userId, username: ws.username, team: playerTeam, car: me ? me.car : sanitizeCar(null) }],
+            broadcast: m => send(ws, m),
+            sendRaw: (userId, rawStr) => {
+              if (userId === ws.userId && ws.readyState === 1) ws.send(rawStr);
+            },
+            onGoal: info => send(ws, Object.assign({ type: 'match_goal_ack' }, info)),
+            onEnd: ({ score, stats }) => finalizeSoloMatch(ws, score, stats)
+          });
+        } catch (err) {
+          console.error('[SIM] Failed to start solo match:', err);
+          return send(ws, { type: 'error', text: 'Server could not start the match.' });
+        }
+        ws.soloSim = sim;
+        ws.soloAc = makeAcRec(now);
+        ws.soloMatch = { startedAt: now, duration, difficulty, tournament, playerTeam, finished: false };
+        send(ws, {
+          type: 'solo_match_start',
+          settings,
+          cars: sim.carInfo,
+          teamNames,
+          tournament,
+          solo: true,
+          serverSim: true
+        });
+        sim.start();
+        break;
+      }
+      case 'solo_leave': {
+        stopSoloMatch(ws);
+        break;
+      }
+      case 'solo_pause': {
+        if (ws.soloSim) ws.soloSim.setPaused(!!msg.paused);
+        break;
+      }
+
       // ---- IN-MATCH: clients send only their controls; the server simulates ----
       case 'in': {
+        if (ws.soloSim) {
+          if (!ws.soloAc) ws.soloAc = makeAcRec(now);
+          if (!packetRateOk(ws.soloAc.inPkt, now, AC_INPUT_MAX_PER_SEC)) {
+            if (ws.soloAc.inPkt.pktCount === AC_INPUT_STRIKE_AT) addSoloStrike(ws, 'Input packet flood', 2);
+            return;
+          }
+          if (!ws.soloSim.pushInput(ws.userId, msg.s, msg.c)) addSoloStrike(ws, 'Malformed input packet', 1);
+          break;
+        }
         const lb = lobbies.get(ws.lobbyCode);
         if (!lb || lb.status !== 'in_match' || !lb.sim) return;
         const rec = acRecord(lb, ws.userId);
-        if (!rec.inPkt) rec.inPkt = { pktWindow: now, pktCount: 0 };
         if (!packetRateOk(rec.inPkt, now, AC_INPUT_MAX_PER_SEC)) {
-          if (rec.inPkt.pktCount === AC_INPUT_MAX_PER_SEC * 2) addStrike(lb, ws, 'Input packet flood', 2);
+          if (rec.inPkt.pktCount === AC_INPUT_STRIKE_AT) addStrike(lb, ws, 'Input packet flood', 2);
           return;
         }
         if (!lb.sim.pushInput(ws.userId, msg.s, msg.c)) addStrike(lb, ws, 'Malformed input packet', 1);
@@ -1496,6 +1622,7 @@ wss.on('connection', (ws, req) => {
     if (ws.userId && clientsByUserId.get(ws.userId) === ws) {
       clientsByUserId.delete(ws.userId);
     }
+    stopSoloMatch(ws);
     leaveLobby(ws, 'disconnected');
     leaveSquad(ws);
   });
@@ -1503,7 +1630,11 @@ wss.on('connection', (ws, req) => {
 
 // Heartbeat to drop dead connections & keep Fly.io proxy alive
 setInterval(() => {
+  const now = Date.now();
   for (const ws of wss.clients) {
+    if (ws.soloSim && now - ws.soloSim.createdAt > 2 * 60 * 60 * 1000) {
+      stopSoloMatch(ws);
+    }
     if (!ws.isAlive) { ws.terminate(); continue; }
     ws.isAlive = false;
     ws.ping();
