@@ -3827,10 +3827,6 @@ class ArenaVisual {
     const s = this.shape;
     const st = this.stands({ off: 5, tiers: 16, rise: 1.25, run: 2.0, color: 0x50545c, seat: 0x1f4fa8, density: 0.95, base: 3.5 });
     const path = s.path(2.0, 0).pts;
-    const prof = [{ d: st.outer - 2, y: st.top + 9, nd: 0, ny: -1 }, { d: st.outer - 22, y: st.top + 12, nd: 0, ny: -1 }];
-    this.add(new THREE.Mesh(fixWinding(sweepGeometry(path, prof)), new THREE.MeshStandardMaterial({ color: 0xd8dde4, roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide })));
-    const colG = []; for (let i = 0; i < path.length; i += 8) { const p = path[i]; colG.push(placed(new THREE.CylinderGeometry(0.35, 0.35, 12, 6), p.x + p.nx * (st.outer - 1), st.top + 3, p.z + p.nz * (st.outer - 1))); }
-    this.add(new THREE.Mesh(mergeGeoms(colG), new THREE.MeshStandardMaterial({ color: 0xaab0b8, metalness: 0.7, roughness: 0.4 })));
     const W = s.W + st.outer + 6, L = s.L + st.outer + 6;
     for (const [x, z] of [[W, L], [-W, L], [W, -L], [-W, -L]]) this.lightTower(x * 0.9, z * 0.9, 58, 0xfff4e0, { x: 0, z: 0 });
     const gp = new THREE.Mesh(new THREE.CircleGeometry(1200, 64), new THREE.MeshStandardMaterial({ color: 0x3a4a2a, roughness: 1 })); gp.rotation.x = -PI / 2; gp.position.y = -0.5; this.add(gp);
@@ -3839,9 +3835,9 @@ class ArenaVisual {
       const p = path[Math.floor(i / 16 * path.length)];
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 6, 5), new THREE.MeshStandardMaterial({ color: 0xcccccc }));
       const fx = p.x + p.nx * (st.outer + 0.5), fz = p.z + p.nz * (st.outer + 0.5);
-      pole.position.set(fx, st.top + 12 + 3, fz); this.add(pole);
+      pole.position.set(fx, st.top + 2.5 + 3, fz); this.add(pole);
       const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4, 8, 1), new THREE.MeshStandardMaterial({ color: i % 2 ? 0x2f8fff : 0xff8a1f, side: THREE.DoubleSide, emissive: i % 2 ? 0x0a2040 : 0x401a00 }));
-      flag.position.set(fx, st.top + 12 + 5, fz); flag.geometry.translate(1.2, 0, 0); this.add(flag);
+      flag.position.set(fx, st.top + 2.5 + 5, fz); flag.geometry.translate(1.2, 0, 0); this.add(flag);
       const base = flag.geometry.attributes.position.array.slice();
       this.updaters.push((t) => { const a = flag.geometry.attributes.position; for (let k = 0; k < a.count; k++) { const x = base[k * 3]; a.setZ(k, Math.sin(t * 4 + x * 2 + i) * 0.25 * x / 2.4); } a.needsUpdate = true; flag.rotation.y = Math.sin(t * 0.3 + i) * 0.3 + 0.5; });
     }
