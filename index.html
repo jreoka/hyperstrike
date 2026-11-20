@@ -609,6 +609,7 @@ const QUALITY_RES_SCALE = { low: 0.75, medium: 0.85, high: 1.0, ultra: 1.25 };
 const DEFAULT_SETTINGS = {
   fov: 100, camDist: 2.9, camHeight: 1.1, camAngle: -4, camStiffness: 0.45, swivelSpeed: 5, ballCamDefault: false, camShake: true,
   mouseSens: 1.0, camSens: 1.0, invertY: false, deadzone: 0.14, vibration: true,
+  fullscreen: false,
   quality: 'high', resScale: 1.0, bloom: true, bloomAmt: 1.0, reflections: true, showFps: false, motionFx: true,
   master: 0.8, music: 0.45, sfx: 0.9, ambience: 0.6, muted: false,
   showNames: true, replays: true, showRadar: true,
@@ -638,6 +639,73 @@ const Events = {
   on(n, f) { (this.map[n] = this.map[n] || []).push(f); },
   emit(n, ...a) { (this.map[n] || []).forEach(f => f(...a)); }
 };
+
+/* ---------------- Fullscreen + browser shortcut guard ---------------- */
+const Fullscreen = {
+  active() { return !!(document.fullscreenElement || document.webkitFullscreenElement); },
+  enter() {
+    if (this.active()) return;
+    const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) return;
+    try { Promise.resolve(req.call(el, { navigationUI: 'hide' })).catch(() => {}); } catch (e) { }
+  },
+  exit() {
+    if (!this.active()) return;
+    const ex = document.exitFullscreen || document.webkitExitFullscreen;
+    try { Promise.resolve(ex.call(document)).catch(() => {}); } catch (e) { }
+  },
+  toggle() { this.active() ? this.exit() : this.enter(); },
+  // Keyboard Lock (Chromium): while in fullscreen, lets the game receive Esc, Ctrl+W, Ctrl+T, Alt+Tab-ish
+  // combos etc. instead of the browser. Holding Esc still exits fullscreen.
+  lockKeys() { try { if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(() => {}); } catch (e) { } },
+  unlockKeys() { try { if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch (e) { } },
+  init() {
+    const onChange = () => {
+      const on = this.active();
+      if (on) this.lockKeys(); else this.unlockKeys();
+      if (Settings.data.fullscreen !== on) { Settings.data.fullscreen = on; Settings.save(); }
+      document.querySelectorAll('[data-tg="fullscreen"]').forEach(b => b.classList.toggle('on', on));
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    document.addEventListener('webkitfullscreenchange', onChange);
+
+    const isTextField = t => t && (t.tagName === 'TEXTAREA' || t.isContentEditable || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button', 'submit'].includes(t.type)));
+    // Ctrl/Cmd combos that should keep working inside text fields (copy, paste, select all, undo...)
+    const editKeys = new Set(['KeyA', 'KeyC', 'KeyV', 'KeyX', 'KeyZ', 'KeyY', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Home', 'End']);
+    addEventListener('keydown', e => {
+      if (e.code === 'F11') { e.preventDefault(); this.toggle(); return; }
+      if (e.code === 'F12') return; // leave devtools alone
+      const text = isTextField(e.target);
+      if (e.ctrlKey || e.metaKey) {
+        if (text && editKeys.has(e.code)) return;
+        e.preventDefault(); // zoom (+/-/0), save, print, find, bookmark, history, reload, etc.
+        return;
+      }
+      if (text) return;
+      // Bare function keys (F1 help, F3 find, F5 reload, F6 address bar, F7 caret browsing), Alt menu,
+      // Firefox quick-find (' and /), and Backspace navigation
+      if (/^F([1-9]|10)$/.test(e.code) || e.altKey || e.key === 'Alt' || e.code === 'Quote' || e.code === 'Slash' || e.code === 'Backspace') e.preventDefault();
+    }, { capture: true });
+    addEventListener('keyup', e => { if (e.key === 'Alt' || e.code === 'F10') e.preventDefault(); }, { capture: true });
+    // Ctrl/Cmd + scroll wheel zoom, and trackpad pinch zoom (reported as ctrl+wheel)
+    addEventListener('wheel', e => { if (e.ctrlKey || e.metaKey) e.preventDefault(); }, { passive: false, capture: true });
+    // Safari pinch gestures
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(n => addEventListener(n, e => e.preventDefault(), { passive: false }));
+    // middle-click autoscroll, image/text dragging
+    addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }, { capture: true });
+    addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+    addEventListener('dragstart', e => e.preventDefault());
+    addEventListener('contextmenu', e => { if (!isTextField(e.target)) e.preventDefault(); });
+    // Ask before leaving mid-match (e.g. Ctrl+W outside fullscreen can't be blocked)
+    addEventListener('beforeunload', e => { if (typeof Game !== 'undefined' && Game && Game.inGame) { e.preventDefault(); e.returnValue = ''; } });
+    // Browsers only allow fullscreen from a user gesture: re-enter on first interaction if the setting is on
+    const resume = () => { if (Settings.data.fullscreen && !this.active()) this.enter(); };
+    addEventListener('pointerdown', resume, { capture: true });
+    addEventListener('keydown', e => { if (e.code !== 'F11' && e.code !== 'Escape') resume(); }, { capture: true });
+  }
+};
+Fullscreen.init();
+Events.on('settings', k => { if (k === 'fullscreen') Settings.data.fullscreen ? Fullscreen.enter() : Fullscreen.exit(); });
 
 /* ---------------- Input ---------------- */
 class InputManager {
@@ -8003,7 +8071,7 @@ class UIManager {
     let h = `<div class="ph"><h2>Settings</h2><span>saved automatically</span></div><div class="tabs">` + tabs.map(([k, l]) => `<button class="${this.settingsTab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`).join('') + '</div>';
     if (this.settingsTab === 'camera') h += slider('fov', 'Field of view', 70, 115, 1, v => v + '°') + slider('camDist', 'Distance', 2.0, 4.5, 0.05, v => (+v).toFixed(2)) + slider('camHeight', 'Height', 0.6, 2.2, 0.05, v => (+v).toFixed(2)) + slider('camAngle', 'Angle', -12, 4, 1, v => v + '°') + slider('camStiffness', 'Stiffness', 0, 1, 0.05, v => (+v).toFixed(2)) + slider('swivelSpeed', 'Swivel speed', 1, 10, 0.5) + tog('ballCamDefault', 'Ball cam on by default') + tog('camShake', 'Camera shake');
     if (this.settingsTab === 'controls') h += slider('mouseSens', 'Mouse sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('camSens', 'Camera (stick) sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('deadzone', 'Controller deadzone', 0.02, 0.4, 0.01, v => (+v).toFixed(2)) + tog('invertY', 'Invert aerial pitch') + tog('vibration', 'Controller vibration');
-    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:300px">${['low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS');
+    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:300px">${['low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
     if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + slider('ambience', 'Crowd & ambience', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
     if (this.settingsTab === 'account') {
       const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
