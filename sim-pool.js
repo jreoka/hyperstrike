@@ -41,6 +41,9 @@ class MatchHandle {
     this.carInfo = [];
     this.createdAt = Date.now();
     this.stopped = false;
+    this.started = false;
+    this._loadPending = null; // userIds still building the arena on their client
+    this._loadTimer = null;
     // Mirror human map on main thread for synchronous anti-cheat validation of pushInput
     this._humans = new Map();
     for (const p of (opts.players || [])) {
@@ -49,8 +52,33 @@ class MatchHandle {
   }
 
   start() {
-    if (this.stopped) return;
+    if (this.stopped || this.started) return;
+    this.started = true;
+    this._clearLoadWait();
     this._slot.worker.postMessage({ type: 'start', id: this.id });
+  }
+
+  // Hold the kickoff countdown until every player's client has finished building the arena
+  // (or timeoutMs passes). Starting immediately let the server's countdown run while clients
+  // were still loading, so their "3" was skipped through at high speed once snapshots arrived.
+  startWhenLoaded(userIds, timeoutMs = 5000) {
+    if (this.stopped || this.started) return;
+    this._loadPending = new Set(userIds.filter(u => this._humans.has(u)));
+    if (this._loadPending.size === 0) return this.start();
+    this._loadTimer = setTimeout(() => this.start(), timeoutMs);
+    if (this._loadTimer.unref) this._loadTimer.unref();
+  }
+
+  markLoaded(userId) {
+    if (!this._loadPending) return;
+    this._loadPending.delete(userId);
+    if (this._loadPending.size === 0) this.start();
+  }
+
+  _clearLoadWait() {
+    if (this._loadTimer) clearTimeout(this._loadTimer);
+    this._loadTimer = null;
+    this._loadPending = null;
   }
 
   // Returns false only for structurally invalid packets (the anti-cheat strikes on those).
@@ -68,6 +96,7 @@ class MatchHandle {
 
   removePlayer(userId) {
     this._humans.delete(userId);
+    this.markLoaded(userId);
     if (this.stopped) return;
     this._slot.worker.postMessage({ type: 'removePlayer', id: this.id, u: userId });
   }
@@ -80,6 +109,7 @@ class MatchHandle {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
+    this._clearLoadWait();
     this._pool._releaseMatch(this._slot, this.id);
     if (this._slot.worker) {
       try { this._slot.worker.postMessage({ type: 'stop', id: this.id }); } catch (_) {}
