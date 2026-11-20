@@ -1682,6 +1682,15 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      // Client finished (or skipped) its goal replay: the next kickoff waits for every player
+      case 'replay_done': {
+        const mid = Number.isInteger(msg.m) ? msg.m : null;
+        if (ws.soloSim && ws.soloSim.id === mid) { ws.soloSim.replayDone(ws.userId); break; }
+        const lb = lobbies.get(ws.lobbyCode);
+        if (lb && lb.sim && lb.sim.id === mid) lb.sim.replayDone(ws.userId);
+        break;
+      }
+
       // ---- IN-MATCH: clients send only their controls; the server simulates ----
       case 'in': {
         // Inputs are tagged with the match id they were produced for. Packets still in flight

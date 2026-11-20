@@ -15,6 +15,7 @@ const MAX_FUTURE_SEQ = 240;      // reject inputs more than 4s ahead of the serv
 const IDLE_CLEAR_SLOTS = 30;     // no input for 0.5s -> release all controls
 const COUNTDOWN_S = 3.0;
 const GOAL_PAUSE_S = 3.4;
+const REPLAY_MAX_S = 12;         // after the celebration, wait at most this long for clients' goal replays
 
 const r3 = v => Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
 const r4 = v => Number.isFinite(v) ? Math.round(v * 10000) / 10000 : 0;
@@ -61,6 +62,7 @@ class ServerMatch {
     if (s.mode === 'mayhem') w.powers = new S.PowerSystem(w, { interval: s.interval || 10 });
 
     this.humans = new Map(); // userId -> input timeline state (see makeHuman)
+    this.replayDone = new Set(); // userIds whose goal replay has finished (post-goal kickoff hold)
     this.carInfo = [];       // index-aligned descriptors sent to clients
     let botIdx = 0;
     for (const team of [0, 1]) {
@@ -218,6 +220,11 @@ class ServerMatch {
     h.nextSeq++;
   }
 
+  // A client finished (or skipped) the goal replay; only counts during the post-goal pause
+  markReplayDone(userId) {
+    if (this.state === 'goal' && this.humans.has(userId)) this.replayDone.add(userId);
+  }
+
   // A player who leaves keeps their car in the match, driven by a bot
   removePlayer(userId) {
     const h = this.humans.get(userId);
@@ -281,8 +288,13 @@ class ServerMatch {
       } else this.timeScale = 1;
       if (this.stateT > GOAL_PAUSE_S) {
         this.timeScale = 1;
-        if (this.matchOver) this.finish();
-        else this.beginKickoff();
+        if (this.matchOver) { this.finish(); return; }
+        // Clients now show the goal replay: freeze the world and hold the kickoff until every
+        // player reports their replay done (finished, skipped or disabled), or a timeout.
+        w.frozen = true;
+        let allDone = true;
+        for (const userId of this.humans.keys()) if (!this.replayDone.has(userId)) { allDone = false; break; }
+        if (allDone || this.stateT > GOAL_PAUSE_S + REPLAY_MAX_S) this.beginKickoff();
       }
     }
   }
@@ -394,7 +406,7 @@ class ServerMatch {
     }
     if (w.powers) w.powers.clearEffects();
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
-    this.setState('goal'); w.kickoff = false;
+    this.setState('goal'); w.kickoff = false; this.replayDone.clear();
     if (this.overtime) this.matchOver = true;
     this.statsDirty = true; // push the new goal/assist stats with the very next snapshot
     const idx = c => (c ? w.cars.indexOf(c) : -1);

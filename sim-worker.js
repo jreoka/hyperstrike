@@ -106,6 +106,12 @@ parentPort.on('message', (msg) => {
       break;
     }
 
+    case 'replayDone': {
+      const sim = matches.get(id);
+      if (sim) sim.markReplayDone(msg.u);
+      break;
+    }
+
     case 'removePlayer': {
       const sim = matches.get(id);
       if (sim) sim.removePlayer(msg.u);

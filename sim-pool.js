@@ -94,6 +94,11 @@ class MatchHandle {
     return true;
   }
 
+  replayDone(userId) {
+    if (this.stopped || !this._humans.has(userId)) return;
+    this._slot.worker.postMessage({ type: 'replayDone', id: this.id, u: userId });
+  }
+
   removePlayer(userId) {
     this._humans.delete(userId);
     this.markLoaded(userId);
