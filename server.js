@@ -318,6 +318,8 @@ function defaultLobbySettings(hostName) {
   };
 }
 
+const ARENA_COUNT = 12;
+
 function sanitizeLobbySettings(raw, current) {
   const s = Object.assign({}, current);
   if (!raw || typeof raw !== 'object') return s;
@@ -327,7 +329,7 @@ function sanitizeLobbySettings(raw, current) {
   if (Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4) s.teamSize = raw.teamSize;
   if (VALID_MODES.has(raw.mode)) s.mode = raw.mode;
   if ([6, 10, 15].includes(raw.interval)) s.interval = raw.interval;
-  if (Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena <= 12) s.arena = raw.arena;
+  if (Number.isInteger(raw.arena) && raw.arena >= -1 && raw.arena <= 11) s.arena = raw.arena;
   if (typeof raw.layout === 'string' && raw.layout.length <= 20) s.layout = raw.layout;
   if ([0, 120, 180, 300].includes(raw.duration)) s.duration = raw.duration;
   if (typeof raw.botFill === 'boolean') s.botFill = raw.botFill;
@@ -1337,7 +1339,7 @@ wss.on('connection', (ws) => {
           type: 'match_start',
           lobby: snap,
           hostId: lb.hostId,
-          settings: lb.settings,
+          settings: lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : lb.settings,
           players: snap.players
         });
         break;
