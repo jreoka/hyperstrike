@@ -8,16 +8,17 @@
 const { createSandbox } = require('./sim');
 
 const TICKS_PER_INPUT = 2;     // one input packet covers 2 physics ticks (60Hz)
-const SLOTS_PER_SNAPSHOT = 2;  // snapshot every 2 input slots (30Hz)
-const MAX_INPUT_QUEUE = 6;     // ~100ms of buffered input max; older input is dropped
+const SLOTS_PER_SNAPSHOT = 1;  // snapshot every input slot (60Hz) for low latency & smooth interpolation
+const MAX_INPUT_QUEUE = 5;     // ~83ms of buffered input max; older excess is trimmed preserving button edges
+const TARGET_INPUT_QUEUE = 2;  // trim target when client bursts arrive
 const COUNTDOWN_S = 3.0;
 const GOAL_PAUSE_S = 3.4;
 
 // Car fields that are identity/visual/derived and never part of physics state
 const CAR_SKIP = new Set([
   'id', 'team', 'name', 'design', 'half', 'inertia', 'controls', 'basis', 'bot', 'stats', 'events',
-  'samplePts', 'bumpCooldown', 'netTarget', 'prevPos', 'prevQuat', 'isRemote', 'isPlayer', 'netUserId',
-  'netBotId', 'explosion', 'wheels', 'lastBallTouchTick', 'visErr'
+  'samplePts', 'bumpCooldown', 'netTarget', 'snapBuf', 'prevPos', 'prevQuat', 'isRemote', 'isPlayer',
+  'netUserId', 'netBotId', 'explosion', 'wheels', 'lastBallTouchTick', 'visErr', 'visErrPos', 'visErrQuat'
 ]);
 
 const r3 = v => Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
@@ -160,13 +161,15 @@ class ServerMatch {
       this._acc += Number(nowNs - this._lastNs) / 1e9;
       this._lastNs = nowNs;
       let n = 0;
+      let shouldSnap = false;
       const slotSec = this._slotSec;
       while (this._acc >= slotSec && n < 8 && !this.finished) {
-        this.runSlot();
+        if (this.runSlot()) shouldSnap = true;
         this._acc -= slotSec;
         n++;
       }
       if (n >= 8) this._acc = 0; // server hiccup: don't spiral
+      if (shouldSnap && !this.finished) this.sendSnapshots();
     } catch (err) {
       console.error('[SIM] Match simulation error:', err);
       this.stop();
@@ -191,7 +194,17 @@ class ServerMatch {
     if (!h || !Number.isSafeInteger(seq) || seq <= (h.lastQueuedSeq || 0) || !isValidPackedControls(packed)) return false;
     h.lastQueuedSeq = seq;
     h.queue.push({ seq, c: packed });
-    if (h.queue.length > MAX_INPUT_QUEUE) h.queue.splice(0, h.queue.length - MAX_INPUT_QUEUE);
+    // While frozen (countdown), never let stale inputs pile up before kickoff
+    if (this.world.frozen && h.queue.length > 1) {
+      h.queue.splice(0, h.queue.length - 1);
+    } else if (h.queue.length > MAX_INPUT_QUEUE) {
+      // Trim oldest excess inputs down to TARGET_INPUT_QUEUE while preserving jump/item press edges
+      const dropCount = h.queue.length - TARGET_INPUT_QUEUE;
+      let edgeBits = 0;
+      for (let i = 0; i < dropCount; i++) edgeBits |= (h.queue[i].c[5] & 17); // bit 0 = jump, bit 4 = item
+      h.queue.splice(0, dropCount);
+      if (edgeBits && h.queue.length) h.queue[0].c[5] |= edgeBits;
+    }
     return true;
   }
 
@@ -212,7 +225,7 @@ class ServerMatch {
     }
     for (let i = 0; i < TICKS_PER_INPUT; i++) this.tick(this.S.PHYS.dt);
     this.slot++;
-    if (this.slot % SLOTS_PER_SNAPSHOT === 0 && !this.finished) this.sendSnapshots();
+    return (this.slot % SLOTS_PER_SNAPSHOT === 0 && !this.finished);
   }
 
   tick(dt) {
@@ -439,12 +452,12 @@ class ServerMatch {
     if (this.opts.onSnapshot) {
       const to = [];
       for (const [userId, h] of this.humans) {
-        to.push([userId, `${shared},"a":${h.lastSeq},"me":${JSON.stringify(serializeCar(h.car))}}`]);
+        to.push([userId, `${shared},"a":${h.lastSeq},"q":${h.queue.length},"me":${JSON.stringify(serializeCar(h.car))}}`]);
       }
       this.opts.onSnapshot(to, shared + '}');
     } else {
       for (const [userId, h] of this.humans) {
-        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"me":${JSON.stringify(serializeCar(h.car))}}`);
+        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"q":${h.queue.length},"me":${JSON.stringify(serializeCar(h.car))}}`);
       }
       if (this.opts.spectators) this.opts.spectators(shared + '}');
     }

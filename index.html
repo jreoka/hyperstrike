@@ -1436,12 +1436,14 @@ class Ball {
   constructor() {
     this.R = PHYS.ballR; this.pos = new V3(0, this.R, 0); this.vel = new V3(); this.angVel = new V3();
     this.quat = new QT(); this.prevPos = new V3(); this.prevQuat = new QT();
+    this.visErrPos = new V3(); this.visErrQuat = new QT();
     this.lastTouch = null; this.touchHistory = []; this.lastHitTime = -10; this.lastHitStrength = 0;
     this.onGround = true; this.frozen = false;
     this.stuckTo = null; this.stuckLocal = new V3(); this.iceT = 0; this.gScale = 1; this.antiT = 0;
   }
   reset(x = 0, y = PHYS.ballR, z = 0) {
     this.pos.set(x, y, z); this.vel.set(0, 0, 0); this.angVel.set(0, 0, 0); this.prevPos.copy(this.pos);
+    this.visErrPos.set(0, 0, 0); this.visErrQuat.identity();
     this.lastTouch = null; this.touchHistory.length = 0;
     this.stuckTo = null; this.iceT = 0; this.gScale = 1; this.antiT = 0;
   }
@@ -1537,6 +1539,7 @@ class Car {
     this.inertia = new V3((Hh * Hh + Wd * Wd) / 12, (L * L + Wd * Wd) / 12, (L * L + Hh * Hh) / 12);
     this.pos = new V3(); this.vel = new V3(); this.quat = new QT(); this.angVel = new V3();
     this.prevPos = new V3(); this.prevQuat = new QT();
+    this.visErrPos = new V3(); this.visErrQuat = new QT();
     this.basis = new Basis();
     this.controls = makeControls(); this.prevJump = false;
     this.boost = 33; this.unlimitedBoost = false;
@@ -1563,6 +1566,7 @@ class Car {
   place(x, y, z, yaw) {
     this.pos.set(x, y, z); this.vel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.quat.setFromAxisAngle(tmpV.set(0, 1, 0), yaw); this.savePrev();
+    this.visErrPos.set(0, 0, 0); this.visErrQuat.identity();
     this.jumping = this.jumped = this.flipping = this.doubleJumped = false; this.hasFlip = false; this.airTime = 0; this.coyoteT = 0;
     this.supersonic = this.wasSupersonic = false; this.isBoosting = false; this.boostT = 0;
     if (this.bot) Object.assign(this.controls, makeControls());
@@ -5258,7 +5262,7 @@ class CarVisual {
     this.model.setTrailColors(custom.trail, car.team);
     scene.add(this.model.root);
     this.trail = new Trail(scene);
-    this.flameLen = 0; this.visQuat = new QT(); this.visPos = new V3();
+    this.flameLen = 0; this.visQuat = new QT(); this.visPos = new V3(); this._idQ = new QT();
     this.trailCol = new THREE.Color();
     this.bodyTilt = new V3(); this.wheelY = [0, 0, 0, 0]; this.vb = new Basis();
   }
@@ -5268,7 +5272,20 @@ class CarVisual {
     if (dead) { m.root.visible = false; this.trail.update(dt); return; }
     m.root.visible = true;
     if (override) { this.visPos.copy(override.pos); this.visQuat.copy(override.quat); }
-    else { this.visPos.lerpVectors(car.prevPos, car.pos, alpha); this.visQuat.slerpQuaternions(car.prevQuat, car.quat, alpha); }
+    else {
+      this.visPos.lerpVectors(car.prevPos, car.pos, alpha);
+      this.visQuat.slerpQuaternions(car.prevQuat, car.quat, alpha);
+      if (car.visErrPos.lengthSq() > 1e-7) {
+        const decay = Math.exp(-18 * dt);
+        car.visErrPos.multiplyScalar(decay);
+        if (car.visErrPos.lengthSq() < 1e-7) car.visErrPos.set(0, 0, 0);
+        this.visPos.add(car.visErrPos);
+      }
+      if (Math.abs(1 - Math.abs(car.visErrQuat.w)) > 1e-6) {
+        car.visErrQuat.slerp(this._idQ, 1 - Math.exp(-18 * dt));
+        this.visQuat.premultiply(car.visErrQuat).normalize();
+      }
+    }
     m.root.position.copy(this.visPos); m.root.quaternion.copy(this.visQuat);
     const lat = (override ? 0 : clamp(car.controls.steer * car.vel.length() * 0.004, -0.06, 0.06)) * (car.onGround ? 1 : 0);
     this.bodyTilt.x = damp(this.bodyTilt.x, lat, 8, dt);
@@ -6566,15 +6583,18 @@ class World {
     this.events.length = 0;
     const ball = this.ball;
     ball.savePrev(); for (const c of this.cars) c.savePrev();
-    if (this.tick % 4 === 0) { this.lastThreat = { team: this.pred.goalTeam, time: this.pred.goalTime }; this.pred.update(ball, this.shape); }
-    this.brain.update(dt, this);
-    for (const c of this.cars) if (c.bot) c.bot.update(dt, this);
+    if (!this.isOnlineClient) {
+      if (this.tick % 4 === 0) { this.lastThreat = { team: this.pred.goalTeam, time: this.pred.goalTime }; this.pred.update(ball, this.shape); }
+      this.brain.update(dt, this);
+      for (const c of this.cars) if (c.bot) c.bot.update(dt, this);
+    }
     const P = this.powers;
     if (P && !this.frozen) P.preCars(dt);
     if (!this.frozen) {
+      if (this.onRemoteStep) this.onRemoteStep(dt);
       for (const c of this.cars) {
         if (c.isRemote) {
-          if (c.netTarget) {
+          if (!this.onRemoteStep && c.netTarget) {
             const nt = c.netTarget;
             if (c.pos.distanceToSquared(nt.pos) > 64) {
               c.pos.copy(nt.pos); c.prevPos.copy(nt.pos);
@@ -6609,11 +6629,15 @@ class World {
       for (const h of hitEvents) this.events.push(h);
       for (const c of this.cars) {
         if (ball.stuckTo === c) continue;
+        if (this.isOnlineClient && c.isRemote) continue;
         const iced = ball.iceT > 0; if (iced) this._icePos.copy(ball.pos);
         const hit = collideCarBall(c, ball, this.tick, this.shape);
         if (hit && P) P.onBallContact(c, hit, iced);
         if (iced && ball.iceT > 0) { ball.pos.copy(this._icePos); ball.vel.set(0, 0, 0); }
-        if (hit) this.onTouch(hit);
+        if (hit) {
+          this.onTouch(hit);
+          if (this.onLocalBallHit && c.isPlayer) this.onLocalBallHit(hit);
+        }
       }
       for (let i = 0; i < this.cars.length; i++) for (let j = i + 1; j < this.cars.length; j++) {
         if (this.cars[i].isRemote && this.cars[j].isRemote) continue;
@@ -6631,7 +6655,7 @@ class World {
     }
     for (const p of this.pads) if (!p.active) { p.timer -= dt; if (p.timer <= 0) p.active = true; }
     if (P && !this.frozen) P.postStep(dt);
-    this.recorder.record();
+    if (!this.isOnlineClient) this.recorder.record();
     this.tick++; this.time += dt;
   }
   onTouch(hit) {
@@ -6639,11 +6663,13 @@ class World {
     ball.lastTouch = car; ball.lastHitTime = this.time; ball.lastHitStrength = hit.strength;
     ball.touchHistory.push({ car, time: this.time }); if (ball.touchHistory.length > 12) ball.touchHistory.shift();
     car.stats.touches++;
-    const before = this.lastThreat;
-    this.pred.update(ball, this.shape);
-    const after = { team: this.pred.goalTeam, time: this.pred.goalTime };
-    hit.shot = after.team === 1 - car.team; hit.save = before.team === car.team && after.team !== car.team && before.time < 4; hit.epic = hit.save && before.time < 0.7;
-    this.lastThreat = after;
+    if (!this.isOnlineClient) {
+      const before = this.lastThreat;
+      this.pred.update(ball, this.shape);
+      const after = { team: this.pred.goalTeam, time: this.pred.goalTime };
+      hit.shot = after.team === 1 - car.team; hit.save = before.team === car.team && after.team !== car.team && before.time < 4; hit.epic = hit.save && before.time < 0.7;
+      this.lastThreat = after;
+    }
     this.events.push(Object.assign({ type: 'hit' }, hit));
   }
   demolish(victim, attacker, overdrive) {
@@ -7427,9 +7453,17 @@ class OnlineMatchMode extends MatchMode {
     this.isHost = false;
     this.isSolo = !!cfg.isSolo;
     this.endedByServer = false;
-    this.netBall = null;
+    this.netBall = new Ball();
     this.inSeq = 0; this.inTick = 0; this.inHist = []; this.curInput = null;
-    this.lead = 0.05; this.ballExtrap = 0; this.pendingEvents = []; this.kickCars = null;
+    this.rtt = 0.04; this.qAvg = 1.0; this.clockRate = 1.0;
+    this.localBallHitSeq = 0; this.localBallHitAt = 0;
+    this.remoteTime = 0; this.latestServerTime = 0; this.hasServerTime = false;
+    this.lastSnapAt = 0; this.snapJitter = 0.008; this.interpDelay = 0.036;
+    this.pendingEvents = []; this.kickCars = null;
+    this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT();
+    w.isOnlineClient = true;
+    w.onRemoteStep = (dt) => this.stepRemoteCars(dt);
+    w.onLocalBallHit = () => { this.localBallHitSeq = this.inSeq; this.localBallHitAt = performance.now(); };
     if (cfg.boostMode === 'unlimited') w.unlimitedBoost = true;
     if (cfg.boostMode === 'recharge') w.boostRecharge = true;
     PHYS.g = cfg.mutator === 'lowgrav' ? 3.9 : 6.5;
@@ -7462,7 +7496,7 @@ class OnlineMatchMode extends MatchMode {
       const packed = packControls(p.controls);
       const seq = ++this.inSeq;
       this.curInput = packed;
-      this.inHist.push({ seq, c: packed });
+      this.inHist.push({ seq, c: packed, t: performance.now() });
       if (this.inHist.length > 180) this.inHist.shift();
       g.online.wsSend({ type: 'in', s: seq, c: packed });
     }
@@ -7471,14 +7505,16 @@ class OnlineMatchMode extends MatchMode {
   beginKickoff() {
     super.beginKickoff();
     const w = this.world, k = this.kickCars;
+    this.localBallHitSeq = 0;
+    w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity();
+    if (this.netBall) this.netBall.reset(0, PHYS.ballR, 0);
     if (!k) return;
     this.kickCars = null;
     w.cars.forEach((c, i) => {
       const s = k[i]; if (!s) return;
       c.place(s[0], s[1], s[2], s[3]); c.boost = 33; c.demolished = false;
-      if (c.netTarget) { c.netTarget.pos.copy(c.pos); c.netTarget.quat.copy(c.quat); c.netTarget.vel.set(0, 0, 0); c.netTarget.demolished = false; c.netTarget.extrap = 0; }
+      if (c.snapBuf) c.snapBuf.length = 0;
     });
-    if (this.netBall) { this.netBall.reset(0, PHYS.ballR, 0); }
   }
   serverKickoff(msg) {
     this.kickCars = Array.isArray(msg.cars) ? msg.cars : null;
@@ -7490,31 +7526,74 @@ class OnlineMatchMode extends MatchMode {
     if (this.state === 'countdown') {
       const left = 3.0 - this.stateT; const n = Math.ceil(left);
       if (n !== this.cdLast && n > 0) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
-      if (left <= 0) { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
+      // Let the server snapshot trigger GO! so kickoff never unfreezes early and re-freezes; fallback after 350ms
+      if (left <= -0.35) { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
     } else if (this.state === 'goal') {
       if (this.stateT < 1.3) this.timeScale = lerp(0.22, 1, sstep(0.5, 1.3, this.stateT)); else this.timeScale = 1;
     }
-    // Dead-reckon the server ball forward each frame (bounded so disconnects don't drift forever)
-    const nb = this.netBall;
-    if (nb && this.state === 'play' && !w.frozen) {
-      if (!nb.frozen && !w.ball.stuckTo && this.ballExtrap < 0.25) {
-        const step = Math.min(dt, 0.05, 0.25 - this.ballExtrap);
-        this.ballExtrap += step;
-        ballIntegrate(nb, step, w.shape, false);
-      }
-      if (w.ball.pos.distanceToSquared(nb.pos) > 36) w.ball.pos.copy(nb.pos);
-      else w.ball.pos.lerp(nb.pos, 1 - Math.exp(-16 * dt));
-      w.ball.vel.lerp(nb.vel, 1 - Math.exp(-16 * dt));
-      w.ball.quat.slerp(nb.quat, 1 - Math.exp(-16 * dt));
-      w.ball.angVel.lerp(nb.angVel, 1 - Math.exp(-16 * dt));
-    }
+  }
+  // Runs at 120Hz inside World.step right after savePrev() so prevPos/pos render interpolation is seamless
+  stepRemoteCars(dt) {
+    const w = this.world;
+    if (!this.hasServerTime) return;
+    const targetT = this.latestServerTime - this.interpDelay;
+    const drift = targetT - this.remoteTime;
+    if (Math.abs(drift) > 0.25) this.remoteTime = targetT;
+    else this.remoteTime += dt + clamp(drift * 6, -0.3, 0.3) * dt;
+    const rt = this.remoteTime;
     for (const c of w.cars) {
-      const nt = c.netTarget;
-      if (c.isRemote && nt && !nt.demolished && nt.extrap < 0.12) {
-        const step = Math.min(dt, 0.05, 0.12 - nt.extrap);
-        nt.extrap += step;
-        nt.pos.addScaledVector(nt.vel, step);
+      if (!c.isRemote || !c.snapBuf || !c.snapBuf.length) continue;
+      const buf = c.snapBuf;
+      let i0 = -1;
+      for (let i = buf.length - 1; i >= 0; i--) {
+        if (buf[i].t <= rt) { i0 = i; break; }
       }
+      if (i0 >= 0 && i0 < buf.length - 1) {
+        const a = buf[i0], b = buf[i0 + 1];
+        const span = b.t - a.t;
+        const u = span > 1e-5 ? clamp((rt - a.t) / span, 0, 1) : 1;
+        const teleport = a.demolished !== b.demolished || a.pos.distanceToSquared(b.pos) > 64 || span > 0.25;
+        if (teleport) {
+          const s = u < 0.5 ? a : b;
+          c.pos.copy(s.pos); c.prevPos.copy(s.pos);
+          c.quat.copy(s.quat); c.prevQuat.copy(s.quat);
+          c.vel.copy(s.vel); c.angVel.copy(s.angVel);
+        } else {
+          // Cubic Hermite interpolation for smooth curves & jumps
+          const u2 = u * u, u3 = u2 * u;
+          const h00 = 2 * u3 - 3 * u2 + 1, h10 = (u3 - 2 * u2 + u) * span;
+          const h01 = -2 * u3 + 3 * u2, h11 = (u3 - u2) * span;
+          c.pos.set(
+            h00 * a.pos.x + h10 * a.vel.x + h01 * b.pos.x + h11 * b.vel.x,
+            h00 * a.pos.y + h10 * a.vel.y + h01 * b.pos.y + h11 * b.vel.y,
+            h00 * a.pos.z + h10 * a.vel.z + h01 * b.pos.z + h11 * b.vel.z
+          );
+          c.vel.lerpVectors(a.vel, b.vel, u);
+          c.quat.slerpQuaternions(a.quat, b.quat, u);
+          c.angVel.lerpVectors(a.angVel, b.angVel, u);
+        }
+        const s = u < 0.5 ? a : b;
+        c.boost = s.boost; c.demolished = s.demolished; c.isBoosting = s.isBoosting;
+        c.supersonic = s.supersonic; c.sliding = s.sliding; c.onGround = s.onGround; c.item = s.item;
+      } else {
+        const s = i0 < 0 ? buf[0] : buf[buf.length - 1];
+        const extra = i0 < 0 ? 0 : clamp(rt - s.t, 0, 0.055);
+        c.pos.copy(s.pos);
+        c.quat.copy(s.quat);
+        c.vel.copy(s.vel);
+        c.angVel.copy(s.angVel);
+        if (!s.demolished && extra > 1e-4) {
+          c.pos.addScaledVector(s.vel, extra);
+          quatIntegrate(c.quat, s.angVel, extra);
+        }
+        if (c.prevPos.distanceToSquared(c.pos) > 64) { c.prevPos.copy(c.pos); c.prevQuat.copy(c.quat); }
+        c.boost = s.boost; c.demolished = s.demolished; c.isBoosting = s.isBoosting;
+        c.supersonic = s.supersonic; c.sliding = s.sliding; c.onGround = s.onGround; c.item = s.item;
+      }
+      c.basis.fromQuat(c.quat);
+      // Spin remote car wheels visually based on velocity
+      const vf = c.vel.dot(c.basis.f);
+      for (const wh of c.wheels) wh.spin += (vf / wh.r) * dt;
     }
   }
   postStep() { }
@@ -7529,8 +7608,10 @@ class OnlineMatchMode extends MatchMode {
     g.fx.goalExplosion(pos, scoringTeam, explosionType, tmpV.set(0, 0, goalTeam === 0 ? 1 : -1).clone());
     g.audio.goal(); g.camera.addShake(0.9); g.ui.flash(0.6); g.vibrate(0.9, 600);
     if (w.powers) w.powers.clearEffects();
-    w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0); g.ballVisual.mesh.visible = false;
+    w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.prevPos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
+    w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity(); g.ballVisual.mesh.visible = false;
     if (this.netBall) { this.netBall.frozen = true; this.netBall.pos.set(0, -50, 0); this.netBall.vel.set(0, 0, 0); }
+    this.localBallHitSeq = 0;
     this.setState('goal'); w.kickoff = false;
     g.ui.updateScore(this.score, scoringTeam);
     const scorerName = msg.scorerName || (msg.own ? 'OWN GOAL' : '');
@@ -7556,11 +7637,41 @@ class OnlineMatchMode extends MatchMode {
   onSnap(m) {
     const g = this.game, w = this.world;
     if (!w || this.endedByServer) return;
-    // How far our predicted car is ahead of this snapshot (unacknowledged inputs)
-    if (typeof m.a === 'number' && g.player) this.lead = clamp((this.inSeq - m.a) * NET_TICKS_PER_INPUT * PHYS.dt, 0, 0.2);
+    const now = performance.now();
+    // Measure actual RTT from the acknowledged input packet
+    if (typeof m.a === 'number' && this.inHist.length) {
+      for (let i = 0; i < this.inHist.length; i++) {
+        if (this.inHist[i].seq === m.a) {
+          const sample = clamp((now - this.inHist[i].t) * 0.001, 0.004, 0.35);
+          this.rtt = this.rtt * 0.82 + sample * 0.18;
+          break;
+        }
+      }
+    }
+    // Gentle clock-drift pacing to keep server input queue near 1 slot (no starvation, no buffer bloat)
+    if (typeof m.q === 'number') {
+      this.qAvg = this.qAvg * 0.85 + m.q * 0.15;
+      if (this.qAvg < 0.55) this.clockRate = 1.015;
+      else if (this.qAvg > 1.85) this.clockRate = 0.985;
+      else this.clockRate = 1.0;
+    }
+    // Track server clock & arrival jitter for remote car interpolation buffer
+    const srvT = (typeof m.k === 'number' ? m.k : 0) * PHYS.dt;
+    if (this.lastSnapAt > 0) {
+      const dtArr = (now - this.lastSnapAt) * 0.001;
+      const expected = 1 / 60;
+      const jit = Math.abs(dtArr - expected);
+      this.snapJitter = this.snapJitter * 0.9 + Math.min(jit, 0.06) * 0.1;
+      this.interpDelay = clamp(0.032 + this.snapJitter * 1.8, 0.032, 0.095);
+    }
+    this.lastSnapAt = now;
+    if (!this.hasServerTime || srvT > this.latestServerTime) {
+      this.latestServerTime = srvT;
+      if (!this.hasServerTime) { this.remoteTime = srvT - this.interpDelay; this.hasServerTime = true; }
+    }
     // Sync server play/frozen state on kickoff transition
     if (m.st === 'play' && this.state === 'countdown') { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
-    else if (typeof m.fz === 'boolean' && (this.state === 'countdown' || this.state === 'play')) w.frozen = m.fz;
+    else if (typeof m.fz === 'boolean' && (m.st === 'countdown' || m.st === 'ended')) w.frozen = m.fz;
     // Clock + score
     this.timeLeft = m.tl;
     if (m.ot && !this.overtime) { this.otTime = 0; }
@@ -7574,40 +7685,79 @@ class OnlineMatchMode extends MatchMode {
         p.active = on; if (on) p.timer = 0;
       }
     }
-    // Ball: server state extrapolated forward to our predicted time
+    // Power-up state (mayhem) — apply before ball so stuckTo/iceT are up to date
+    if (m.pw && w.powers) this.applyPowers(m.pw);
+    // Ball: extrapolate server ball by one-way flight time (half RTT) and reconcile cleanly via visual offset
     const b = m.b;
     if (b) {
-      if (!this.netBall) this.netBall = new Ball();
       const nb = this.netBall;
       nb.pos.set(b[0], b[1], b[2]); nb.vel.set(b[3], b[4], b[5]); nb.quat.set(b[6], b[7], b[8], b[9]);
       if (nb.quat.lengthSq() > 1e-6) nb.quat.normalize(); else nb.quat.identity();
       nb.angVel.set(b[10], b[11], b[12]);
       nb.frozen = !!b[13];
-      this.ballExtrap = 0;
-      if (!nb.frozen) { let t = Math.min(this.lead, 0.12); while (t > 1e-4) { const s = Math.min(PHYS.dt, t); ballIntegrate(nb, s, w.shape, false); t -= s; } }
+      nb.gScale = w.ball.gScale;
+      if (!nb.frozen && !w.ball.stuckTo && !(w.ball.iceT > 0)) {
+        let t = clamp(this.rtt * 0.5, 0.004, 0.065);
+        while (t > 1e-4) {
+          const s = Math.min(PHYS.dt, t);
+          ballIntegrate(nb, s, w.shape, false);
+          quatIntegrate(nb.quat, nb.angVel, s);
+          t -= s;
+        }
+      }
+      // Don't yank the ball backward during the ~1 RTT window right after the local player hits it
+      const holdLocalHit = this.localBallHitSeq > 0 && typeof m.a === 'number' && m.a < this.localBallHitSeq && (now - this.localBallHitAt) < 180;
+      if (!holdLocalHit) {
+        this.localBallHitSeq = 0;
+        const wb = w.ball;
+        const oldPos = this._tmpV.copy(wb.pos);
+        const oldQuat = this._tmpQ.copy(wb.quat);
+        wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
+        const err = oldPos.distanceTo(wb.pos);
+        if (wb.frozen || wb.stuckTo || err >= 4.0) {
+          wb.prevPos.copy(wb.pos); wb.prevQuat.copy(wb.quat);
+          wb.visErrPos.set(0, 0, 0); wb.visErrQuat.identity();
+        } else if (err > 1e-4) {
+          const dPos = this._tmpV2.copy(wb.pos).sub(oldPos);
+          wb.prevPos.add(dPos);
+          wb.visErrPos.sub(dPos);
+          if (wb.visErrPos.lengthSq() > 16) wb.visErrPos.setLength(4);
+          // Quaternion visual error: visErrQuat' * newQuat = oldVisErrQuat * oldQuat => visErrQuat' = oldVisErrQuat * (oldQuat * inv(newQuat))
+          const invNew = this._tmpQ2.copy(wb.quat).invert();
+          const dQ = oldQuat.multiply(invNew);
+          wb.visErrQuat.multiply(dQ).normalize();
+          wb.prevQuat.copy(wb.quat);
+        }
+      }
     }
-    // Power-up state (mayhem)
-    if (m.pw && w.powers) this.applyPowers(m.pw);
-    // Cars
+    // Remote cars: push into snapshot interpolation buffer
     const me = g.player;
-    const remoteLead = Math.min(this.lead, 0.04);
     for (let i = 0; i < w.cars.length && m.c && i < m.c.length; i++) {
       const c = w.cars[i], s = m.c[i];
       if (c === me) continue;
-      if (!c.netTarget) c.netTarget = { pos: new V3(), vel: new V3(), quat: new QT(), boost: 33, isBoosting: false, supersonic: false, sliding: 0, onGround: true, demolished: false, item: null, extrap: 0 };
-      const nt = c.netTarget;
-      nt.vel.set(s[3], s[4], s[5]);
-      nt.pos.set(s[0], s[1], s[2]).addScaledVector(nt.vel, remoteLead);
-      nt.quat.set(s[6], s[7], s[8], s[9]);
-      if (nt.quat.lengthSq() > 1e-6) nt.quat.normalize(); else nt.quat.identity();
-      c.angVel.set(s[10], s[11], s[12]);
-      nt.boost = s[13];
-      nt.demolished = !!(s[14] & 1); nt.isBoosting = !!(s[14] & 2); nt.supersonic = !!(s[14] & 4); nt.sliding = (s[14] & 8) ? 1 : 0; nt.onGround = !!(s[14] & 16);
-      nt.item = s[15] || null;
-      nt.extrap = 0;
-      if (nt.demolished) nt.pos.set(s[0], s[1], s[2]);
+      if (!c.snapBuf) c.snapBuf = [];
+      const buf = c.snapBuf;
+      const prev = buf.length ? buf[buf.length - 1] : null;
+      if (prev && srvT <= prev.t) continue;
+      const q = new QT(s[6], s[7], s[8], s[9]);
+      if (q.lengthSq() > 1e-6) q.normalize(); else q.identity();
+      buf.push({
+        t: srvT,
+        pos: new V3(s[0], s[1], s[2]),
+        vel: new V3(s[3], s[4], s[5]),
+        quat: q,
+        angVel: new V3(s[10], s[11], s[12]),
+        boost: s[13],
+        demolished: !!(s[14] & 1),
+        isBoosting: !!(s[14] & 2),
+        supersonic: !!(s[14] & 4),
+        sliding: (s[14] & 8) ? 1 : 0,
+        onGround: !!(s[14] & 16),
+        item: s[15] || null
+      });
+      if (buf.length > 8) buf.shift();
     }
-    if (me && m.me) this.reconcile(m.me, m.a, m.c ? m.c[w.cars.indexOf(me)] : null);
+    if (me && m.me) this.reconcile(m.me, m.a);
     // Stats
     if (Array.isArray(m.cs)) {
       for (let i = 0; i < w.cars.length && i < m.cs.length; i++) {
@@ -7618,33 +7768,47 @@ class OnlineMatchMode extends MatchMode {
     // Server-side events (demolitions, power-ups, respawns) for effects and sounds
     if (Array.isArray(m.ev)) for (const e of m.ev) this.pendingEvents.push(this.deserializeEvent(e));
   }
-  reconcile(state, ack, snapRow) {
+  reconcile(state, ack) {
     const car = this.game.player, w = this.world;
     while (this.inHist.length && this.inHist[0].seq <= ack) this.inHist.shift();
-    const oldPos = car.pos.clone(), oldQuat = car.quat.clone();
+    const oldPos = this._tmpV.copy(car.pos), oldQuat = this._tmpQ.copy(car.quat);
     const savedControls = Object.assign({}, car.controls);
     applyCarState(car, state);
-    if (car.demolished) { car.respawnT = 99; return; } // the server decides the respawn
+    if (car.demolished) {
+      car.respawnT = 99;
+      car.prevPos.copy(car.pos); car.prevQuat.copy(car.quat);
+      car.visErrPos.set(0, 0, 0); car.visErrQuat.identity();
+      return;
+    }
     if (!w.frozen && this.state === 'play') {
-      // Re-simulate inputs the server hasn't processed yet on top of its state
+      // Re-simulate inputs the server hasn't processed yet on top of its authoritative state
       const n = this.inHist.length;
       for (let i = 0; i < n; i++) {
         unpackControls(this.inHist[i].c, car.controls);
         const ticks = (i === n - 1 && this.inTick % NET_TICKS_PER_INPUT === 1) ? 1 : NET_TICKS_PER_INPUT;
         for (let t = 0; t < ticks; t++) {
           car.unlimitedBoost = w.unlimitedBoost || car.unlimitedBoost === 'always';
+          if (w.boostRecharge && !car.isBoosting && car.boost < 100) car.boost = Math.min(100, car.boost + 14 * PHYS.dt);
           car.step(PHYS.dt, w);
         }
       }
     }
     Object.assign(car.controls, savedControls);
-    // Small corrections are blended in over a few snapshots instead of snapping
+    // Keep physics state 100% pure; absorb small discrepancies into visual-only error offset
     const err = oldPos.distanceTo(car.pos);
-    if (err < 3) {
-      car.pos.lerpVectors(oldPos, car.pos, 0.35);
-      car.quat.slerpQuaternions(oldQuat, car.quat, 0.35);
-      car.basis.fromQuat(car.quat);
-    } else car.prevPos.copy(car.pos);
+    if (err >= 3.0) {
+      car.prevPos.copy(car.pos); car.prevQuat.copy(car.quat);
+      car.visErrPos.set(0, 0, 0); car.visErrQuat.identity();
+    } else if (err > 1e-4) {
+      const dPos = this._tmpV2.copy(car.pos).sub(oldPos);
+      car.prevPos.add(dPos);
+      car.visErrPos.sub(dPos);
+      if (car.visErrPos.lengthSq() > 9) car.visErrPos.setLength(3);
+      const invNew = this._tmpQ2.copy(car.quat).invert();
+      const dQ = oldQuat.multiply(invNew);
+      car.visErrQuat.multiply(dQ).normalize();
+      car.prevQuat.copy(car.quat);
+    }
   }
   applyPowers(pw) {
     const w = this.world, P = w.powers;
@@ -9774,7 +9938,7 @@ class GameEngine {
           this.input.controls(this.player.controls);
           if (this.mode.state === 'ended' || (this.ui.overlayOpen && !this.ui._sb)) Object.assign(this.player.controls, makeControls());
         }
-        this.acc += dt * ts; let steps = 0;
+        this.acc += dt * ts * (m.clockRate || 1); let steps = 0;
         while (this.acc >= PHYS.dt && steps < 12) {
           this.world.step(PHYS.dt); this.processEvents(); if (this.mode) this.mode.postStep(PHYS.dt);
           this.acc -= PHYS.dt; steps++;
@@ -9798,7 +9962,20 @@ class GameEngine {
       } else v.update(alpha, vdt, this.time, this.fx, null);
     }
     if (replaying) { this.ballPosV.copy(this.replay.ballPos); this.ballQuatV.copy(this.replay.ballQuat); }
-    else { this.ballPosV.lerpVectors(w.ball.prevPos, w.ball.pos, alpha); this.ballQuatV.slerpQuaternions(w.ball.prevQuat, w.ball.quat, alpha); }
+    else {
+      this.ballPosV.lerpVectors(w.ball.prevPos, w.ball.pos, alpha);
+      this.ballQuatV.slerpQuaternions(w.ball.prevQuat, w.ball.quat, alpha);
+      if (w.ball.visErrPos.lengthSq() > 1e-7) {
+        w.ball.visErrPos.multiplyScalar(Math.exp(-18 * vdt));
+        if (w.ball.visErrPos.lengthSq() < 1e-7) w.ball.visErrPos.set(0, 0, 0);
+        this.ballPosV.add(w.ball.visErrPos);
+      }
+      if (Math.abs(1 - Math.abs(w.ball.visErrQuat.w)) > 1e-6) {
+        if (!this._idQ) this._idQ = new QT();
+        w.ball.visErrQuat.slerp(this._idQ, 1 - Math.exp(-18 * vdt));
+        this.ballQuatV.premultiply(w.ball.visErrQuat).normalize();
+      }
+    }
     const ballTeam = replaying ? this.replay.ballTeam : (w.ball.lastTouch ? w.ball.lastTouch.team : -1);
     if (!this.showroom) this.ballVisual.update(this.ballPosV, this.ballQuatV, vdt, ballTeam, w.shape);
     else this.ballVisual.shadow.visible = false;
