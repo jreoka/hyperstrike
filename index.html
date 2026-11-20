@@ -7084,9 +7084,12 @@ class PowerSystem {
 
 class ReplayRecorder {
   constructor(world) { this.world = world; this.frames = []; this.pendingEvents = []; this.max = 330; this.every = 2; }
-  captureEvents() {
-    const w = this.world, evs = w.events;
+  // `tick` (online only) stamps each event with the sim tick it happened on, so it is attached to
+  // the recorded frame of that tick rather than to whichever snapshot happens to arrive next.
+  captureEvents(evs = this.world.events, tick) {
+    const w = this.world;
     if (!evs || !evs.length) return;
+    const n0 = this.pendingEvents.length;
     for (const e of evs) {
       switch (e.type) {
         case 'hit':
@@ -7141,11 +7144,45 @@ class ReplayRecorder {
         }
       }
     }
+    if (tick !== undefined) for (let i = n0; i < this.pendingEvents.length; i++) this.pendingEvents[i]._t = tick;
   }
   record() {
     this.captureEvents();
     const w = this.world; if (w.tick % this.every) return;
-    const b = w.ball, P = w.powers;
+    this.push(this.makeFrame());
+  }
+  // Online: the world currently holds the server's authoritative state for `tick` (called from
+  // rollback before re-prediction). Snapshots can be coalesced or dropped, so missing 60Hz
+  // frames are filled by interpolation to keep replay timing correct.
+  recordAt(tick) {
+    if (this.lastTick !== undefined && tick <= this.lastTick) return;
+    const f = this.makeFrame(tick), prev = this.frames[this.frames.length - 1];
+    const gap = prev && this.lastTick !== undefined ? Math.round((tick - this.lastTick) / this.every) - 1 : 0;
+    if (gap > 0 && gap <= 10) for (let k = 1; k <= gap; k++) this.push(ReplayRecorder.lerpFrame(prev, f, k / (gap + 1)));
+    this.push(f); this.lastTick = tick;
+  }
+  static lerpFrame(a, b, k) {
+    const lv = (x, y) => {
+      const dx = y[0] - x[0], dy = y[1] - x[1], dz = y[2] - x[2];
+      if (dx * dx + dy * dy + dz * dz > 25) return (k < 0.5 ? x : y).slice(); // teleport (goal, respawn): no in-between
+      const o = y.slice(); for (let i = 0; i < 3; i++) o[i] = x[i] + (y[i] - x[i]) * k;
+      const d = x[3] * y[3] + x[4] * y[4] + x[5] * y[5] + x[6] * y[6], sg = d < 0 ? -1 : 1;
+      let l = 0; for (let i = 3; i < 7; i++) { o[i] = x[i] * sg + (y[i] - x[i] * sg) * k; l += o[i] * o[i]; }
+      l = Math.sqrt(l) || 1; for (let i = 3; i < 7; i++) o[i] /= l;
+      return o;
+    };
+    return { ball: lv(a.ball, b.ball), cars: b.cars.map((c, i) => a.cars[i] ? lv(a.cars[i], c) : c), powers: b.powers, events: null };
+  }
+  takeEvents(tick) {
+    const pe = this.pendingEvents; if (!pe.length) return null;
+    if (tick === undefined) return pe.splice(0);
+    const out = [], keep = [];
+    for (const e of pe) (e._t > tick ? keep : out).push(e);
+    this.pendingEvents = keep;
+    return out.length ? out : null;
+  }
+  makeFrame(tick) {
+    const w = this.world, b = w.ball, P = w.powers;
     const f = {
       ball: [b.pos.x, b.pos.y, b.pos.z, b.quat.x, b.quat.y, b.quat.z, b.quat.w, b.lastTouch ? b.lastTouch.team : -1, b.iceT || 0, b.antiT || 0, b.stuckTo ? 1 : 0],
       cars: [],
@@ -7153,15 +7190,18 @@ class ReplayRecorder {
         tornados: P.tornados.map(T => [T.id, T.pos.x, T.pos.y, T.pos.z, T.t, T.life]),
         shots: P.shots.map(S => [S.kind, w.cars.indexOf(S.from), S.to === b ? -1 : w.cars.indexOf(S.to), S.pos.x, S.pos.y, S.pos.z, S.phase === 'pull' ? 1 : 0])
       } : null,
-      events: this.pendingEvents.length ? this.pendingEvents.splice(0) : null
+      events: this.takeEvents(tick)
     };
     for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0, c.supersonic ? 1 : 0, c.spikeT || 0, c.magT || 0, c.ovT || 0, c.nitroT || 0, c.scrT || 0]);
+    return f;
+  }
+  push(f) {
     this.frames.push(f); if (this.frames.length > this.max) this.frames.shift();
     // After a goal, keep appending frames to the goal replay so it shows the aftermath too
     if (this.tail && this.tail.length < this.tailMax) this.tail.push(f);
   }
   snapshot(seconds) { const n = Math.min(this.frames.length, Math.round(seconds * 120 / this.every)); return this.frames.slice(this.frames.length - n); }
-  clear() { this.frames.length = 0; this.pendingEvents.length = 0; this.tail = null; }
+  clear() { this.frames.length = 0; this.pendingEvents.length = 0; this.tail = null; this.lastTick = undefined; }
 }
 
 const BALL_GLSL = `
@@ -7672,6 +7712,8 @@ class OnlineMatchMode extends MatchMode {
       }
     }
     for (const p of w.pads) if (!p.active) { p.timer -= dt; if (p.timer <= 0) p.active = true; }
+    // Local predicted events (hits, bounces, car sounds) feed the goal replay, stamped with this tick
+    if (live && w.events.length) w.recorder.captureEvents(w.events, w.tick);
     w.tick++; w.time += dt;
     if (live && this.pendingEvents.length) for (const e of this.pendingEvents.splice(0)) w.events.push(e);
   }
@@ -7693,6 +7735,8 @@ class OnlineMatchMode extends MatchMode {
     // The match start runs a local kickoff and the server's kickoff message confirms it a
     // moment later: keep the countdown already shown so "3" is not announced twice.
     const cdKeep = this.state === 'countdown' ? this.cdLast : 4;
+    if (this.state === 'replay' || this.game.replay.active) { this.game.replay.stop(); this.game.ui.replayTag(false); }
+    this.replayDecided = false; this.replayDoneSent = false; this.replayFrames = null;
     super.beginKickoff();
     this.cdLast = cdKeep;
     const w = this.world, k = this.kickCars;
@@ -7723,7 +7767,47 @@ class OnlineMatchMode extends MatchMode {
       // GO! is triggered by the predicted unfreeze tick (see netStep / rollback)
     } else if (this.state === 'goal') {
       if (this.stateT < 1.3) this.timeScale = lerp(0.22, 1, sstep(0.5, 1.3, this.stateT)); else this.timeScale = 1;
+      // Same timing as offline: celebrate, then the replay. The server holds the next kickoff
+      // until every player has finished (or skipped) their replay.
+      if (this.stateT > 3.4 && !this.replayDecided) {
+        this.replayDecided = true; this.timeScale = 1;
+        const frames = this.replayFrames;
+        if (Settings.data.replays && !this.goalEndsMatch && frames && frames.length > 30) this.startReplay();
+        else this.sendReplayDone();
+      }
+    } else if (this.state === 'replay') {
+      const done = g.replay.update(dt);
+      if (done || g.input.hit('Space') || g.input.hit('Enter') || g.input.padHit(0) || g.input.hit('Mouse1')) this.endReplay();
     }
+  }
+  // Keep simulating during the replay: inputs must keep flowing so the server's input timeline
+  // stays in step with ours (the server freezes the world meanwhile, so nothing happens)
+  get simRunning() { return this.state !== 'ended'; }
+  startReplay() {
+    const g = this.game, frames = this.replayFrames;
+    // Goal moment = the last frame before the server parked the ball off-field
+    let gi = frames.length - 1;
+    for (let i = 1; i < frames.length; i++) if (frames[i].ball[1] < -40) { gi = i - 1; break; }
+    this.replayGoalIdx = gi;
+    super.startReplay();
+  }
+  endReplay() {
+    const g = this.game;
+    if (g.replay.active) g.replay.stop();
+    g.ui.replayTag(false);
+    if (this.state === 'replay') {
+      this.setState('postReplay');
+      g.camera.mode = g.player ? 'car' : (g.camera.mode === 'free' ? 'free' : g.specMode || 'broadcast'); g.camera.snap();
+    }
+    this.sendReplayDone();
+  }
+  setState(st) {
+    if (st === 'ended' && (this.state === 'replay' || this.game.replay.active)) { this.game.replay.stop(); this.game.ui.replayTag(false); }
+    super.setState(st);
+  }
+  sendReplayDone() {
+    const on = this.game.online;
+    if (on && this.mid !== null && !this.replayDoneSent) { this.replayDoneSent = true; on.wsSend({ type: 'replay_done', m: this.mid }); }
   }
   postStep() { }
   onGoal() { }
@@ -7740,6 +7824,14 @@ class OnlineMatchMode extends MatchMode {
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.prevPos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
     w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity(); g.ballVisual.mesh.visible = false;
     this.unfreezeTick = -1; this.pendingSnap = null;
+    // Replay footage: the last 5.5s of authoritative frames, plus the aftermath as it streams in
+    const scorerIdx = Number.isInteger(msg.scorer) ? msg.scorer : -1;
+    this.replayFrames = w.recorder.snapshot(5.5); this.replayGoalIdx = this.replayFrames.length - 1; this.replayGoalZ = pos.z;
+    this.lastScorer = scorerIdx >= 0 ? w.cars[scorerIdx] || null : null;
+    w.recorder.tail = this.replayFrames; w.recorder.tailMax = this.replayFrames.length + 150;
+    this.replayBoom = { pos: pos.clone(), team: scoringTeam, type: explosionType, dir: new V3(0, 0, goalTeam === 0 ? 1 : -1) };
+    this.goalEndsMatch = this.overtime; // overtime goal: the server goes straight to the results
+    this.replayDecided = false; this.replayDoneSent = false;
     this.setState('goal'); w.kickoff = false;
     g.ui.updateScore(this.score, scoringTeam);
     // Scorer & assist are decided by the server from its own touch history; identify the cars by
@@ -7823,7 +7915,11 @@ class OnlineMatchMode extends MatchMode {
           st.score = c[0]; st.goals = c[1]; st.assists = c[2]; st.saves = c[3]; st.shots = c[4]; st.demos = c[5];
         }
       }
-      if (Array.isArray(m.ev)) for (const e of m.ev) this.pendingEvents.push(this.deserializeEvent(e));
+      if (Array.isArray(m.ev)) {
+        const evs = m.ev.map(e => this.deserializeEvent(e));
+        for (const e of evs) this.pendingEvents.push(e);
+        w.recorder.captureEvents(evs, s.tick);
+      }
     }
     if (s.st === 'ended') { this.pendingSnap = null; return; }
     // Snapshots are full state: when several arrive between two frames (network jitter
@@ -7858,6 +7954,8 @@ class OnlineMatchMode extends MatchMode {
     }
     w.frozen = s.frozen;
     this.unfreezeTick = (s.st === 'countdown' && s.cd >= 0) ? s.tick + s.cd : -1;
+    // Goal replay footage comes from the authoritative state (not our prediction)
+    if (!s.frozen && (s.st === 'play' || s.st === 'goal')) w.recorder.recordAt(s.tick);
     // 2) Work out how far ahead of the server our timeline is, then replay up to it
     const replayable = s.st === 'play' || s.st === 'countdown';
     let replay = null, ticks = 0;
@@ -10107,7 +10205,7 @@ class GameEngine {
         ts = this.mode.timeScale || 1;
         if (this.player) {
           this.input.controls(this.player.controls);
-          if (this.mode.state === 'ended' || (this.ui.overlayOpen && !this.ui._sb)) Object.assign(this.player.controls, makeControls());
+          if (this.mode.state === 'ended' || this.mode.state === 'replay' || (this.ui.overlayOpen && !this.ui._sb)) Object.assign(this.player.controls, makeControls());
         }
         this.acc += dt * ts * (m.clockRate || 1); let steps = 0;
         while (this.acc >= PHYS.dt && steps < 12) {
