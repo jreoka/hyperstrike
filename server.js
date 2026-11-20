@@ -1597,7 +1597,7 @@ wss.on('connection', (ws, req) => {
         const gen = ws.soloGen;
         const raw = (msg.cfg && typeof msg.cfg === 'object') ? msg.cfg : {};
         const tournament = !!raw.tournament;
-        const teamSize = Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4 ? raw.teamSize : 2;
+        const teamSize = Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 5 ? raw.teamSize : 2;
         const difficulty = Number.isInteger(raw.difficulty) && raw.difficulty >= 0 && raw.difficulty <= 3 ? raw.difficulty : 1;
         const duration = tournament ? 180 : ([0, 120, 180, 300].includes(Number(raw.duration)) ? Number(raw.duration) : 300);
         const arena = Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena < ARENA_COUNT ? raw.arena : Math.floor(Math.random() * ARENA_COUNT);
