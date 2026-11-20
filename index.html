@@ -185,6 +185,7 @@ button{font-family:inherit;color:inherit}
 .cta.ghost:hover,.cta.ghost:focus-visible,body.gp-nav .cta.ghost:focus{background:rgba(62,242,255,.14);color:#fff;filter:none}
 .dock{position:sticky;bottom:0;z-index:4;margin:14px -26px 0;padding:16px 26px 20px;background:linear-gradient(0deg,rgba(5,8,19,.98) 0%,rgba(5,8,19,.94) 72%,rgba(5,8,19,0) 100%)}
 .dock .cta{margin-top:0}
+body.pad-ui .dock .cta>span::after{content:"START";font-size:10px;font-style:normal;font-stretch:100%;letter-spacing:.14em;padding:3px 6px;border:1.5px solid currentColor;opacity:.75;line-height:1}
 #menuPanel:has(.dock)::after{display:none}
 .desc{font-size:13.5px;color:var(--ink2);line-height:1.55;margin:6px 0 4px;font-weight:500;letter-spacing:.01em}
 .desc b{color:#fff}
@@ -8577,6 +8578,30 @@ class UIManager {
     if (showRing) document.body.classList.add('gp-nav');
     el.focus({ preventScroll: true });
     el.scrollIntoView && el.scrollIntoView({ block: 'nearest' });
+    this.keepClearOfDock(el);
+  }
+  // scrollIntoView treats elements hidden under the sticky .dock (Start button bar) as visible;
+  // nudge the panel so the focused element sits above the dock with some headroom for its section label.
+  keepClearOfDock(el) {
+    const panel = $('menuPanel');
+    if (!panel || !panel.contains(el)) return;
+    const dock = panel.querySelector('.dock');
+    if (dock && dock.contains(el)) return;
+    const pr = panel.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const bottom = (dock ? dock.getBoundingClientRect().top : pr.bottom) - 12;
+    const top = pr.top + 34;
+    if (r.bottom > bottom) panel.scrollTop += r.bottom - bottom;
+    else if (r.top < top) panel.scrollTop -= top - r.top;
+  }
+  scrollActive(dy) {
+    const root = this.overlayOpen ? $('overlayBox') : $('menuPanel');
+    if (root) root.scrollTop += dy;
+  }
+  triggerDockCta() {
+    if (this.overlayOpen || $('menu').classList.contains('hidden')) return false;
+    const b = $('menuPanel').querySelector('.dock .cta:not(:disabled)');
+    if (!b || b.offsetParent === null) return false;
+    document.body.classList.add('gp-nav'); this.focusEl(b); b.click(); return true;
   }
   overlay(html, cls = '') {
     $('overlay').classList.remove('hidden'); $('overlay').style.pointerEvents = ''; $('overlayBox').className = 'box ' + cls; $('overlayBox').innerHTML = html; this.bindOverlay();
@@ -8714,17 +8739,35 @@ class UIManager {
       }
       return best;
     };
+    // The panel's sticky .dock (Start button) is always pinned at the bottom of the screen, so geometric
+    // search would treat it as "between" content rows. Treat it as a separate zone that comes after all content.
+    const panelEls = root === $('menu') && panel ? els.filter(e => panel.contains(e)) : [];
+    const dock = panel && panel.querySelector('.dock');
+    const dockEls = dock ? panelEls.filter(e => dock.contains(e)) : [];
+    const bodyEls = panelEls.filter(e => !dockEls.includes(e));
+    const inDock = dockEls.includes(cur);
     let best = null;
-    if ((dir === 'up' || dir === 'down') && (inNav || inPanel)) {
-      const samePane = els.filter(e => inNav ? nav.contains(e) : panel.contains(e));
-      best = findBest(samePane);
-    } else if (dir === 'right' && inNav) {
-      const panelEls = els.filter(e => panel.contains(e));
-      best = findBest(panelEls) || panelEls[0] || null;
-    } else if (dir === 'left' && inPanel) {
-      const panelEls = els.filter(e => panel.contains(e));
-      best = findBest(panelEls);
-      if (!best) best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
+    if (inNav && (dir === 'up' || dir === 'down')) {
+      best = findBest(els.filter(e => nav.contains(e)));
+    } else if (inNav && dir === 'right') {
+      const pr = panel.getBoundingClientRect(), limit = dock ? dock.getBoundingClientRect().top : pr.bottom;
+      const visible = bodyEls.filter(e => { const r = e.getBoundingClientRect(); return r.top >= pr.top && r.bottom <= limit; });
+      best = findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || null;
+    } else if (inDock) {
+      if (dir === 'up') {
+        // jump to the bottom-most row of content, picking the item horizontally closest to the button
+        const cx = (() => { const r = cur.getBoundingClientRect(); return r.left + r.width / 2; })();
+        let maxB = -1e9; for (const e of bodyEls) maxB = Math.max(maxB, e.getBoundingClientRect().bottom);
+        let bd = 1e9;
+        for (const e of bodyEls) { const r = e.getBoundingClientRect(); if (r.bottom < maxB - 12) continue; const d = Math.abs(r.left + r.width / 2 - cx); if (d < bd) { bd = d; best = e; } }
+      } else if (dir === 'left' || dir === 'right') {
+        best = findBest(dockEls);
+        if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
+      }
+    } else if (inPanel) {
+      best = findBest(bodyEls);
+      if (!best && dir === 'down') best = dockEls[0] || null;
+      if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
     } else {
       best = findBest(els);
     }
@@ -9180,9 +9223,12 @@ class GameEngine {
         this._navDir = null;
         this._navT = 0;
       }
+      const ry = inp.axis(3);
+      if (ry) this.ui.scrollActive(ry * 1100 * dt);
       if (inp.padHit(4)) this.ui.cycleTab(-1);
       if (inp.padHit(5)) this.ui.cycleTab(1);
       if (inp.padHit(0)) this.ui.activateFocused();
+      if (inp.padHit(9)) this.ui.triggerDockCta();
     }
   }
   handleInput(dt) {
