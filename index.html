@@ -7458,7 +7458,7 @@ class MatchMode extends ModeBase {
     const g = this.game, w = this.world;
     if (this.state === 'countdown') {
       const left = (this.exhibition ? 1.5 : 3.0) - this.stateT; const n = Math.ceil(left);
-      if (n !== this.cdLast && n > 0) { this.cdLast = n; if (!this.exhibition) { g.ui.countdown(String(n)); g.audio.countdown(false); } }
+      if (n < this.cdLast && n > 0) { this.cdLast = n; if (!this.exhibition) { g.ui.countdown(String(n)); g.audio.countdown(false); } }
       if (left <= 0) { w.frozen = false; this.setState('play'); if (!this.exhibition) { g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); } }
     } else if (this.state === 'play') {
       if (w.kickoff && (w.ball.lastTouch || this.stateT > 6)) w.kickoff = false;
@@ -7579,6 +7579,8 @@ class OnlineMatchMode extends MatchMode {
     this.lastStarveAt = performance.now(); this.lastTargetDecay = this.lastStarveAt;
     this.unfreezeTick = -1; this.lastSnapTick = -1; this.specLead = 3;
     this.pendingEvents = []; this.kickCars = null;
+    this.mid = Number.isInteger(cfg.mid) ? cfg.mid : null; // server match id, tags our inputs
+    this.inputsClosed = false; this.pendingSnap = null;
     this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT(); this._tmpQ3 = new QT();
     this._ctlSave = makeControls();
     this._old = [];
@@ -7606,14 +7608,14 @@ class OnlineMatchMode extends MatchMode {
   // (quantized) values for both ticks so local prediction matches the server.
   beforeTick() {
     const g = this.game, p = g.player;
-    if (!p || !g.online) return;
+    if (!p || !g.online || this.inputsClosed) return;
     if (this.inTick++ % NET_TICKS_PER_INPUT === 0) {
       const packed = packControls(p.controls);
       const seq = ++this.inSeq;
       this.curInput = packed;
       this.inHist.push({ seq, c: packed, t: performance.now() });
       if (this.inHist.length > 240) this.inHist.shift();
-      g.online.wsSend({ type: 'in', s: seq, c: packed });
+      g.online.wsSend(this.mid !== null ? { type: 'in', s: seq, c: packed, m: this.mid } : { type: 'in', s: seq, c: packed });
     }
     if (this.curInput) unpackControls(this.curInput, p.controls);
   }
@@ -7677,7 +7679,11 @@ class OnlineMatchMode extends MatchMode {
     this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1);
   }
   beginKickoff() {
+    // The match start runs a local kickoff and the server's kickoff message confirms it a
+    // moment later: keep the countdown already shown so "3" is not announced twice.
+    const cdKeep = this.state === 'countdown' ? this.cdLast : 4;
     super.beginKickoff();
+    this.cdLast = cdKeep;
     const w = this.world, k = this.kickCars;
     w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity();
     if (!k) return;
@@ -7689,14 +7695,18 @@ class OnlineMatchMode extends MatchMode {
   }
   serverKickoff(msg) {
     this.kickCars = Array.isArray(msg.cars) ? msg.cars : null;
+    this.pendingSnap = null; // pre-kickoff state must not overwrite the kickoff placement
     this.beginKickoff();
   }
   preUpdate(dt) {
     const g = this.game;
     ModeBase.prototype.preUpdate.call(this, dt);
     if (this.state === 'countdown') {
-      const left = 3.0 - this.stateT; const n = Math.ceil(left);
-      if (n !== this.cdLast && n > 0) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
+      // Count from the server's authoritative unfreeze tick once a snapshot gave it to us, so
+      // the numbers line up with GO! under any lag; numbers only ever count down (no repeats).
+      const left = this.unfreezeTick >= 0 ? (this.unfreezeTick - this.world.tick) * PHYS.dt : 3.0 - this.stateT;
+      const n = Math.min(3, Math.ceil(left - 1e-6));
+      if (n > 0 && n < this.cdLast) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
       // GO! is triggered by the predicted unfreeze tick (see netStep / rollback)
     } else if (this.state === 'goal') {
       if (this.stateT < 1.3) this.timeScale = lerp(0.22, 1, sstep(0.5, 1.3, this.stateT)); else this.timeScale = 1;
@@ -7716,7 +7726,7 @@ class OnlineMatchMode extends MatchMode {
     if (w.powers) w.powers.clearEffects();
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.prevPos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
     w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity(); g.ballVisual.mesh.visible = false;
-    this.unfreezeTick = -1;
+    this.unfreezeTick = -1; this.pendingSnap = null;
     this.setState('goal'); w.kickoff = false;
     g.ui.updateScore(this.score, scoringTeam);
     const scorerName = msg.scorerName || (msg.own ? 'OWN GOAL' : '');
@@ -7786,6 +7796,8 @@ class OnlineMatchMode extends MatchMode {
     if (m) {
       if (m.pw && w.powers) this.applyPowers(m.pw);
       if (Array.isArray(m.it)) for (let i = 0; i < w.cars.length && i < m.it.length; i++) w.cars[i].item = m.it[i] || null;
+      // Seconds until each car's next power-up (the timer runs on the server)
+      if (Array.isArray(m.inx)) for (let i = 0; i < w.cars.length && i < m.inx.length; i++) w.cars[i].itemNext = netNum(m.inx[i]);
       if (Array.isArray(m.cs)) {
         for (let i = 0; i < w.cars.length && i < m.cs.length; i++) {
           const st = w.cars[i].stats, c = m.cs[i];
@@ -7794,7 +7806,17 @@ class OnlineMatchMode extends MatchMode {
       }
       if (Array.isArray(m.ev)) for (const e of m.ev) this.pendingEvents.push(this.deserializeEvent(e));
     }
-    if (s.st === 'ended') return;
+    if (s.st === 'ended') { this.pendingSnap = null; return; }
+    // Snapshots are full state: when several arrive between two frames (network jitter
+    // bursts), only the newest needs a rewind + resimulation. Coalescing them avoids
+    // running the expensive replay 2-4 times in one frame, which caused frame hitches.
+    this.pendingSnap = s;
+  }
+  flushSnap() {
+    const s = this.pendingSnap;
+    if (!s) return;
+    this.pendingSnap = null;
+    if (this.endedByServer || !this.world) return;
     this.rollback(s);
   }
   rollback(s) {
@@ -9558,6 +9580,9 @@ class GameEngine {
       return;
     }
     this.lastCfg = { type: 'match', cfg };
+    // Restart / rematch: the old match keeps rendering until the new one arrives, but must
+    // stop sending inputs (they belong to the old server match)
+    if (this.mode instanceof OnlineMatchMode) this.mode.inputsClosed = true;
     this.online.startSoloServerMatch(cfg);
   }
   startOnlineMatch(msg) {
@@ -9593,7 +9618,8 @@ class GameEngine {
       boostMode: s.boostMode || 'normal',
       mutator: s.mutator || 'normal',
       botDiff: s.botDiff || 1,
-      isSolo
+      isSolo,
+      mid: msg.mid
     }));
     this.audio.setMusicMode('game');
   }
@@ -9992,6 +10018,8 @@ class GameEngine {
   update(dt) {
     this.syncOrientation();
     this.syncCursor();
+    // Apply the newest network snapshot (coalesced) once per frame, paused or not
+    if (this.mode && this.mode.flushSnap) this.mode.flushSnap();
     if (this.portraitLocked) { this.renderFrame(0); return; }
     this.input.poll();
     this.handleInput(dt);

@@ -446,7 +446,7 @@ class ServerMatch {
       return S.netPackControls(c.controls);
     });
     const meta = {};
-    if (w.powers) { meta.pw = this.powersSnap(); meta.it = w.cars.map(c => c.item || null); }
+    if (w.powers) { meta.pw = this.powersSnap(); meta.it = w.cars.map(c => c.item || null); meta.inx = w.cars.map(c => Math.round((c.itemNext || 0) * 10) / 10); }
     if (this.events.length) meta.ev = this.events.splice(0);
     if (this.slot % 30 === 0 || this.state === 'ended') meta.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
     const shared = S.netEncodeSnapshot(w, {

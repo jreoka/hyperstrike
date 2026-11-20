@@ -626,6 +626,9 @@ const AC_BASE_BAN_MS = 10 * 60 * 1000;
 const AC_MAX_BAN_MS = 7 * 24 * 60 * 60 * 1000;
 const AC_INPUT_MAX_PER_SEC = 105;   // client sends ~60Hz (+ jitter bursts)
 const AC_INPUT_STRIKE_AT = 135;     // sustained flood above rate limit
+// Snapshots are full state, so when a client's socket is backed up (slow link, Wi-Fi stall)
+// skip sending more: queueing them only adds latency, the next one supersedes them anyway.
+const SNAP_BACKLOG_MAX = 48 * 1024;
 
 function acLog(user, reason) {
   console.warn(`[ANTI-CHEAT] ${user ? user.username : '?'}: ${reason}`);
@@ -1518,13 +1521,13 @@ wss.on('connection', (ws, req) => {
           broadcast: m => broadcastLobby(lb, m),
           sendRaw: (userId, raw) => {
             const pws = clientsByUserId.get(userId);
-            if (pws && pws.readyState === 1 && pws.lobbyCode === lb.code) pws.send(raw);
+            if (pws && pws.readyState === 1 && pws.lobbyCode === lb.code && pws.bufferedAmount < SNAP_BACKLOG_MAX) pws.send(raw);
           },
           spectators: raw => {
             for (const p of lb.players.values()) {
               if (p.team === 0 || p.team === 1) continue;
               const pws = clientsByUserId.get(p.userId);
-              if (pws && pws.readyState === 1) pws.send(raw);
+              if (pws && pws.readyState === 1 && pws.bufferedAmount < SNAP_BACKLOG_MAX) pws.send(raw);
             }
           },
           onGoal: info => broadcastLobby(lb, Object.assign({ type: 'match_goal_ack' }, info)),
@@ -1556,6 +1559,7 @@ wss.on('connection', (ws, req) => {
             settings,
             players: curSnap.players,
             cars: sim.carInfo,
+            mid: sim.id,
             serverSim: true
           });
           sim.start();
@@ -1617,7 +1621,7 @@ wss.on('connection', (ws, req) => {
           players: [{ userId: ws.userId, username: ws.username, team: playerTeam, car: me ? me.car : sanitizeCar(null) }],
           broadcast: m => send(ws, m),
           sendRaw: (userId, rawStr) => {
-            if (userId === ws.userId && ws.readyState === 1) ws.send(rawStr);
+            if (userId === ws.userId && ws.readyState === 1 && ws.bufferedAmount < SNAP_BACKLOG_MAX) ws.send(rawStr);
           },
           onGoal: info => send(ws, Object.assign({ type: 'match_goal_ack' }, info)),
           onEnd: ({ score, stats }) => finalizeSoloMatch(ws, score, stats),
@@ -1642,6 +1646,7 @@ wss.on('connection', (ws, req) => {
             teamNames,
             tournament,
             solo: true,
+            mid: sim.id,
             serverSim: true
           });
           sim.start();
@@ -1664,7 +1669,11 @@ wss.on('connection', (ws, req) => {
 
       // ---- IN-MATCH: clients send only their controls; the server simulates ----
       case 'in': {
+        // Inputs are tagged with the match id they were produced for. Packets still in flight
+        // from a previous match (restart / rematch) must not reach the new one.
+        const inMid = Number.isInteger(msg.m) ? msg.m : null;
         if (ws.soloSim) {
+          if (inMid !== null && inMid !== ws.soloSim.id) return;
           if (!ws.soloAc) ws.soloAc = makeAcRec(now);
           if (!packetRateOk(ws.soloAc.inPkt, now, AC_INPUT_MAX_PER_SEC)) {
             if (ws.soloAc.inPkt.pktCount === AC_INPUT_STRIKE_AT) addSoloStrike(ws, 'Input packet flood', 2);
@@ -1675,6 +1684,7 @@ wss.on('connection', (ws, req) => {
         }
         const lb = lobbies.get(ws.lobbyCode);
         if (!lb || lb.status !== 'in_match' || !lb.sim) return;
+        if (inMid !== null && inMid !== lb.sim.id) return;
         const rec = acRecord(lb, ws.userId);
         if (!packetRateOk(rec.inPkt, now, AC_INPUT_MAX_PER_SEC)) {
           if (rec.inPkt.pktCount === AC_INPUT_STRIKE_AT) addStrike(lb, ws, 'Input packet flood', 2);

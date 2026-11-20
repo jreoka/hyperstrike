@@ -53,12 +53,14 @@ class MatchHandle {
     this._slot.worker.postMessage({ type: 'start', id: this.id });
   }
 
+  // Returns false only for structurally invalid packets (the anti-cheat strikes on those).
+  // Stale/duplicate sequence numbers, packets for a stopped match or a removed player are
+  // normal side effects of restarts, reconnects and match transitions: drop them silently.
   pushInput(userId, seq, packed) {
-    if (this.stopped) return false;
+    if (!Number.isSafeInteger(seq) || seq <= 0 || !isValidPackedControls(packed)) return false;
+    if (this.stopped) return true;
     const h = this._humans.get(userId);
-    if (!h || !Number.isSafeInteger(seq) || seq <= h.lastQueuedSeq || !isValidPackedControls(packed)) {
-      return false;
-    }
+    if (!h || seq <= h.lastQueuedSeq) return true;
     h.lastQueuedSeq = seq;
     this._slot.worker.postMessage({ type: 'in', id: this.id, u: userId, s: seq, c: packed });
     return true;
