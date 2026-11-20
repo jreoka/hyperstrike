@@ -3846,8 +3846,8 @@ class ArenaVisual {
       const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, '#0a2460'); gr.addColorStop(0.5, '#0b1024'); gr.addColorStop(1, '#6a2c08');
       g.fillStyle = gr; g.fillRect(0, 0, w, h);
       g.strokeStyle = '#ffd23f'; g.lineWidth = 8; g.strokeRect(8, 8, w - 16, h - 16);
-      g.fillStyle = '#fff'; g.font = 'italic 900 44px "Segoe UI", Arial, sans-serif'; g.textAlign = 'center'; g.fillText('CHAMPIONS FIELD', w / 2, 74);
-      g.fillStyle = '#ffd23f'; g.font = '900 28px "Segoe UI", Arial, sans-serif'; g.fillText('HYPERSTRIKE CHAMPIONSHIP • LIVE', w / 2, 134);
+      g.fillStyle = '#fff'; g.font = 'italic 900 44px "Segoe UI", Arial, sans-serif'; g.textAlign = 'center'; g.fillText('CHAMPIONS FIELD', w / 2, 74, w - 56);
+      g.fillStyle = '#ffd23f'; g.font = '900 21px "Segoe UI", Arial, sans-serif'; g.fillText('HYPERSTRIKE CHAMPIONSHIP • LIVE', w / 2, 132, w - 56);
     }));
     jTex.colorSpace = THREE.SRGBColorSpace;
     const jMat = new THREE.MeshBasicMaterial({ map: jTex, color: new THREE.Color(1.4, 1.4, 1.4), side: THREE.DoubleSide });
