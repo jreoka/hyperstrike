@@ -274,12 +274,16 @@ setInterval(flushDb, 2000).unref();
 // ============================================================
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// Async scrypt runs on libuv's thread pool. scryptSync blocked the main thread (which relays
+// every snapshot and input for every match) for tens of milliseconds on each login.
 function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, key) => (err ? reject(err) : resolve(key.toString('hex'))));
+  });
 }
 
-function verifyPassword(password, salt, expectedHex) {
-  const actual = Buffer.from(hashPassword(password, salt), 'hex');
+async function verifyPassword(password, salt, expectedHex) {
+  const actual = Buffer.from(await hashPassword(password, salt), 'hex');
   const expected = Buffer.from(expectedHex, 'hex');
   if (actual.length !== expected.length) return false;
   return crypto.timingSafeEqual(actual, expected);
@@ -1056,7 +1060,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       const salt = crypto.randomBytes(16).toString('hex');
-      const passHash = hashPassword(password, salt);
+      const passHash = await hashPassword(password, salt);
+      if (db.users[key]) {
+        return sendJson(res, 409, { error: 'That username is already taken.' });
+      }
       const user = {
         id: crypto.randomBytes(8).toString('hex'),
         username,
@@ -1089,7 +1096,7 @@ const server = http.createServer(async (req, res) => {
       const password = typeof body.password === 'string' ? body.password : '';
       const key = username.toLowerCase();
       const user = db.users[key];
-      if (!user || !verifyPassword(password, user.salt, user.passHash)) {
+      if (!user || !(await verifyPassword(password, user.salt, user.passHash))) {
         return sendJson(res, 401, { error: 'Invalid username or password.' });
       }
       const token = createSession(key);
@@ -1119,7 +1126,7 @@ const server = http.createServer(async (req, res) => {
       const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
       const confirmPassword = typeof body.confirmPassword === 'string' ? body.confirmPassword : '';
 
-      if (!currentPassword || !verifyPassword(currentPassword, user.salt, user.passHash)) {
+      if (!currentPassword || !(await verifyPassword(currentPassword, user.salt, user.passHash))) {
         return sendJson(res, 401, { error: 'Current password is incorrect.' });
       }
       if (newPassword.length < 6 || newPassword.length > 128) {
@@ -1133,8 +1140,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const salt = crypto.randomBytes(16).toString('hex');
+      const newHash = await hashPassword(newPassword, salt);
       user.salt = salt;
-      user.passHash = hashPassword(newPassword, salt);
+      user.passHash = newHash;
       const key = user.username.toLowerCase();
       for (const [tok, sess] of Object.entries(db.sessions)) {
         if (sess.usernameLower === key && tok !== token) {

@@ -3,48 +3,21 @@
 // SERVER MATCH: authoritative 120Hz simulation of one multiplayer match.
 // Clients send only their controls; the server simulates every car, the ball,
 // bots, boost pads and power-ups, decides goals and the clock, and streams
-// snapshots back. Mirrors MatchMode/OnlineMatchMode logic from index.html.
+// full-state binary snapshots (60Hz) that clients rewind to and replay their unacked
+// inputs on top of. Mirrors MatchMode/OnlineMatchMode logic from index.html.
 // ============================================================
 const { createSandbox } = require('./sim');
 
-const TICKS_PER_INPUT = 2;     // one input packet covers 2 physics ticks (60Hz)
-const SLOTS_PER_SNAPSHOT = 1;  // snapshot every input slot (60Hz) for low latency & smooth interpolation
-const MAX_INPUT_QUEUE = 5;     // ~83ms of buffered input max; older excess is trimmed preserving button edges
-const TARGET_INPUT_QUEUE = 2;  // trim target when client bursts arrive
+const TICKS_PER_INPUT = 2;      // one input slot = 2 physics ticks (60Hz input & snapshots)
+const MAX_AHEAD_SLOTS = 10;      // buffered beyond this (~166ms) -> skip ahead to bound input latency
+const SKIP_TO_SLOTS = 3;
+const MAX_FUTURE_SEQ = 240;      // reject inputs more than 4s ahead of the server timeline
+const IDLE_CLEAR_SLOTS = 30;     // no input for 0.5s -> release all controls
 const COUNTDOWN_S = 3.0;
 const GOAL_PAUSE_S = 3.4;
 
-// Car fields that are identity/visual/derived and never part of physics state
-const CAR_SKIP = new Set([
-  'id', 'team', 'name', 'design', 'half', 'inertia', 'controls', 'basis', 'bot', 'stats', 'events',
-  'samplePts', 'bumpCooldown', 'netTarget', 'snapBuf', 'prevPos', 'prevQuat', 'isRemote', 'isPlayer',
-  'netUserId', 'netBotId', 'explosion', 'wheels', 'lastBallTouchTick', 'visErr', 'visErrPos', 'visErrQuat'
-]);
-
 const r3 = v => Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
 const r4 = v => Number.isFinite(v) ? Math.round(v * 10000) / 10000 : 0;
-const r5 = v => Number.isFinite(v) ? Math.round(v * 100000) / 100000 : 0;
-
-// Full physics state of one car, used by its owner to reconcile prediction
-function serializeCar(car) {
-  const out = {};
-  for (const k in car) {
-    if (CAR_SKIP.has(k)) continue;
-    const v = car[k];
-    if (typeof v === 'number') out[k] = Number.isFinite(v) ? r4(v) : 0;
-    else if (typeof v === 'boolean' || typeof v === 'string' || v === null) out[k] = v;
-    else if (v && v.isVector3) out[k] = [r4(v.x), r4(v.y), r4(v.z)];
-    else if (v && v.isQuaternion) out[k] = [r5(v.x), r5(v.y), r5(v.z), r5(v.w)];
-  }
-  const wheels = car.wheels;
-  const wOut = new Array(wheels.length);
-  for (let i = 0; i < wheels.length; i++) {
-    const w = wheels[i];
-    wOut[i] = [w.contact ? 1 : 0, r4(w.len), r4(w.prevLen), r3(w.spin), r4(w.steer), r4(w.normal.x), r4(w.normal.y), r4(w.normal.z)];
-  }
-  out.wheels = wOut;
-  return out;
-}
 
 // Controls arrive packed: [throttle, steer, pitch, yaw, roll, bits]
 const clamp1 = v => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
@@ -64,11 +37,6 @@ function unpackControls(arr, into) {
   into.jump = !!(bits & 1); into.boost = !!(bits & 2); into.handbrake = !!(bits & 4);
   into.airRollFree = !!(bits & 8); into.item = !!(bits & 16);
 }
-function clearControls(into) {
-  into.throttle = 0; into.steer = 0; into.pitch = 0; into.yaw = 0; into.roll = 0;
-  into.jump = false; into.boost = false; into.handbrake = false; into.airRollFree = false; into.item = false;
-}
-
 class ServerMatch {
   /**
    * @param {object} opts
@@ -92,7 +60,7 @@ class ServerMatch {
     if (s.boostMode === 'recharge') w.boostRecharge = true;
     if (s.mode === 'mayhem') w.powers = new S.PowerSystem(w, { interval: s.interval || 10 });
 
-    this.humans = new Map(); // userId -> { car, queue, lastSeq, username, explosion }
+    this.humans = new Map(); // userId -> input timeline state (see makeHuman)
     this.carInfo = [];       // index-aligned descriptors sent to clients
     let botIdx = 0;
     for (const team of [0, 1]) {
@@ -102,7 +70,7 @@ class ServerMatch {
         const car = this.addCar(team, p.username.toUpperCase(), body);
         car.netUserId = p.userId;
         car.explosion = p.car && Number.isInteger(p.car.explosion) ? p.car.explosion : 0;
-        this.humans.set(p.userId, { car, queue: [], lastSeq: 0, lastQueuedSeq: 0, idleSlots: 0, qDepth: 1, username: p.username });
+        this.humans.set(p.userId, this.makeHuman(car, p.username));
         this.carInfo.push({ userId: p.userId, botId: null, team, name: car.name, car: p.car || null });
       }
       if (s.botFill) {
@@ -135,6 +103,23 @@ class ServerMatch {
     this._lastNs = 0n;
     this._acc = 0;
     this._slotSec = this.S.PHYS.dt * TICKS_PER_INPUT;
+  }
+
+  // Input timeline: every server slot consumes exactly one input sequence number, whether or not
+  // that input has arrived. The client therefore always knows which of its inputs the
+  // authoritative state includes (ack) and can replay the rest on top of it exactly.
+  makeHuman(car, username) {
+    return {
+      car, username,
+      buf: new Map(),        // seq -> packed controls, only seqs >= nextSeq
+      nextSeq: 0,            // seq the next slot will consume (0 = timeline not started)
+      applied: [0, 0, 0, 0, 0, 0], // packed controls used for the current slot
+      ack: 0,                // seq consumed by the most recent slot
+      depth: 0,              // buffered inputs at the moment the last slot consumed (incl. its own)
+      starves: 0,            // slots in play where the input had not arrived yet
+      idle: 0,
+      edge: 0                // jump/item press bits from inputs that arrived too late
+    };
   }
 
   addCar(team, name, body) {
@@ -191,21 +176,42 @@ class ServerMatch {
   // ---- inputs ----
   pushInput(userId, seq, packed) {
     const h = this.humans.get(userId);
-    if (!h || !Number.isSafeInteger(seq) || seq <= (h.lastQueuedSeq || 0) || !isValidPackedControls(packed)) return false;
-    h.lastQueuedSeq = seq;
-    h.queue.push({ seq, c: packed });
-    // While frozen (countdown), never let stale inputs pile up before kickoff
-    if (this.world.frozen && h.queue.length > 1) {
-      h.queue.splice(0, h.queue.length - 1);
-    } else if (h.queue.length > MAX_INPUT_QUEUE) {
-      // Trim oldest excess inputs down to TARGET_INPUT_QUEUE while preserving jump/item press edges
-      const dropCount = h.queue.length - TARGET_INPUT_QUEUE;
-      let edgeBits = 0;
-      for (let i = 0; i < dropCount; i++) edgeBits |= (h.queue[i].c[5] & 17); // bit 0 = jump, bit 4 = item
-      h.queue.splice(0, dropCount);
-      if (edgeBits && h.queue.length) h.queue[0].c[5] |= edgeBits;
+    if (!h || !Number.isSafeInteger(seq) || seq <= 0 || !isValidPackedControls(packed)) return false;
+    if (h.nextSeq === 0) h.nextSeq = seq; // first input starts this player's timeline
+    if (seq < h.nextSeq) {
+      // Arrived after its slot ran: keep button presses so taps are never lost
+      h.edge |= packed[5] & 17;
+      return true;
     }
+    if (seq > h.nextSeq + MAX_FUTURE_SEQ) return true; // absurdly far ahead: ignore
+    h.buf.set(seq, packed);
     return true;
+  }
+
+  consumeInput(h, inPlay) {
+    if (h.nextSeq === 0) return; // no input yet
+    let depth = h.buf.size;
+    if (depth > MAX_AHEAD_SLOTS) {
+      // Client is running too far ahead (burst after a stall): drop oldest to bound latency
+      while (depth > SKIP_TO_SLOTS) {
+        const old = h.buf.get(h.nextSeq);
+        if (old) { h.edge |= old[5] & 17; h.buf.delete(h.nextSeq); depth--; }
+        h.nextSeq++;
+      }
+    }
+    h.depth = depth;
+    const inp = h.buf.get(h.nextSeq);
+    if (inp) {
+      h.buf.delete(h.nextSeq);
+      h.applied = inp; h.idle = 0;
+    } else {
+      // Not here in time: repeat the previous controls for this slot (and say so via `starves`)
+      if (inPlay) h.starves++;
+      if (++h.idle > IDLE_CLEAR_SLOTS) h.applied = [0, 0, 0, 0, 0, 0];
+    }
+    if (h.edge) { h.applied = h.applied.slice(); h.applied[5] |= h.edge; h.edge = 0; }
+    h.ack = h.nextSeq;
+    h.nextSeq++;
   }
 
   // A player who leaves keeps their car in the match, driven by a bot
@@ -218,15 +224,15 @@ class ServerMatch {
 
   // ---- main loop ----
   runSlot() {
-    for (const h of this.humans.values()) {
-      h.qDepth = h.queue.length;
-      const inp = h.queue.shift();
-      if (inp) { unpackControls(inp.c, h.car.controls); h.lastSeq = inp.seq; h.idleSlots = 0; }
-      else if (++h.idleSlots > 30) clearControls(h.car.controls);
+    const inPlay = this.state === 'play';
+    for (const h of this.humans.values()) this.consumeInput(h, inPlay);
+    for (let i = 0; i < TICKS_PER_INPUT; i++) {
+      // Re-apply the raw input every tick: power-ups (scramble) mutate car.controls in place
+      for (const h of this.humans.values()) unpackControls(h.applied, h.car.controls);
+      this.tick(this.S.PHYS.dt);
     }
-    for (let i = 0; i < TICKS_PER_INPUT; i++) this.tick(this.S.PHYS.dt);
     this.slot++;
-    return (this.slot % SLOTS_PER_SNAPSHOT === 0 && !this.finished);
+    return !this.finished; // snapshot every slot (60Hz)
   }
 
   tick(dt) {
@@ -411,13 +417,6 @@ class ServerMatch {
   }
 
   // ---- snapshots ----
-  carSnap(c) {
-    const flags = (c.demolished ? 1 : 0) | (c.isBoosting ? 2 : 0) | (c.supersonic ? 4 : 0) | (c.sliding > 0.5 ? 8 : 0) | (c.onGround ? 16 : 0);
-    return [r3(c.pos.x), r3(c.pos.y), r3(c.pos.z), r3(c.vel.x), r3(c.vel.y), r3(c.vel.z),
-      r4(c.quat.x), r4(c.quat.y), r4(c.quat.z), r4(c.quat.w),
-      r3(c.angVel.x), r3(c.angVel.y), r3(c.angVel.z), Math.round(c.boost * 10) / 10, flags, c.item || null];
-  }
-
   powersSnap() {
     const P = this.world.powers; if (!P) return undefined;
     const w = this.world, idx = c => w.cars.indexOf(c);
@@ -430,39 +429,49 @@ class ServerMatch {
     };
   }
 
+  // Frozen world-steps left before kickoff releases, computed with the exact float ops
+  // preUpdate uses, so the client can unfreeze its prediction on the very same tick.
+  countdownTicks() {
+    if (this.state !== 'countdown') return null;
+    const dt = this.S.PHYS.dt;
+    let st = this.stateT, n = 0;
+    for (;;) { st += dt; if (COUNTDOWN_S - st <= 0 || n > 4000) break; n++; }
+    return n;
+  }
+
   sendSnapshots() {
-    const w = this.world, b = w.ball;
-    let pads = '';
-    for (const p of w.pads) pads += p.active ? '1' : '0';
-    const base = {
-      type: 'snap',
-      k: w.tick,
-      st: this.state,
-      tl: r3(this.timeLeft), ot: this.overtime, ott: r3(this.otTime),
-      sc: this.score,
-      fz: w.frozen,
-      b: [r3(b.pos.x), r3(b.pos.y), r3(b.pos.z), r3(b.vel.x), r3(b.vel.y), r3(b.vel.z),
-        r4(b.quat.x), r4(b.quat.y), r4(b.quat.z), r4(b.quat.w), r3(b.angVel.x), r3(b.angVel.y), r3(b.angVel.z), b.frozen ? 1 : 0],
-      c: w.cars.map(c => this.carSnap(c)),
-      pd: pads
-    };
-    if (w.powers) base.pw = this.powersSnap();
-    if (this.events.length) base.ev = this.events.splice(0);
-    if (this.slot % 30 === 0 || this.state === 'ended') base.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
-    const shared = JSON.stringify(base).slice(0, -1); // reuse common part, append per-player fields
-    if (this.opts.onSnapshot) {
-      const to = [];
-      for (const [userId, h] of this.humans) {
-        to.push([userId, `${shared},"a":${h.lastSeq},"q":${h.qDepth},"me":${JSON.stringify(serializeCar(h.car))}}`]);
-      }
-      this.opts.onSnapshot(to, shared + '}');
-    } else {
-      for (const [userId, h] of this.humans) {
-        this.opts.sendRaw(userId, `${shared},"a":${h.lastSeq},"q":${h.qDepth},"me":${JSON.stringify(serializeCar(h.car))}}`);
-      }
-      if (this.opts.spectators) this.opts.spectators(shared + '}');
+    const S = this.S, w = this.world;
+    const ctls = w.cars.map(c => {
+      if (c.netUserId) { const h = this.humans.get(c.netUserId); if (h) return h.applied; }
+      return S.netPackControls(c.controls);
+    });
+    const meta = {};
+    if (w.powers) { meta.pw = this.powersSnap(); meta.it = w.cars.map(c => c.item || null); }
+    if (this.events.length) meta.ev = this.events.splice(0);
+    if (this.slot % 30 === 0 || this.state === 'ended') meta.cs = w.cars.map(c => [c.stats.score, c.stats.goals, c.stats.assists, c.stats.saves, c.stats.shots, c.stats.demos]);
+    const shared = S.netEncodeSnapshot(w, {
+      state: this.state, overtime: this.overtime, cd: this.countdownTicks(),
+      timeLeft: this.timeLeft, otTime: this.otTime, score: this.score, ctls,
+      meta: Object.keys(meta).length ? JSON.stringify(meta) : null
+    });
+    const to = [];
+    for (const [userId, h] of this.humans) {
+      to.push([userId, S.netPatchSnapshot(shared.slice(0), h.ack, h.depth, h.starves)]);
     }
+    if (this.opts.onSnapshot) this.opts.onSnapshot(to, shared);
+    else {
+      for (const [userId, buf] of to) this.opts.sendRaw(userId, buf);
+      if (this.opts.spectators) this.opts.spectators(shared);
+    }
+  }
+
+  // Milliseconds until this match's next slot is due (for the worker's precise scheduler)
+  msUntilNextSlot(nowNs) {
+    if (!this._running || this.finished) return Infinity;
+    if (this.paused) return 50;
+    const elapsed = Number(nowNs - this._lastNs) / 1e9;
+    return Math.max(0, (this._slotSec - this._acc - elapsed) * 1000);
   }
 }
 
-module.exports = { ServerMatch, serializeCar, unpackControls, isValidPackedControls };
+module.exports = { ServerMatch, unpackControls, isValidPackedControls };
