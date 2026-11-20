@@ -5275,14 +5275,17 @@ class CarVisual {
     else {
       this.visPos.lerpVectors(car.prevPos, car.pos, alpha);
       this.visQuat.slerpQuaternions(car.prevQuat, car.quat, alpha);
+      // Own car corrections are tiny and should vanish fast; other cars' (mispredicted
+      // remote inputs) blend out a bit slower so they read as motion, not a snap
+      const errRate = car.isPlayer ? 18 : 11;
       if (car.visErrPos.lengthSq() > 1e-7) {
-        const decay = Math.exp(-18 * dt);
+        const decay = Math.exp(-errRate * dt);
         car.visErrPos.multiplyScalar(decay);
         if (car.visErrPos.lengthSq() < 1e-7) car.visErrPos.set(0, 0, 0);
         this.visPos.add(car.visErrPos);
       }
       if (Math.abs(1 - Math.abs(car.visErrQuat.w)) > 1e-6) {
-        car.visErrQuat.slerp(this._idQ, 1 - Math.exp(-18 * dt));
+        car.visErrQuat.slerp(this._idQ, 1 - Math.exp(-errRate * dt));
         this.visQuat.premultiply(car.visErrQuat).normalize();
       }
     }
@@ -6692,6 +6695,138 @@ class World {
   resetPads() { for (const p of this.pads) { p.active = true; p.timer = 0; } }
 }
 
+// ===== 10c_netcore.js — binary snapshot codec shared by client & server =====
+// The server extracts this block too (sim.js), so both ends always agree on the wire format.
+// Snapshot layout (little endian):
+//   0 u8 magic 'H' | 1 u8 version | 2 u8 state | 3 u8 flags (1 frozen, 2 overtime)
+//   4 u32 world tick | 8 u32 ack (input seq applied in the last slot) | 12 f32 input buffer depth
+//  16 u16 starve count | 18 u16 frozen ticks left (0xFFFF = n/a) | 20 f32 timeLeft | 24 f32 otTime
+//  28 u8 score0 | 29 u8 score1 | 30 u8 cars | 31 u8 pads | 32.. pad bitmask
+//  then Float32[ball(NET_BALL_N) + cars*NET_CAR_N], then u32 metaLen + UTF-8 JSON meta
+const NET_VERSION = 2;
+const NET_TPI = 2; // physics ticks per input slot (120Hz physics, 60Hz input/snapshots)
+const NET_STATES = ['idle', 'countdown', 'play', 'goal', 'ended'];
+const NET_BALL_N = 22, NET_CAR_N = 47, NET_NO_CD = 0xFFFF;
+const NET_CAR_BOOLS = ['prevJump', 'onGround', 'jumping', 'jumped', 'hasFlip', 'doubleJumped', 'flipping', 'bodyContact', 'isBoosting', 'supersonic', 'wasSupersonic', 'handbrake', 'demolished'];
+const netNum = v => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+const _netEnc = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+const _netDec = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null;
+function netPackControls(c) {
+  return [+netNum(c.throttle).toFixed(3), +netNum(c.steer).toFixed(3), +netNum(c.pitch).toFixed(3), +netNum(c.yaw).toFixed(3), +netNum(c.roll).toFixed(3),
+    (c.jump ? 1 : 0) | (c.boost ? 2 : 0) | (c.handbrake ? 4 : 0) | (c.airRollFree ? 8 : 0) | (c.item ? 16 : 0)];
+}
+function netUnpackControls(a, into) {
+  into.throttle = a[0]; into.steer = a[1]; into.pitch = a[2]; into.yaw = a[3]; into.roll = a[4];
+  const b = a[5] | 0;
+  into.jump = !!(b & 1); into.boost = !!(b & 2); into.handbrake = !!(b & 4); into.airRollFree = !!(b & 8); into.item = !!(b & 16);
+}
+function netWriteCar(f, o, c, ctl, tick) {
+  f[o] = c.pos.x; f[o + 1] = c.pos.y; f[o + 2] = c.pos.z;
+  f[o + 3] = c.vel.x; f[o + 4] = c.vel.y; f[o + 5] = c.vel.z;
+  f[o + 6] = c.quat.x; f[o + 7] = c.quat.y; f[o + 8] = c.quat.z; f[o + 9] = c.quat.w;
+  f[o + 10] = c.angVel.x; f[o + 11] = c.angVel.y; f[o + 12] = c.angVel.z;
+  f[o + 13] = netNum(c.boost); f[o + 14] = netNum(c.groundLock); f[o + 15] = netNum(c.contacts);
+  f[o + 16] = c.groundNormal.x; f[o + 17] = c.groundNormal.y; f[o + 18] = c.groundNormal.z;
+  f[o + 19] = netNum(c.jumpHoldT); f[o + 20] = netNum(c.timeSinceJump); f[o + 21] = netNum(c.flipT);
+  f[o + 22] = c.flipAxis.x; f[o + 23] = c.flipAxis.y; f[o + 24] = c.flipAxis.z;
+  f[o + 25] = netNum(c.coyoteT); f[o + 26] = netNum(c.airTime); f[o + 27] = netNum(c.bodyContactT);
+  f[o + 28] = netNum(c.boostT); f[o + 29] = netNum(c.sliding); f[o + 30] = netNum(c.traction);
+  f[o + 31] = netNum(c.respawnT); f[o + 32] = netNum(c.blastT); f[o + 33] = netNum(c.speedMul); f[o + 34] = netNum(c.nitroT);
+  f[o + 35] = Math.max(0, Math.min(255, tick - c.lastBallTouchTick));
+  let bits = 0;
+  for (let i = 0; i < NET_CAR_BOOLS.length; i++) if (c[NET_CAR_BOOLS[i]]) bits |= 1 << i;
+  for (let i = 0; i < 4; i++) { const w = c.wheels[i]; f[o + 36 + i] = w.len; if (w.contact) bits |= 1 << (13 + i); }
+  f[o + 40] = bits;
+  for (let i = 0; i < 6; i++) f[o + 41 + i] = ctl ? netNum(ctl[i]) : 0;
+}
+function netReadCar(f, o, c, tick, ctlOut) {
+  c.pos.set(f[o], f[o + 1], f[o + 2]); c.vel.set(f[o + 3], f[o + 4], f[o + 5]);
+  c.quat.set(f[o + 6], f[o + 7], f[o + 8], f[o + 9]); if (c.quat.lengthSq() > 1e-6) c.quat.normalize(); else c.quat.identity();
+  c.angVel.set(f[o + 10], f[o + 11], f[o + 12]);
+  c.boost = f[o + 13]; c.groundLock = f[o + 14]; c.contacts = f[o + 15]; c.groundNormal.set(f[o + 16], f[o + 17], f[o + 18]);
+  c.jumpHoldT = f[o + 19]; c.timeSinceJump = f[o + 20]; c.flipT = f[o + 21]; c.flipAxis.set(f[o + 22], f[o + 23], f[o + 24]);
+  c.coyoteT = f[o + 25]; c.airTime = f[o + 26]; c.bodyContactT = f[o + 27]; c.boostT = f[o + 28]; c.sliding = f[o + 29]; c.traction = f[o + 30];
+  c.respawnT = f[o + 31]; c.blastT = f[o + 32]; c.speedMul = f[o + 33]; c.nitroT = f[o + 34];
+  c.lastBallTouchTick = tick - f[o + 35];
+  const bits = f[o + 40] | 0;
+  for (let i = 0; i < NET_CAR_BOOLS.length; i++) c[NET_CAR_BOOLS[i]] = !!(bits & (1 << i));
+  for (let i = 0; i < 4; i++) { const w = c.wheels[i]; w.len = f[o + 36 + i]; w.contact = !!(bits & (1 << (13 + i))); }
+  if (ctlOut) netUnpackControls([f[o + 41], f[o + 42], f[o + 43], f[o + 44], f[o + 45], f[o + 46]], ctlOut);
+  c.basis.fromQuat(c.quat);
+}
+function netWriteBall(f, o, b, cars) {
+  f[o] = b.pos.x; f[o + 1] = b.pos.y; f[o + 2] = b.pos.z; f[o + 3] = b.vel.x; f[o + 4] = b.vel.y; f[o + 5] = b.vel.z;
+  f[o + 6] = b.angVel.x; f[o + 7] = b.angVel.y; f[o + 8] = b.angVel.z;
+  f[o + 9] = b.quat.x; f[o + 10] = b.quat.y; f[o + 11] = b.quat.z; f[o + 12] = b.quat.w;
+  f[o + 13] = b.gScale === undefined ? 1 : netNum(b.gScale); f[o + 14] = netNum(b.iceT); f[o + 15] = netNum(b.antiT);
+  f[o + 16] = b.stuckTo ? cars.indexOf(b.stuckTo) : -1;
+  f[o + 17] = b.stuckLocal.x; f[o + 18] = b.stuckLocal.y; f[o + 19] = b.stuckLocal.z;
+  f[o + 20] = b.lastTouch ? cars.indexOf(b.lastTouch) : -1;
+  f[o + 21] = (b.frozen ? 1 : 0) | (b.onGround ? 2 : 0);
+}
+function netReadBall(f, o, b, cars) {
+  b.pos.set(f[o], f[o + 1], f[o + 2]); b.vel.set(f[o + 3], f[o + 4], f[o + 5]); b.angVel.set(f[o + 6], f[o + 7], f[o + 8]);
+  b.quat.set(f[o + 9], f[o + 10], f[o + 11], f[o + 12]); if (b.quat.lengthSq() > 1e-6) b.quat.normalize(); else b.quat.identity();
+  b.gScale = f[o + 13]; b.iceT = f[o + 14]; b.antiT = f[o + 15];
+  b.stuckTo = f[o + 16] >= 0 ? (cars[f[o + 16] | 0] || null) : null;
+  b.stuckLocal.set(f[o + 17], f[o + 18], f[o + 19]);
+  const lt = f[o + 20] | 0; if (lt >= 0 && cars[lt]) b.lastTouch = cars[lt];
+  const fl = f[o + 21] | 0; b.frozen = !!(fl & 1); b.onGround = !!(fl & 2);
+}
+// info: { state, overtime, cd, timeLeft, otTime, score:[a,b], ctls:[packed per car], meta: string|null }
+function netEncodeSnapshot(w, info) {
+  const nCars = w.cars.length, nPads = w.pads.length, padBytes = (nPads + 7) >> 3;
+  const fOff = (32 + padBytes + 3) & ~3, nF = NET_BALL_N + nCars * NET_CAR_N;
+  const meta = info.meta ? _netEnc.encode(info.meta) : null;
+  const metaOff = fOff + nF * 4;
+  const buf = new ArrayBuffer(metaOff + 4 + (meta ? meta.length : 0));
+  const dv = new DataView(buf);
+  dv.setUint8(0, 0x48); dv.setUint8(1, NET_VERSION);
+  dv.setUint8(2, Math.max(0, NET_STATES.indexOf(info.state)));
+  dv.setUint8(3, (w.frozen ? 1 : 0) | (info.overtime ? 2 : 0));
+  dv.setUint32(4, w.tick >>> 0, true);
+  dv.setUint16(18, info.cd === undefined || info.cd === null ? NET_NO_CD : Math.max(0, Math.min(NET_NO_CD - 1, info.cd)), true);
+  dv.setFloat32(20, netNum(info.timeLeft), true); dv.setFloat32(24, netNum(info.otTime), true);
+  dv.setUint8(28, Math.min(255, info.score[0] | 0)); dv.setUint8(29, Math.min(255, info.score[1] | 0));
+  dv.setUint8(30, nCars); dv.setUint8(31, nPads);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < nPads; i++) if (w.pads[i].active) u8[32 + (i >> 3)] |= 1 << (i & 7);
+  const f = new Float32Array(buf, fOff, nF);
+  netWriteBall(f, 0, w.ball, w.cars);
+  for (let i = 0; i < nCars; i++) netWriteCar(f, NET_BALL_N + i * NET_CAR_N, w.cars[i], info.ctls[i], w.tick);
+  dv.setUint32(metaOff, meta ? meta.length : 0, true);
+  if (meta) u8.set(meta, metaOff + 4);
+  return buf;
+}
+// Per-recipient fields are patched into a copy of the shared snapshot
+function netPatchSnapshot(buf, ack, depth, starves) {
+  const dv = new DataView(buf);
+  dv.setUint32(8, ack >>> 0, true); dv.setFloat32(12, depth, true); dv.setUint16(16, Math.min(0xFFFF, starves), true);
+  return buf;
+}
+function netDecodeSnapshot(buf) {
+  if (!(buf instanceof ArrayBuffer) || buf.byteLength < 36) return null;
+  const dv = new DataView(buf);
+  if (dv.getUint8(0) !== 0x48 || dv.getUint8(1) !== NET_VERSION) return null;
+  const nCars = dv.getUint8(30), nPads = dv.getUint8(31), padBytes = (nPads + 7) >> 3;
+  const fOff = (32 + padBytes + 3) & ~3, nF = NET_BALL_N + nCars * NET_CAR_N, metaOff = fOff + nF * 4;
+  if (buf.byteLength < metaOff + 4) return null;
+  const metaLen = dv.getUint32(metaOff, true);
+  let meta = null;
+  if (metaLen > 0 && metaOff + 4 + metaLen <= buf.byteLength) {
+    try { meta = JSON.parse(_netDec.decode(new Uint8Array(buf, metaOff + 4, metaLen))); } catch (_) { meta = null; }
+  }
+  const fl = dv.getUint8(3), cd = dv.getUint16(18, true);
+  return {
+    st: NET_STATES[dv.getUint8(2)] || 'idle', frozen: !!(fl & 1), overtime: !!(fl & 2),
+    tick: dv.getUint32(4, true), ack: dv.getUint32(8, true), depth: dv.getFloat32(12, true), starves: dv.getUint16(16, true),
+    cd: cd === NET_NO_CD ? -1 : cd, timeLeft: dv.getFloat32(20, true), otTime: dv.getFloat32(24, true),
+    score: [dv.getUint8(28), dv.getUint8(29)], nCars, nPads, pads: new Uint8Array(buf, 32, padBytes),
+    f: new Float32Array(buf, fOff, nF), meta
+  };
+}
+// ===== 10c_netcore_end =====
+
 // ===== 10b_powers.js — MAYHEM power-ups =====
 const POWERS = [
   { id: 'tornado', name: 'TORNADO', color: '#9fe8ff', hex: 0x9fe8ff, desc: 'Attaches a twister to the top of your car, sucking up the ball and other cars as you drive.',
@@ -7419,35 +7554,18 @@ class MatchMode extends ModeBase {
   }
 }
 
-// Server-authoritative online match. The server simulates everything; this
-// client sends its controls (60Hz), predicts its own car locally and
-// reconciles to the server state, and smoothly follows the server for the
-// ball, other cars, boost pads, power-ups, goals and the clock.
-const NET_TICKS_PER_INPUT = 2;
-function packControls(c) {
-  return [+c.throttle.toFixed(3), +c.steer.toFixed(3), +c.pitch.toFixed(3), +c.yaw.toFixed(3), +c.roll.toFixed(3),
-    (c.jump ? 1 : 0) | (c.boost ? 2 : 0) | (c.handbrake ? 4 : 0) | (c.airRollFree ? 8 : 0) | (c.item ? 16 : 0)];
-}
-function unpackControls(a, into) {
-  into.throttle = a[0]; into.steer = a[1]; into.pitch = a[2]; into.yaw = a[3]; into.roll = a[4];
-  into.jump = !!(a[5] & 1); into.boost = !!(a[5] & 2); into.handbrake = !!(a[5] & 4); into.airRollFree = !!(a[5] & 8); into.item = !!(a[5] & 16);
-}
-function applyCarState(car, st) {
-  for (const k in st) {
-    const v = st[k];
-    if (k === 'wheels') {
-      for (let i = 0; i < car.wheels.length && i < v.length; i++) {
-        const w = car.wheels[i], s = v[i];
-        w.contact = !!s[0]; w.len = s[1]; w.prevLen = s[2]; w.spin = s[3]; w.steer = s[4]; w.normal.set(s[5], s[6], s[7]);
-      }
-    } else if (Array.isArray(v)) {
-      const t = car[k];
-      if (t && t.isQuaternion && v.length === 4) t.set(v[0], v[1], v[2], v[3]);
-      else if (t && t.isVector3 && v.length === 3) t.set(v[0], v[1], v[2]);
-    } else car[k] = v;
-  }
-  car.basis.fromQuat(car.quat);
-}
+// Server-authoritative online match with full-world rollback prediction.
+// The server simulates everything and streams the complete physics state (60Hz, binary).
+// Every input slot the client sends its controls; the server consumes exactly one input seq per
+// slot and reports which one it last applied (ack). On each snapshot the client rewinds the
+// WHOLE world (ball + every car) to the server state and replays its unacknowledged inputs,
+// driving other cars with the controls the server says they are holding. Ball, own car and
+// opponents therefore live on one consistent timeline, so touches, bumps and dribbles predict
+// correctly instead of the ball warping. Corrections are hidden with decaying visual offsets.
+const NET_TICKS_PER_INPUT = NET_TPI;
+const packControls = netPackControls;
+const unpackControls = netUnpackControls;
+const NET_MAX_RESIM_TICKS = 72; // ~600ms of rewind; beyond that just accept the server state
 
 class OnlineMatchMode extends MatchMode {
   start() {
@@ -7455,21 +7573,21 @@ class OnlineMatchMode extends MatchMode {
     this.isHost = false;
     this.isSolo = !!cfg.isSolo;
     this.endedByServer = false;
-    this.netBall = new Ball();
     this.inSeq = 0; this.inTick = 0; this.inHist = []; this.curInput = null;
-    this.rtt = 0.04; this.qAvg = 1.0; this.clockRate = 1.0;
-    this.localBallHitSeq = 0; this.localBallHitAt = 0;
-    this.remoteTime = 0; this.srvOffset = 0; this.hasServerTime = false;
-    this.lastSnapAt = 0; this.snapJitter = 0.008; this.interpDelay = 0.042;
+    this.rtt = 0.06; this.clockRate = 1.0;
+    this.qAvg = 2; this.qTarget = 2; this.lastStarves = -1;
+    this.lastStarveAt = performance.now(); this.lastTargetDecay = this.lastStarveAt;
+    this.unfreezeTick = -1; this.lastSnapTick = -1; this.specLead = 3;
     this.pendingEvents = []; this.kickCars = null;
     this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT(); this._tmpQ3 = new QT();
+    this._ctlSave = makeControls();
+    this._old = [];
     w.isOnlineClient = true;
-    w.onRemoteStep = (dt) => this.stepRemoteCars(dt);
-    w.onLocalBallHit = () => { this.localBallHitSeq = this.inSeq; this.localBallHitAt = performance.now(); };
     if (cfg.boostMode === 'unlimited') w.unlimitedBoost = true;
     if (cfg.boostMode === 'recharge') w.boostRecharge = true;
     PHYS.g = cfg.mutator === 'lowgrav' ? 3.9 : 6.5;
     PHYS.ballMax = cfg.mutator === 'fastball' ? 78 : 60;
+    for (const c of w.cars) c.netCtl = makeControls();
     super.start();
     w.allowDemos = false; // demolitions are decided by the server
     if (w.powers) {
@@ -7477,12 +7595,7 @@ class OnlineMatchMode extends MatchMode {
       const P = w.powers, noop = () => {};
       P.preCars = noop; P.postStep = noop; P.onBallContact = noop; P.release = noop; P.shatter = noop; P.carryBall = noop;
     }
-    const step = w.step.bind(w);
-    w.step = (dt) => {
-      this.beforeTick();
-      step(dt);
-      if (this.pendingEvents.length) for (const e of this.pendingEvents.splice(0)) w.events.push(e);
-    };
+    w.step = (dt) => this.netStep(dt, true);
   }
   end() {
     PHYS.g = 6.5;
@@ -7499,23 +7612,79 @@ class OnlineMatchMode extends MatchMode {
       const seq = ++this.inSeq;
       this.curInput = packed;
       this.inHist.push({ seq, c: packed, t: performance.now() });
-      if (this.inHist.length > 180) this.inHist.shift();
+      if (this.inHist.length > 240) this.inHist.shift();
       g.online.wsSend({ type: 'in', s: seq, c: packed });
     }
     if (this.curInput) unpackControls(this.curInput, p.controls);
   }
+  // One 120Hz physics tick of the whole world. `live` ticks advance the game and emit
+  // events for effects/sounds; replay ticks (rollback) are silent.
+  netStep(dt, live) {
+    const w = this.world, ball = w.ball, me = this.game.player;
+    if (live) { this.beforeTick(); w.events.length = 0; }
+    ball.savePrev(); for (const c of w.cars) c.savePrev();
+    if (this.unfreezeTick >= 0 && w.tick >= this.unfreezeTick) { this.unfreezeTick = -1; this.goPlay(); }
+    if (!w.frozen) {
+      for (const c of w.cars) {
+        if (c.demolished) continue; // respawns come from the server
+        if (c !== me) Object.assign(c.controls, c.netCtl);
+        c.unlimitedBoost = w.unlimitedBoost || c.unlimitedBoost === 'always';
+        if (w.boostRecharge && !c.isBoosting && c.boost < 100) c.boost = Math.min(100, c.boost + 14 * dt);
+        c.step(dt, w);
+        if (live) for (const e of c.events) w.events.push({ type: 'car', kind: e, car: c });
+      }
+      if (ball.stuckTo) this.carryBall(dt);
+      else if (ball.iceT > 0) { ball.vel.set(0, 0, 0); ball.angVel.multiplyScalar(0.97); quatIntegrate(ball.quat, ball.angVel, dt); }
+      else if (live) { const he = []; ball.step(dt, w.shape, he); for (const h of he) w.events.push(h); }
+      else ball.step(dt, w.shape, null);
+      for (const c of w.cars) {
+        if (ball.stuckTo === c) continue;
+        const iced = ball.iceT > 0; if (iced) w._icePos.copy(ball.pos);
+        const hit = collideCarBall(c, ball, w.tick, w.shape);
+        if (iced) { ball.pos.copy(w._icePos); ball.vel.set(0, 0, 0); }
+        if (hit) { if (live) w.onTouch(hit); else ball.lastTouch = c; }
+      }
+      const cars = w.cars;
+      for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {
+        const r = collideCars(cars[i], cars[j], w);
+        if (live && r && r.type === 'bump') w.events.push({ type: 'bump', a: r.attacker, b: r.victim, strength: r.strength });
+      }
+      for (const c of cars) if (!c.demolished) for (const p of w.pads) {
+        if (!p.active || c.boost >= 100) continue;
+        const dx = c.pos.x - p.pos.x, dz = c.pos.z - p.pos.z;
+        if (dx * dx + dz * dz < p.radius * p.radius && c.pos.y < 2.2) {
+          c.boost = Math.min(100, c.boost + p.amount); p.active = false; p.timer = p.respawn;
+          if (live) w.events.push({ type: 'pickup', car: c, pad: p });
+        }
+      }
+    }
+    for (const p of w.pads) if (!p.active) { p.timer -= dt; if (p.timer <= 0) p.active = true; }
+    w.tick++; w.time += dt;
+    if (live && this.pendingEvents.length) for (const e of this.pendingEvents.splice(0)) w.events.push(e);
+  }
+  // Spikes: the ball rides along with the car it is stuck to (release is decided by the server)
+  carryBall(dt) {
+    const w = this.world, b = w.ball, c = b.stuckTo;
+    if (!c || c.demolished) { b.step(dt, w.shape, null); return; }
+    c.basis.fromQuat(c.quat); const off = c.basis.toWorld(b.stuckLocal, this._tmpV);
+    b.pos.copy(c.pos).add(off); b.vel.copy(c.vel).add(this._tmpV2.crossVectors(c.angVel, off)); b.angVel.copy(c.angVel);
+    quatIntegrate(b.quat, b.angVel, dt);
+  }
+  goPlay() {
+    const g = this.game;
+    this.world.frozen = false;
+    if (this.state !== 'countdown') return;
+    this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1);
+  }
   beginKickoff() {
     super.beginKickoff();
     const w = this.world, k = this.kickCars;
-    this.localBallHitSeq = 0;
     w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity();
-    if (this.netBall) this.netBall.reset(0, PHYS.ballR, 0);
     if (!k) return;
     this.kickCars = null;
     w.cars.forEach((c, i) => {
       const s = k[i]; if (!s) return;
       c.place(s[0], s[1], s[2], s[3]); c.boost = 33; c.demolished = false;
-      if (c.snapBuf) c.snapBuf.length = 0;
     });
   }
   serverKickoff(msg) {
@@ -7523,88 +7692,14 @@ class OnlineMatchMode extends MatchMode {
     this.beginKickoff();
   }
   preUpdate(dt) {
-    const g = this.game, w = this.world;
+    const g = this.game;
     ModeBase.prototype.preUpdate.call(this, dt);
     if (this.state === 'countdown') {
       const left = 3.0 - this.stateT; const n = Math.ceil(left);
       if (n !== this.cdLast && n > 0) { this.cdLast = n; g.ui.countdown(String(n)); g.audio.countdown(false); }
-      // Let the server snapshot trigger GO! so kickoff never unfreezes early and re-freezes; fallback after 350ms
-      if (left <= -0.35) { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
+      // GO! is triggered by the predicted unfreeze tick (see netStep / rollback)
     } else if (this.state === 'goal') {
       if (this.stateT < 1.3) this.timeScale = lerp(0.22, 1, sstep(0.5, 1.3, this.stateT)); else this.timeScale = 1;
-    }
-  }
-  // Runs at 120Hz inside World.step right after savePrev() so prevPos/pos render interpolation is seamless
-  stepRemoteCars(dt) {
-    const w = this.world;
-    if (!this.hasServerTime) return;
-    // Track continuous server clock (never stair-stepped packet arrival time) so remote cars never speed-pulse
-    const nowSec = performance.now() * 0.001;
-    const targetT = nowSec + this.srvOffset - this.interpDelay;
-    const drift = targetT - this.remoteTime;
-    if (Math.abs(drift) > 0.25) this.remoteTime = targetT;
-    else this.remoteTime += dt + clamp(drift * 4, -0.15, 0.15) * dt;
-    const rt = this.remoteTime;
-    for (const c of w.cars) {
-      if (!c.isRemote || !c.snapBuf || !c.snapBuf.length) continue;
-      const buf = c.snapBuf;
-      let i0 = -1;
-      for (let i = buf.length - 1; i >= 0; i--) {
-        if (buf[i].t <= rt) { i0 = i; break; }
-      }
-      if (i0 >= 0 && i0 < buf.length - 1) {
-        const a = buf[i0], b = buf[i0 + 1];
-        const span = b.t - a.t;
-        const u = span > 1e-5 ? clamp((rt - a.t) / span, 0, 1) : 1;
-        const teleport = a.demolished !== b.demolished || a.pos.distanceToSquared(b.pos) > 64 || span > 0.25;
-        if (teleport) {
-          const s = u < 0.5 ? a : b;
-          c.pos.copy(s.pos); c.prevPos.copy(s.pos);
-          c.quat.copy(s.quat); c.prevQuat.copy(s.quat);
-          c.vel.copy(s.vel); c.angVel.copy(s.angVel);
-        } else {
-          // Cubic Hermite interpolation for smooth curves & jumps
-          const u2 = u * u, u3 = u2 * u;
-          const h00 = 2 * u3 - 3 * u2 + 1, h10 = (u3 - 2 * u2 + u) * span;
-          const h01 = -2 * u3 + 3 * u2, h11 = (u3 - u2) * span;
-          c.pos.set(
-            h00 * a.pos.x + h10 * a.vel.x + h01 * b.pos.x + h11 * b.vel.x,
-            h00 * a.pos.y + h10 * a.vel.y + h01 * b.pos.y + h11 * b.vel.y,
-            h00 * a.pos.z + h10 * a.vel.z + h01 * b.pos.z + h11 * b.vel.z
-          );
-          c.vel.lerpVectors(a.vel, b.vel, u);
-          c.quat.slerpQuaternions(a.quat, b.quat, u);
-          c.angVel.lerpVectors(a.angVel, b.angVel, u);
-        }
-        const s = u < 0.5 ? a : b;
-        c.boost = s.boost; c.demolished = s.demolished; c.isBoosting = s.isBoosting;
-        c.supersonic = s.supersonic; c.sliding = s.sliding; c.onGround = s.onGround; c.item = s.item;
-      } else {
-        const s = i0 < 0 ? buf[0] : buf[buf.length - 1];
-        const extra = i0 < 0 ? 0 : clamp(rt - s.t, 0, 0.055);
-        c.pos.copy(s.pos);
-        c.quat.copy(s.quat);
-        c.vel.copy(s.vel);
-        c.angVel.copy(s.angVel);
-        if (!s.demolished && extra > 1e-4) {
-          c.pos.addScaledVector(s.vel, extra);
-          quatIntegrate(c.quat, s.angVel, extra);
-        }
-        if (c.prevPos.distanceToSquared(c.pos) > 64) { c.prevPos.copy(c.pos); c.prevQuat.copy(c.quat); }
-        c.boost = s.boost; c.demolished = s.demolished; c.isBoosting = s.isBoosting;
-        c.supersonic = s.supersonic; c.sliding = s.sliding; c.onGround = s.onGround; c.item = s.item;
-      }
-      c.basis.fromQuat(c.quat);
-      c.contacts = c.onGround ? 4 : 0;
-      c.airTime = c.onGround ? 0 : c.airTime + dt;
-      // Spin & steer remote car wheels visually based on motion
-      const vf = c.vel.dot(c.basis.f);
-      const yawRate = c.angVel.dot(c.basis.u);
-      const targetSteer = clamp(yawRate * 0.14, -0.45, 0.45);
-      for (const wh of c.wheels) {
-        wh.spin += (vf / wh.r) * dt;
-        if (wh.front) wh.steer = damp(wh.steer, targetSteer, 14, dt);
-      }
     }
   }
   postStep() { }
@@ -7621,8 +7716,7 @@ class OnlineMatchMode extends MatchMode {
     if (w.powers) w.powers.clearEffects();
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.prevPos.set(0, -50, 0); w.ball.vel.set(0, 0, 0);
     w.ball.visErrPos.set(0, 0, 0); w.ball.visErrQuat.identity(); g.ballVisual.mesh.visible = false;
-    if (this.netBall) { this.netBall.frozen = true; this.netBall.pos.set(0, -50, 0); this.netBall.vel.set(0, 0, 0); }
-    this.localBallHitSeq = 0;
+    this.unfreezeTick = -1;
     this.setState('goal'); w.kickoff = false;
     g.ui.updateScore(this.score, scoringTeam);
     const scorerName = msg.scorerName || (msg.own ? 'OWN GOAL' : '');
@@ -7645,200 +7739,139 @@ class OnlineMatchMode extends MatchMode {
     }
     return out;
   }
-  onSnap(m) {
+  // Keep the server's input buffer for us at a small, jitter-proof depth by running our
+  // simulation clock a few percent fast or slow. Starvation grows the target; calm shrinks it.
+  regulateClock(s, now) {
+    if (s.st !== 'play' && s.st !== 'countdown') { this.clockRate = 1; return; }
+    if (this.lastStarves < 0) this.lastStarves = s.starves;
+    const newStarves = (s.starves - this.lastStarves + 0x10000) & 0xFFFF;
+    this.lastStarves = s.starves;
+    if (newStarves > 0 && newStarves < 1000) {
+      this.qTarget = Math.min(7, this.qTarget + 0.6 * Math.min(3, newStarves));
+      this.lastStarveAt = now;
+    } else if (now - this.lastStarveAt > 8000 && now - this.lastTargetDecay > 1000) {
+      this.qTarget = Math.max(1.6, this.qTarget - 0.1);
+      this.lastTargetDecay = now;
+    }
+    this.qAvg += (s.depth - this.qAvg) * 0.06;
+    const err = this.qTarget - this.qAvg;
+    this.clockRate = 1 + clamp(err * (Math.abs(err) > 3 ? 0.04 : 0.02), -0.08, 0.08);
+  }
+  onSnap(buf) {
     const g = this.game, w = this.world;
     if (!w || this.endedByServer) return;
-    const now = performance.now();
-    // Measure actual RTT from the acknowledged input packet
-    if (typeof m.a === 'number' && this.inHist.length) {
+    const s = netDecodeSnapshot(buf);
+    if (!s || s.nCars !== w.cars.length || s.tick < this.lastSnapTick) return;
+    this.lastSnapTick = s.tick;
+    const now = performance.now(), me = g.player;
+    if (me) {
       for (let i = 0; i < this.inHist.length; i++) {
-        if (this.inHist[i].seq === m.a) {
-          const sample = clamp((now - this.inHist[i].t) * 0.001, 0.004, 0.35);
-          this.rtt = this.rtt * 0.82 + sample * 0.18;
-          break;
+        if (this.inHist[i].seq === s.ack) { this.rtt += (clamp((now - this.inHist[i].t) * 0.001, 0.004, 0.5) - this.rtt) * 0.15; break; }
+      }
+      this.regulateClock(s, now);
+    }
+    // Match state, clock & score
+    if (s.st === 'play' && this.state === 'countdown') this.goPlay();
+    this.timeLeft = s.timeLeft;
+    if (s.overtime && !this.overtime) this.otTime = 0;
+    this.overtime = s.overtime; this.otTime = s.otTime;
+    if (s.score[0] !== this.score[0] || s.score[1] !== this.score[1]) { this.score = s.score.slice(); g.ui.updateScore(this.score); }
+    // Boost pads (authoritative; prediction may pick them up again during replay)
+    for (let i = 0; i < w.pads.length && i < s.nPads; i++) {
+      const p = w.pads[i], on = !!(s.pads[i >> 3] & (1 << (i & 7)));
+      if (p.active && !on) p.timer = p.respawn;
+      p.active = on; if (on) p.timer = 0;
+    }
+    const m = s.meta;
+    if (m) {
+      if (m.pw && w.powers) this.applyPowers(m.pw);
+      if (Array.isArray(m.it)) for (let i = 0; i < w.cars.length && i < m.it.length; i++) w.cars[i].item = m.it[i] || null;
+      if (Array.isArray(m.cs)) {
+        for (let i = 0; i < w.cars.length && i < m.cs.length; i++) {
+          const st = w.cars[i].stats, c = m.cs[i];
+          st.score = c[0]; st.goals = c[1]; st.assists = c[2]; st.saves = c[3]; st.shots = c[4]; st.demos = c[5];
         }
       }
+      if (Array.isArray(m.ev)) for (const e of m.ev) this.pendingEvents.push(this.deserializeEvent(e));
     }
-    // Gentle clock-drift pacing to keep server input queue near 1 slot (measured before shift)
-    if (typeof m.q === 'number') {
-      this.qAvg = this.qAvg * 0.9 + m.q * 0.1;
-      if (this.qAvg < 0.8) this.clockRate = 1.01;
-      else if (this.qAvg > 1.75) this.clockRate = 0.99;
-      else this.clockRate = 1.0;
-    }
-    // Maintain a steady, jitter-free estimate of server time (srvOffset = serverTime - clientNow)
-    const nowSec = now * 0.001;
-    const srvT = (typeof m.k === 'number' ? m.k : 0) * PHYS.dt;
-    if (this.lastSnapAt > 0) {
-      const dtArr = (now - this.lastSnapAt) * 0.001;
-      const jit = Math.abs(dtArr - 1 / 60);
-      this.snapJitter = this.snapJitter * 0.92 + Math.min(jit, 0.06) * 0.08;
-      this.interpDelay = clamp(0.036 + this.snapJitter * 2.0, 0.036, 0.11);
-    }
-    this.lastSnapAt = now;
-    const rawOff = srvT - nowSec;
-    if (!this.hasServerTime || Math.abs(rawOff - this.srvOffset) > 0.25) {
-      this.srvOffset = rawOff;
-      this.remoteTime = srvT - this.interpDelay;
-      this.hasServerTime = true;
-    } else {
-      // Gently track clock drift; respond slightly faster to fresher (lower-latency) packets
-      const alphaOff = rawOff > this.srvOffset ? 0.08 : 0.02;
-      this.srvOffset += (rawOff - this.srvOffset) * alphaOff;
-    }
-    // Sync server play/frozen state on kickoff transition
-    if (m.st === 'play' && this.state === 'countdown') { w.frozen = false; this.setState('play'); g.ui.countdown('GO!'); g.audio.countdown(true); g.audio.crowdCheer(0.4, 1); }
-    else if (typeof m.fz === 'boolean' && (m.st === 'countdown' || m.st === 'ended')) w.frozen = m.fz;
-    // Clock + score
-    this.timeLeft = m.tl;
-    if (m.ot && !this.overtime) { this.otTime = 0; }
-    this.overtime = !!m.ot; this.otTime = m.ott || 0;
-    if (m.sc && (m.sc[0] !== this.score[0] || m.sc[1] !== this.score[1])) { this.score = m.sc.slice(); g.ui.updateScore(this.score); }
-    // Boost pads
-    if (typeof m.pd === 'string') {
-      for (let i = 0; i < w.pads.length && i < m.pd.length; i++) {
-        const p = w.pads[i], on = m.pd[i] === '1';
-        if (p.active && !on) p.timer = p.respawn;
-        p.active = on; if (on) p.timer = 0;
-      }
-    }
-    // Power-up state (mayhem) — apply before ball so stuckTo/iceT are up to date
-    if (m.pw && w.powers) this.applyPowers(m.pw);
-    // Ball: extrapolate server ball by one-way flight time (half RTT) and reconcile cleanly via visual offset
-    const b = m.b;
-    if (b) {
-      const nb = this.netBall;
-      nb.pos.set(b[0], b[1], b[2]); nb.vel.set(b[3], b[4], b[5]); nb.quat.set(b[6], b[7], b[8], b[9]);
-      if (nb.quat.lengthSq() > 1e-6) nb.quat.normalize(); else nb.quat.identity();
-      nb.angVel.set(b[10], b[11], b[12]);
-      nb.frozen = !!b[13];
-      nb.gScale = w.ball.gScale;
-      if (!nb.frozen && !w.ball.stuckTo && !(w.ball.iceT > 0)) {
-        // Extrapolate from exact server snapshot time to steady estimated current server time + half RTT,
-        // so packet arrival jitter never pulls the ball forward or backward
-        const halfRtt = clamp(this.rtt * 0.5, 0.004, 0.065);
-        let t = clamp((nowSec + this.srvOffset + halfRtt) - srvT, 0, 0.12);
-        while (t > 1e-4) {
-          const s = Math.min(PHYS.dt, t);
-          ballIntegrate(nb, s, w.shape, false);
-          quatIntegrate(nb.quat, nb.angVel, s);
-          t -= s;
-        }
-      }
-      // Don't yank the ball backward during the ~1 RTT window right after the local player hits it
-      const holdLocalHit = this.localBallHitSeq > 0 && typeof m.a === 'number' && m.a < this.localBallHitSeq && (now - this.localBallHitAt) < 180;
-      if (!holdLocalHit) {
-        this.localBallHitSeq = 0;
-        const wb = w.ball;
-        const err = wb.pos.distanceTo(nb.pos);
-        const velErr = wb.vel.distanceTo(nb.vel);
-        if (wb.frozen || nb.frozen || wb.stuckTo || err >= 4.0) {
-          wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
-          wb.prevPos.copy(wb.pos); wb.prevQuat.copy(wb.quat);
-          wb.visErrPos.set(0, 0, 0); wb.visErrQuat.identity();
-        } else if (err > 0.04 || velErr > 0.35) {
-          const oldPos = this._tmpV.copy(wb.pos);
-          const oldQuat = this._tmpQ.copy(wb.quat);
-          wb.pos.copy(nb.pos); wb.vel.copy(nb.vel); wb.quat.copy(nb.quat); wb.angVel.copy(nb.angVel); wb.frozen = nb.frozen;
-          const dPos = this._tmpV2.copy(wb.pos).sub(oldPos);
-          wb.prevPos.add(dPos);
-          wb.visErrPos.sub(dPos);
-          if (wb.visErrPos.lengthSq() > 16) wb.visErrPos.setLength(4);
-          // Shift prevQuat by (newQuat * inv(oldQuat)) to preserve smooth 120Hz spin interpolation
-          const invOld = this._tmpQ2.copy(oldQuat).invert();
-          const shiftQ = this._tmpQ3.copy(wb.quat).multiply(invOld);
-          wb.prevQuat.premultiply(shiftQ).normalize();
-          const dQ = oldQuat.multiply(this._tmpQ2.copy(wb.quat).invert());
-          wb.visErrQuat.multiply(dQ).normalize();
-        } else {
-          // Tiny drift during free flight: gently pull velocity/pos without touching prevPos/prevQuat
-          wb.pos.lerp(nb.pos, 0.12);
-          wb.vel.lerp(nb.vel, 0.2);
-          wb.angVel.lerp(nb.angVel, 0.2);
-        }
-      }
-    }
-    // Remote cars: push into snapshot interpolation buffer
-    const me = g.player;
-    for (let i = 0; i < w.cars.length && m.c && i < m.c.length; i++) {
-      const c = w.cars[i], s = m.c[i];
-      if (c === me) continue;
-      if (!c.snapBuf) c.snapBuf = [];
-      const buf = c.snapBuf;
-      const prev = buf.length ? buf[buf.length - 1] : null;
-      if (prev && srvT <= prev.t) continue;
-      const q = new QT(s[6], s[7], s[8], s[9]);
-      if (q.lengthSq() > 1e-6) q.normalize(); else q.identity();
-      buf.push({
-        t: srvT,
-        pos: new V3(s[0], s[1], s[2]),
-        vel: new V3(s[3], s[4], s[5]),
-        quat: q,
-        angVel: new V3(s[10], s[11], s[12]),
-        boost: s[13],
-        demolished: !!(s[14] & 1),
-        isBoosting: !!(s[14] & 2),
-        supersonic: !!(s[14] & 4),
-        sliding: (s[14] & 8) ? 1 : 0,
-        onGround: !!(s[14] & 16),
-        item: s[15] || null
-      });
-      if (buf.length > 8) buf.shift();
-    }
-    if (me && m.me) this.reconcile(m.me, m.a);
-    // Stats
-    if (Array.isArray(m.cs)) {
-      for (let i = 0; i < w.cars.length && i < m.cs.length; i++) {
-        const st = w.cars[i].stats, s = m.cs[i];
-        st.score = s[0]; st.goals = s[1]; st.assists = s[2]; st.saves = s[3]; st.shots = s[4]; st.demos = s[5];
-      }
-    }
-    // Server-side events (demolitions, power-ups, respawns) for effects and sounds
-    if (Array.isArray(m.ev)) for (const e of m.ev) this.pendingEvents.push(this.deserializeEvent(e));
+    if (s.st === 'ended') return;
+    this.rollback(s);
   }
-  reconcile(state, ack) {
-    const car = this.game.player, w = this.world;
-    while (this.inHist.length && this.inHist[0].seq <= ack) this.inHist.shift();
-    const oldPos = this._tmpV.copy(car.pos), oldQuat = this._tmpQ.copy(car.quat);
-    const savedControls = Object.assign({}, car.controls);
-    applyCarState(car, state);
-    if (car.demolished) {
-      car.respawnT = 99;
-      car.prevPos.copy(car.pos); car.prevQuat.copy(car.quat);
-      car.visErrPos.set(0, 0, 0); car.visErrQuat.identity();
-      return;
+  rollback(s) {
+    const g = this.game, w = this.world, me = g.player, ball = w.ball;
+    const objs = this._objs || (this._objs = [ball, ...w.cars]);
+    while (this._old.length < objs.length) this._old.push({ pos: new V3(), prev: new V3(), q: new QT(), pq: new QT(), dead: false });
+    for (let i = 0; i < objs.length; i++) {
+      const o = objs[i], r = this._old[i];
+      r.pos.copy(o.pos); r.prev.copy(o.prevPos); r.q.copy(o.quat); r.pq.copy(o.prevQuat); r.dead = i > 0 ? o.demolished : o.frozen;
     }
-    if (!w.frozen && this.state === 'play') {
-      // Re-simulate inputs the server hasn't processed yet on top of its authoritative state
-      const n = this.inHist.length;
-      for (let i = 0; i < n; i++) {
-        unpackControls(this.inHist[i].c, car.controls);
-        const ticks = (i === n - 1 && this.inTick % NET_TICKS_PER_INPUT === 1) ? 1 : NET_TICKS_PER_INPUT;
-        for (let t = 0; t < ticks; t++) {
-          car.unlimitedBoost = w.unlimitedBoost || car.unlimitedBoost === 'always';
-          if (w.boostRecharge && !car.isBoosting && car.boost < 100) car.boost = Math.min(100, car.boost + 14 * PHYS.dt);
-          car.step(PHYS.dt, w);
-        }
+    const oldTick = w.tick;
+    // 1) Rewind the whole world to the authoritative state at server tick s.tick
+    w.tick = s.tick; w.time = s.tick * PHYS.dt;
+    netReadBall(s.f, 0, ball, w.cars);
+    for (let i = 0; i < w.cars.length; i++) {
+      const c = w.cars[i];
+      netReadCar(s.f, NET_BALL_N + i * NET_CAR_N, c, s.tick, c.netCtl);
+      // Drop bump cooldowns stamped by predicted (now discarded) future ticks
+      for (const [k, t] of c.bumpCooldown) if (t > w.time) c.bumpCooldown.delete(k);
+    }
+    w.frozen = s.frozen;
+    this.unfreezeTick = (s.st === 'countdown' && s.cd >= 0) ? s.tick + s.cd : -1;
+    // 2) Work out how far ahead of the server our timeline is, then replay up to it
+    const replayable = s.st === 'play' || s.st === 'countdown';
+    let replay = null, ticks = 0;
+    if (me) {
+      while (this.inHist.length && this.inHist[0].seq <= s.ack) this.inHist.shift();
+      if (s.ack >= this.inSeq) {
+        // Server has consumed past our newest input (e.g. after goal slow-mo or a stall): jump ahead
+        this.inSeq = s.ack + Math.ceil(this.qTarget);
+        this.inHist.length = 0; this.inTick = 0; this.curInput = null;
       }
+      if (replayable) {
+        replay = this.inHist;
+        for (let i = 0; i < replay.length; i++) ticks += (i === replay.length - 1 && this.inTick % NET_TICKS_PER_INPUT === 1) ? 1 : NET_TICKS_PER_INPUT;
+      }
+    } else if (replayable) {
+      // Spectator: keep our own continuous timeline a few ticks ahead of the newest snapshot
+      const lead = clamp(oldTick - s.tick, 0, 8);
+      this.specLead += (lead - this.specLead) * 0.1;
+      this.clockRate = 1 + clamp((3 - this.specLead) * 0.01, -0.03, 0.03);
+      ticks = lead;
     }
-    Object.assign(car.controls, savedControls);
-    // Keep physics state 100% pure; absorb small discrepancies into visual-only error offset
-    const err = oldPos.distanceTo(car.pos);
-    const qDot = Math.abs(oldQuat.dot(car.quat));
-    if (err >= 3.0) {
-      car.prevPos.copy(car.pos); car.prevQuat.copy(car.quat);
-      car.visErrPos.set(0, 0, 0); car.visErrQuat.identity();
-    } else if (err > 0.005 || qDot < 0.9999) {
-      const dPos = this._tmpV2.copy(car.pos).sub(oldPos);
-      car.prevPos.add(dPos);
-      car.visErrPos.sub(dPos);
-      if (car.visErrPos.lengthSq() > 9) car.visErrPos.setLength(3);
-      // Shift prevQuat by (newQuat * inv(oldQuat)) so 120Hz rotation interpolation stays intact
-      const invOld = this._tmpQ2.copy(oldQuat).invert();
-      const shiftQ = this._tmpQ3.copy(car.quat).multiply(invOld);
-      car.prevQuat.premultiply(shiftQ).normalize();
-      const dQ = oldQuat.multiply(this._tmpQ2.copy(car.quat).invert());
-      car.visErrQuat.multiply(dQ).normalize();
+    if (ticks > NET_MAX_RESIM_TICKS) { ticks = 0; replay = null; }
+    if (ticks > 0) {
+      if (me) Object.assign(this._ctlSave, me.controls);
+      if (replay) {
+        for (let i = 0; i < replay.length; i++) {
+          unpackControls(replay[i].c, me.controls);
+          const n = (i === replay.length - 1 && this.inTick % NET_TICKS_PER_INPUT === 1) ? 1 : NET_TICKS_PER_INPUT;
+          for (let t = 0; t < n; t++) this.netStep(PHYS.dt, false);
+        }
+      } else for (let t = 0; t < ticks; t++) this.netStep(PHYS.dt, false);
+      if (me) Object.assign(me.controls, this._ctlSave);
+    }
+    // 3) Hide the correction: shift render interpolation by the delta, keep the old visual
+    //    pose as a decaying offset. Teleports (kickoff, respawn, goal) snap instead.
+    for (let i = 0; i < objs.length; i++) {
+      const o = objs[i], r = this._old[i];
+      const dead = i > 0 ? o.demolished : o.frozen;
+      const dPos = this._tmpV.copy(o.pos).sub(r.pos);
+      const limit = i > 0 ? 4 : 6;
+      if (dead || r.dead || dPos.lengthSq() > limit * limit) {
+        o.prevPos.copy(o.pos); o.prevQuat.copy(o.quat);
+        o.visErrPos.set(0, 0, 0); o.visErrQuat.identity();
+        continue;
+      }
+      o.prevPos.copy(r.prev).add(dPos);
+      o.visErrPos.sub(dPos);
+      const maxErr = i > 0 ? 3 : 4;
+      if (o.visErrPos.lengthSq() > maxErr * maxErr) o.visErrPos.setLength(maxErr);
+      // shiftQ = new * inv(old): carry prevQuat along so 120Hz rotation interpolation stays intact
+      const invOld = this._tmpQ2.copy(r.q).invert();
+      const shiftQ = this._tmpQ3.copy(o.quat).multiply(invOld);
+      o.prevQuat.copy(r.pq).premultiply(shiftQ).normalize();
+      const dQ = this._tmpQ.copy(r.q).multiply(this._tmpQ2.copy(o.quat).invert());
+      o.visErrQuat.multiply(dQ).normalize();
     }
   }
   applyPowers(pw) {
@@ -8162,7 +8195,14 @@ class OnlineManager {
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'auth', token: this.token }));
     };
+    ws.binaryType = 'arraybuffer';
     ws.onmessage = (ev) => {
+      if (typeof ev.data !== 'string') {
+        // Binary frames are 60Hz physics snapshots
+        const g = this.g;
+        if (g.mode instanceof OnlineMatchMode && g.world) g.mode.onSnap(ev.data);
+        return;
+      }
       let msg;
       try { msg = JSON.parse(ev.data); } catch (_) { return; }
       this.onWsMessage(msg);
@@ -8267,9 +8307,6 @@ class OnlineManager {
           ui.showResults(g.mode, false);
           if (msg.reward) ui.showXpReward(msg.reward);
         }
-        break;
-      case 'snap':
-        if (g.mode instanceof OnlineMatchMode && g.world) g.mode.onSnap(msg);
         break;
       case 'match_kickoff':
         if (g.mode instanceof OnlineMatchMode) g.mode.serverKickoff(msg);

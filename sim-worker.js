@@ -17,27 +17,37 @@ const { indexFile, workerIndex, smokeTest } = workerData;
 loadSim(indexFile, { smokeTest });
 
 const matches = new Map(); // matchId -> ServerMatch
+// Precise slot scheduler: sleep with a timer until ~1.5ms before the earliest due slot,
+// then yield with setImmediate (which still services incoming input messages) until it is due.
+// The old fixed 4ms interval added 0-4ms of jitter to every snapshot.
 let loopTimer = null;
+let loopImmediate = null;
+
+function runLoop() {
+  loopTimer = null; loopImmediate = null;
+  if (matches.size === 0) return;
+  const nowNs = process.hrtime.bigint();
+  let wait = Infinity;
+  for (const sim of matches.values()) {
+    sim.stepClock(nowNs);
+    const ms = sim.msUntilNextSlot(nowNs);
+    if (ms < wait) wait = ms;
+  }
+  if (matches.size === 0) return;
+  if (!Number.isFinite(wait)) wait = 50;
+  if (wait > 2.5) loopTimer = setTimeout(runLoop, Math.floor(wait - 1.5));
+  else loopImmediate = setImmediate(runLoop);
+}
 
 function ensureLoop() {
-  if (loopTimer || matches.size === 0) return;
-  loopTimer = setInterval(() => {
-    const nowNs = process.hrtime.bigint();
-    for (const sim of matches.values()) {
-      sim.stepClock(nowNs);
-    }
-    if (matches.size === 0 && loopTimer) {
-      clearInterval(loopTimer);
-      loopTimer = null;
-    }
-  }, 4);
+  if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+  if (!loopImmediate) loopImmediate = setImmediate(runLoop);
 }
 
 function stopLoopIfIdle() {
-  if (matches.size === 0 && loopTimer) {
-    clearInterval(loopTimer);
-    loopTimer = null;
-  }
+  if (matches.size !== 0) return;
+  if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+  if (loopImmediate) { clearImmediate(loopImmediate); loopImmediate = null; }
 }
 
 parentPort.on('message', (msg) => {
@@ -52,7 +62,11 @@ parentPort.on('message', (msg) => {
           teammateDiff: msg.teammateDiff,
           players: msg.players,
           broadcast: (m) => parentPort.postMessage({ type: 'broadcast', id, msg: m }),
-          onSnapshot: (to, spec) => parentPort.postMessage({ type: 'snap', id, to, spec }),
+          onSnapshot: (to, spec) => {
+            const transfer = [spec];
+            for (const pair of to) transfer.push(pair[1]);
+            parentPort.postMessage({ type: 'snap', id, to, spec }, transfer);
+          },
           onGoal: (info) => parentPort.postMessage({ type: 'goal', id, info }),
           onEnd: ({ score, stats }) => {
             matches.delete(id);
@@ -100,7 +114,7 @@ parentPort.on('message', (msg) => {
 
     case 'pause': {
       const sim = matches.get(id);
-      if (sim) sim.setPaused(msg.p);
+      if (sim) { sim.setPaused(msg.p); ensureLoop(); }
       break;
     }
 

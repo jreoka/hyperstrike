@@ -30,7 +30,9 @@ function buildSimSource(indexHtml) {
   ];
   return parts.join('\n') + `
 return { V3, QT, PHYS, ARENAS, World, Car, Ball, BotAI, PERSONALITIES, BOT_NAMES, PowerSystem,
-  makeControls, KICKOFF_SPOTS, KICKOFF_SETS, yawToward, pick, clamp, ballIntegrate, HITBOXES, PI };`;
+  makeControls, KICKOFF_SPOTS, KICKOFF_SETS, yawToward, pick, clamp, ballIntegrate, HITBOXES, PI,
+  netEncodeSnapshot, netPatchSnapshot, netDecodeSnapshot, netPackControls, netUnpackControls,
+  netReadCar, netReadBall, NET_TPI, NET_BALL_N, NET_CAR_N };`;
 }
 
 let factory = null;
