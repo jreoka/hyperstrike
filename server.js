@@ -5,11 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { loadSim } = require('./sim');
+const { ServerMatch } = require('./match');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const INDEX_FILE = path.join(__dirname, 'index.html');
+loadSim(INDEX_FILE); // extract + smoke-test the game physics for server-side simulation
 const REGION = process.env.FLY_REGION || 'local';
 const ALLOWED_URL_RAW = (process.env.URL || '').trim();
 let ALLOWED_ORIGIN = '';
@@ -24,19 +27,96 @@ if (ALLOWED_URL_RAW) {
   }
 }
 
+function requestHost(req) {
+  return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+}
+
+// The origin the game page must be loaded from. Uses the URL env when set,
+// otherwise the server's own scheme://host (so local runs are protected too).
+function expectedOrigin(req) {
+  if (ALLOWED_ORIGIN) return ALLOWED_ORIGIN;
+  const host = requestHost(req);
+  if (!host) return '';
+  const proto = String(req.headers['x-forwarded-proto'] || (req.socket && req.socket.encrypted ? 'https' : 'http'))
+    .split(',')[0].trim().toLowerCase();
+  return `${proto}://${host}`;
+}
+
 function isRequestAllowed(req) {
-  if (!ALLOWED_ORIGIN) return true;
   const origin = String(req.headers.origin || '').trim().toLowerCase();
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+  // Browsers always send Origin on WebSocket upgrades and cross-origin fetches.
+  // A page opened from disk sends "null"; a page on another host sends that host.
+  if (origin) return origin === expectedOrigin(req);
+  if (!ALLOWED_ORIGIN) return true;
+  const host = requestHost(req);
   const referer = String(req.headers.referer || '').trim().toLowerCase();
-  if (origin) return origin === ALLOWED_ORIGIN;
   if (host === ALLOWED_HOST) return true;
   if (referer && (referer === ALLOWED_ORIGIN || referer.startsWith(ALLOWED_ORIGIN + '/'))) return true;
   return false;
 }
 
 function corsOriginHeader() {
-  return ALLOWED_ORIGIN || '*';
+  return ALLOWED_ORIGIN;
+}
+
+// ============================================================
+// CLIENT PAGE TOKEN
+// The server sets a signed, HttpOnly, SameSite=Strict cookie whenever it
+// serves index.html. The WebSocket and /api/* endpoints require it, so a
+// game client must have been loaded from this server. Local copies of the
+// HTML (file://, localhost, other sites) never receive or send this cookie.
+// ============================================================
+const CLIENT_COOKIE = 'hs_client';
+const CLIENT_COOKIE_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_SECRET = (() => {
+  if (process.env.CLIENT_SECRET) return process.env.CLIENT_SECRET;
+  const file = path.join(DATA_DIR, 'client_secret');
+  try {
+    const existing = fs.readFileSync(file, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch (_) {}
+  const fresh = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(file, fresh, { mode: 0o600 });
+  } catch (err) {
+    console.error('[CONFIG] Could not persist client secret:', err.message);
+  }
+  return fresh;
+})();
+
+function signClientToken(ts, nonce) {
+  return crypto.createHmac('sha256', CLIENT_SECRET).update(`${ts}.${nonce}`).digest('base64url');
+}
+
+function issueClientCookie(req) {
+  const ts = Date.now().toString(36);
+  const nonce = crypto.randomBytes(12).toString('base64url');
+  const value = `${ts}.${nonce}.${signClientToken(ts, nonce)}`;
+  const secure = expectedOrigin(req).startsWith('https:') ? '; Secure' : '';
+  return `${CLIENT_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(CLIENT_COOKIE_TTL_MS / 1000)}${secure}`;
+}
+
+function readCookie(req, name) {
+  const header = String(req.headers.cookie || '');
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() === name) return part.slice(idx + 1).trim();
+  }
+  return '';
+}
+
+function hasValidClientCookie(req) {
+  const value = readCookie(req, CLIENT_COOKIE);
+  const parts = value.split('.');
+  if (parts.length !== 3) return false;
+  const [ts, nonce, sig] = parts;
+  const issued = parseInt(ts, 36);
+  if (!Number.isFinite(issued) || Date.now() - issued > CLIENT_COOKIE_TTL_MS || issued - Date.now() > 60000) return false;
+  const expected = Buffer.from(signClientToken(ts, nonce));
+  const given = Buffer.from(sig);
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
 }
 
 // ============================================================
@@ -292,6 +372,7 @@ function randomCode(len, prefix = '') {
 // MULTIPLAYER STATE: CLIENTS, SQUADS, LOBBIES & ANTI-CHEAT
 // ============================================================
 const clientsByUserId = new Map(); // userId -> ws
+const soloMatches = new Map();     // userId -> { id, startedAt, duration, difficulty, tournament }
 const squads = new Map();          // squadCode -> Squad
 const lobbies = new Map();         // lobbyCode -> Lobby
 
@@ -452,8 +533,10 @@ function leaveLobby(ws, reason = 'left') {
   const wasHost = lb.hostId === ws.userId;
   lb.players.delete(ws.userId);
   if (lb.ac) lb.ac.delete(ws.userId);
+  if (lb.sim) lb.sim.removePlayer(ws.userId);
 
   if (lb.players.size === 0) {
+    if (lb.sim) { lb.sim.stop(); lb.sim = null; }
     lobbies.delete(lb.code);
     return;
   }
@@ -474,6 +557,11 @@ function leaveLobby(ws, reason = 'left') {
 
 function joinLobbyInternal(ws, lb, preferredTeam = null) {
   if (ws.lobbyCode === lb.code) return true;
+  const banned = db.users[ws.usernameLower];
+  if (acBanRemainingMs(banned) > 0) {
+    send(ws, { type: 'error', text: acBanMessage(banned) });
+    return false;
+  }
   if (ws.lobbyCode) leaveLobby(ws);
   const team = pickTeamForPlayer(lb, preferredTeam);
   lb.players.set(ws.userId, {
@@ -506,163 +594,126 @@ function pullSquadIntoLobby(leaderWs, lb, preferredTeam) {
 
 // ============================================================
 // SERVER-SIDE ANTI-CHEAT ENGINE
+// Multiplayer matches are fully simulated on the server (see match.js): clients
+// only send controls, so positions, speed, boost, goals, score and the clock
+// cannot be forged. This section handles what remains: malformed/flooded
+// input, solo match sessions, ranked eligibility, and escalating penalties
+// (warn -> kick -> timed matchmaking ban that doubles per offense).
 // ============================================================
 function isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
 function isVec3(a) { return Array.isArray(a) && a.length === 3 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]); }
 function isQuat(a) { return Array.isArray(a) && a.length === 4 && isFiniteNum(a[0]) && isFiniteNum(a[1]) && isFiniteNum(a[2]) && isFiniteNum(a[3]); }
 
-function addStrike(lb, ws, reason, severity = 1) {
+const AC_KICK_STRIKES = 12;
+const AC_WARN_STRIKES = 6;
+const AC_BASE_BAN_MS = 10 * 60 * 1000;
+const AC_MAX_BAN_MS = 7 * 24 * 60 * 60 * 1000;
+const AC_INPUT_MAX_PER_SEC = 90;    // client sends 60Hz
+
+function acLog(user, reason) {
+  console.warn(`[ANTI-CHEAT] ${user ? user.username : '?'}: ${reason}`);
+  if (!user) return;
+  if (!Array.isArray(user.acLog)) user.acLog = [];
+  user.acLog.push({ t: Date.now(), reason: String(reason).slice(0, 120) });
+  if (user.acLog.length > 25) user.acLog.splice(0, user.acLog.length - 25);
+  markDirty();
+}
+
+function acBanRemainingMs(user) {
+  if (!user || !user.acBanUntil) return 0;
+  return Math.max(0, user.acBanUntil - Date.now());
+}
+
+function acBanMessage(user) {
+  const mins = Math.ceil(acBanRemainingMs(user) / 60000);
+  return `Anti-cheat matchmaking ban: ${mins >= 60 ? Math.ceil(mins / 60) + 'h' : mins + 'm'} remaining.`;
+}
+
+// Kicked for cheating: ban length doubles with each offense (10m, 20m, 40m ... 7d).
+function acPenalize(user, reason) {
+  if (!user) return;
+  user.antiCheatFlags = (user.antiCheatFlags || 0) + 1;
+  const ms = Math.min(AC_MAX_BAN_MS, AC_BASE_BAN_MS * Math.pow(2, user.antiCheatFlags - 1));
+  user.acBanUntil = Date.now() + ms;
+  acLog(user, `KICK+BAN ${Math.round(ms / 60000)}m: ${reason}`);
+}
+
+function acRecord(lb, userId) {
   if (!lb.ac) lb.ac = new Map();
-  let rec = lb.ac.get(ws.userId);
-  if (!rec) { rec = { strikes: 0, lastDecay: Date.now(), prev: null, lastBoostGainT: 0, boostGains: 0 }; lb.ac.set(ws.userId, rec); }
+  let rec = lb.ac.get(userId);
+  if (!rec) {
+    const now = Date.now();
+    rec = {
+      strikes: 0, lastDecay: now, prev: null, lastBoostGainT: 0, boostGains: 0,
+      pktWindow: now, pktCount: 0, demoStart: 0
+    };
+    lb.ac.set(userId, rec);
+  }
+  return rec;
+}
+
+function addStrike(lb, ws, reason, severity = 1) {
+  const rec = acRecord(lb, ws.userId);
   rec.strikes += severity;
-  if (rec.strikes >= 12) {
+  if (rec.strikes >= AC_KICK_STRIKES) {
     const user = db.users[ws.usernameLower];
-    if (user) { user.antiCheatFlags = (user.antiCheatFlags || 0) + 1; markDirty(); }
+    acPenalize(user, reason);
     send(ws, { type: 'anticheat_kick', reason: `Anti-Cheat Kick: ${reason}` });
     leaveLobby(ws, 'anticheat');
     broadcastLobby(lb, { type: 'lobby_chat', system: true, text: `[ANTI-CHEAT] ${ws.username} was removed (${reason}).` });
     return false;
   }
-  if (rec.strikes >= 6 && rec.strikes - severity < 6) {
-    send(ws, { type: 'anticheat_warn', reason: `Suspicious physics detected (${reason}). Continued violations will kick you.` });
+  if (rec.strikes >= AC_WARN_STRIKES && rec.strikes - severity < AC_WARN_STRIKES) {
+    send(ws, { type: 'anticheat_warn', reason: `Suspicious activity detected (${reason}). Continued violations will kick you.` });
   }
   return true;
 }
 
-function validatePlayerState(lb, ws, msg) {
-  if (!isVec3(msg.p) || !isVec3(msg.v) || !isQuat(msg.q) || !isFiniteNum(msg.b)) {
-    return addStrike(lb, ws, 'Malformed state packet', 3) ? null : null;
-  }
-  if (!lb.ac) lb.ac = new Map();
-  const now = Date.now();
-  let rec = lb.ac.get(ws.userId);
-  if (!rec) {
-    rec = { strikes: 0, lastDecay: now, prev: null, lastBoostGainT: 0, boostGains: 0 };
-    lb.ac.set(ws.userId, rec);
-  }
-  // Decay strikes over clean play
-  if (now - rec.lastDecay > 20000 && rec.strikes > 0) {
-    rec.strikes = Math.max(0, rec.strikes - 1);
-    rec.lastDecay = now;
-  }
-
-  const [x, y, z] = msg.p;
-  const [vx, vy, vz] = msg.v;
-  let boost = msg.b;
-
-  // 1. Arena bounds check
-  if (Math.abs(x) > 78 || Math.abs(z) > 100 || y < -6 || y > 42) {
-    if (!addStrike(lb, ws, 'Out-of-bounds position', 2)) return null;
-    msg.p[0] = Math.max(-72, Math.min(72, x));
-    msg.p[1] = Math.max(0, Math.min(36, y));
-    msg.p[2] = Math.max(-92, Math.min(92, z));
-  }
-
-  // 2. Speed cap check (allows supersonic + dodge + bumps + mayhem nitro/grapple)
-  const speed = Math.hypot(vx, vy, vz);
-  const maxSpeed = lb.settings.mode === 'mayhem' ? 58 : (lb.settings.mutator !== 'normal' ? 48 : 40);
-  if (speed > maxSpeed) {
-    if (!addStrike(lb, ws, `Speed hack (${Math.round(speed * 3.6)} km/h)`, 2)) return null;
-    const scale = maxSpeed / speed;
-    msg.v[0] *= scale; msg.v[1] *= scale; msg.v[2] *= scale;
-  }
-
-  // 3. Teleport check (skip right after kickoff / respawn / demolished)
-  const inGrace = lb.match && (now - lb.match.lastResetAt < 4500);
-  if (rec.prev && !inGrace && !msg.d && !rec.prev.d) {
-    const dt = Math.max(0.016, (now - rec.prev.t) / 1000);
-    const dist = Math.hypot(x - rec.prev.x, y - rec.prev.y, z - rec.prev.z);
-    const maxDist = Math.max(14, maxSpeed * dt * 2.4);
-    if (dist > maxDist && lb.settings.mode !== 'mayhem') {
-      if (!addStrike(lb, ws, 'Teleport / position spoofing', 2)) return null;
-    }
-  }
-
-  // 4. Boost validation
-  if (boost < -0.5 || boost > 100.5) {
-    if (!addStrike(lb, ws, 'Invalid boost value', 2)) return null;
-  }
-  boost = Math.max(0, Math.min(100, boost));
-  if (rec.prev && lb.settings.boostMode === 'normal' && lb.settings.mode !== 'mayhem' && !inGrace) {
-    const delta = boost - rec.prev.b;
-    // Small pad = +12, big pad = +100. Rapidly gaining boost >5 times in 1.5s without pads is impossible
-    if (delta > 3) {
-      if (now - rec.lastBoostGainT < 1500) {
-        rec.boostGains++;
-        if (rec.boostGains > 6) {
-          if (!addStrike(lb, ws, 'Boost refill hack', 2)) return null;
-        }
-      } else {
-        rec.boostGains = 1;
-        rec.lastBoostGainT = now;
-      }
-    }
-  }
-
-  // Normalize quaternion length check
-  const qLen = Math.hypot(msg.q[0], msg.q[1], msg.q[2], msg.q[3]);
-  if (qLen < 0.8 || qLen > 1.25) {
-    if (!addStrike(lb, ws, 'Invalid orientation quaternion', 1)) return null;
-    const inv = qLen > 0 ? 1 / qLen : 1;
-    msg.q = [msg.q[0] * inv, msg.q[1] * inv, msg.q[2] * inv, msg.q[3] * inv];
-  }
-
-  rec.prev = { x: msg.p[0], y: msg.p[1], z: msg.p[2], b: boost, d: !!msg.d, t: now };
-  return {
-    type: 'p_state',
-    uid: ws.userId,
-    p: msg.p,
-    v: msg.v,
-    q: msg.q,
-    b: Math.round(boost * 10) / 10,
-    bs: !!msg.bs,   // isBoosting
-    ss: !!msg.ss,   // supersonic
-    sl: msg.sl ? 1 : 0, // sliding
-    d: !!msg.d,     // demolished
-    it: typeof msg.it === 'string' ? msg.it.slice(0, 16) : null
-  };
+function packetRateOk(rec, now, maxPerSec) {
+  if (now - rec.pktWindow >= 1000) { rec.pktWindow = now; rec.pktCount = 0; }
+  rec.pktCount++;
+  return rec.pktCount <= maxPerSec;
 }
 
-function validateBallState(lb, msg) {
-  if (!isVec3(msg.p) || !isVec3(msg.v) || !isQuat(msg.q)) return null;
-  const speed = Math.hypot(msg.v[0], msg.v[1], msg.v[2]);
-  const maxBall = lb.settings.mode === 'mayhem' ? 120 : (lb.settings.mutator === 'fastball' ? 95 : 75);
-  if (speed > maxBall) {
-    const sc = maxBall / speed;
-    msg.v[0] *= sc; msg.v[1] *= sc; msg.v[2] *= sc;
+// Ranked points require a real opponent: at least one human on each side, and
+// no opposing humans connecting from the same IP (alt-account boosting).
+function rankedEligibility(lb) {
+  const teams = [[], []];
+  for (const p of lb.players.values()) {
+    if (p.team !== 0 && p.team !== 1) continue;
+    const pws = clientsByUserId.get(p.userId);
+    teams[p.team].push(pws && pws.ip ? pws.ip : 'unknown:' + p.userId);
   }
-  return {
-    type: 'b_state',
-    p: msg.p,
-    v: msg.v,
-    q: msg.q,
-    av: isVec3(msg.av) ? msg.av : [0, 0, 0],
-    st: typeof msg.st === 'string' ? msg.st.slice(0, 16) : 'play',
-    tl: isFiniteNum(msg.tl) ? msg.tl : 0,
-    ot: !!msg.ot,
-    ott: isFiniteNum(msg.ott) ? msg.ott : 0,
-    sc: Array.isArray(msg.sc) && msg.sc.length === 2 ? [Number(msg.sc[0]) || 0, Number(msg.sc[1]) || 0] : [0, 0],
-    bots: Array.isArray(msg.bots) ? msg.bots.slice(0, 10) : []
-  };
+  if (!teams[0].length || !teams[1].length) return { ok: false, reason: 'Ranked needs human players on both teams' };
+  for (const ip of teams[0]) {
+    if (teams[1].includes(ip)) return { ok: false, reason: 'Opposing players share a network' };
+  }
+  return { ok: true };
 }
 
 // ============================================================
 // MATCH REWARDS (SERVER-AUTHORITATIVE XP + INFINITE LEVELS + RP)
 // ============================================================
-function finalizeMultiplayerMatch(lb, score, playerStatsMap) {
+function finalizeMultiplayerMatch(lb, simScore, playerStatsMap) {
   const m = lb.match;
   if (!m || m.finished) return;
   m.finished = true;
   lb.status = 'waiting';
 
   const durationSec = Math.max(1, (Date.now() - m.startedAt) / 1000);
-  const blueScore = Math.max(0, Math.min(99, Math.floor(score[0] || 0)));
-  const orangeScore = Math.max(0, Math.min(99, Math.floor(score[1] || 0)));
+  if (lb.sim) { lb.sim.stop(); lb.sim = null; }
+  // Score and stats come from the server's own simulation
+  const blueScore = Math.max(0, Math.min(99, simScore[0]));
+  const orangeScore = Math.max(0, Math.min(99, simScore[1]));
   const winnerTeam = blueScore > orangeScore ? 0 : (orangeScore > blueScore ? 1 : -1);
 
   const rewards = {};
-  const isRanked = !!lb.settings.ranked && durationSec >= 25;
+  let isRanked = !!lb.settings.ranked && durationSec >= 25;
+  let rankedVoid = null;
+  if (isRanked) {
+    const elig = rankedEligibility(lb);
+    if (!elig.ok) { isRanked = false; rankedVoid = elig.reason; }
+  }
 
   for (const p of lb.players.values()) {
     p.ready = (p.userId === lb.hostId);
@@ -672,11 +723,11 @@ function finalizeMultiplayerMatch(lb, score, playerStatsMap) {
     if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
 
     const st = (playerStatsMap && playerStatsMap[p.userId]) || {};
-    const goals = Math.max(0, Math.min(20, Math.floor(st.goals || 0)));
-    const assists = Math.max(0, Math.min(20, Math.floor(st.assists || 0)));
-    const saves = Math.max(0, Math.min(25, Math.floor(st.saves || 0)));
-    const shots = Math.max(0, Math.min(35, Math.floor(st.shots || 0)));
-    const demos = Math.max(0, Math.min(20, Math.floor(st.demos || 0)));
+    const goals = Math.min(20, st.goals || 0);
+    const assists = Math.min(20, st.assists || 0);
+    const saves = Math.min(25, st.saves || 0);
+    const shots = Math.min(35, st.shots || 0);
+    const demos = Math.min(20, st.demos || 0);
 
     const won = winnerTeam === p.team;
     const lost = winnerTeam >= 0 && winnerTeam !== p.team;
@@ -719,6 +770,7 @@ function finalizeMultiplayerMatch(lb, score, playerStatsMap) {
     score: [blueScore, orangeScore],
     winnerTeam,
     rewards,
+    rankedVoid,
     lobby: lobbySnapshot(lb)
   });
 }
@@ -752,7 +804,7 @@ function sendJson(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': corsOriginHeader(),
+    ...(corsOriginHeader() ? { 'Access-Control-Allow-Origin': corsOriginHeader(), 'Access-Control-Allow-Credentials': 'true' } : {}),
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Vary': 'Origin',
@@ -797,7 +849,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': corsOriginHeader(),
+      ...(corsOriginHeader() ? { 'Access-Control-Allow-Origin': corsOriginHeader(), 'Access-Control-Allow-Credentials': 'true' } : {}),
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Vary': 'Origin',
@@ -815,13 +867,21 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        'Set-Cookie': issueClientCookie(req),
+        'Content-Security-Policy': "frame-ancestors 'self'",
+        'X-Frame-Options': 'SAMEORIGIN'
       });
       return res.end(html);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       return res.end('index.html not found');
     }
+  }
+
+  // Every API call must come from a page this server served.
+  if (pathname.startsWith('/api/') && !hasValidClientCookie(req)) {
+    return sendJson(res, 403, { error: 'Client not recognized. Reload the game from the official site.' });
   }
 
   const ip = getClientIp(req);
@@ -988,6 +1048,27 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { leaderboard: list, sort });
     }
 
+    // SOLO MATCH START: the server records when the match began and its settings,
+    // so the report can't claim a longer match or a harder difficulty than was played.
+    if (req.method === 'POST' && pathname === '/api/match/start') {
+      const user = getUserByToken(getBearerToken(req));
+      if (!user) return sendJson(res, 401, { error: 'Not authenticated' });
+      if (!checkRateLimit('mstart:' + user.id, 20, 60000)) {
+        return sendJson(res, 429, { error: 'Too many matches started.' });
+      }
+      const body = await readJsonBody(req);
+      const duration = [120, 180, 300].includes(Number(body.duration)) ? Number(body.duration) : 0;
+      const matchId = crypto.randomBytes(16).toString('hex');
+      soloMatches.set(user.id, {
+        id: matchId,
+        startedAt: Date.now(),
+        duration,
+        difficulty: Math.max(0, Math.min(3, Math.floor(Number(body.difficulty) || 0))),
+        tournament: !!body.tournament
+      });
+      return sendJson(res, 200, { matchId });
+    }
+
     // SOLO / AI / TOURNAMENT MATCH REPORT (ANTI-CHEAT SANITY VALIDATED)
     if (req.method === 'POST' && pathname === '/api/match/report') {
       const user = getUserByToken(getBearerToken(req));
@@ -1000,21 +1081,38 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 429, { error: 'Match submitted too quickly.' });
       }
       const body = await readJsonBody(req);
-      const duration = Math.max(0, Math.min(3600, Number(body.duration) || 0));
-      if (duration < 15) {
-        return sendJson(res, 400, { error: 'Match too short for XP.' });
+      // The report must match the session the server opened at kickoff (single use)
+      const session = soloMatches.get(user.id);
+      if (!session || typeof body.matchId !== 'string' || body.matchId !== session.id) {
+        return sendJson(res, 400, { error: 'Match was not registered with the server.' });
       }
+      soloMatches.delete(user.id);
+      if (!session.duration) {
+        return sendJson(res, 400, { error: 'Unlimited matches do not award XP.' });
+      }
+      // Real elapsed time comes from the server clock. The in-game clock pauses
+      // for countdowns and goals, so a real match always takes longer than its length.
+      const elapsedSec = (now - session.startedAt) / 1000;
+      if (elapsedSec < session.duration - 1) {
+        acLog(user, `Solo report too fast (${Math.round(elapsedSec)}s for a ${session.duration}s match)`);
+        return sendJson(res, 400, { error: 'Match ended too early.' });
+      }
+      if (elapsedSec > 3 * 3600) {
+        return sendJson(res, 400, { error: 'Match session expired.' });
+      }
+      const duration = Math.min(elapsedSec, session.duration + 600);
 
       // Cap stats proportionally to match length to stop stat spoofing
       const mins = Math.max(1, duration / 60);
       const goals = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.goals) || 0)));
-      const assists = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.assists) || 0)));
-      const saves = Math.max(0, Math.min(Math.ceil(mins * 5), Math.floor(Number(body.saves) || 0)));
-      const shots = Math.max(0, Math.min(Math.ceil(mins * 8), Math.floor(Number(body.shots) || 0)));
+      const assists = Math.max(0, Math.min(Math.ceil(mins * 3), Math.floor(Number(body.assists) || 0)));
+      const saves = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.saves) || 0)));
+      const shots = Math.max(goals, Math.min(Math.ceil(mins * 8), Math.floor(Number(body.shots) || 0)));
       const demos = Math.max(0, Math.min(Math.ceil(mins * 4), Math.floor(Number(body.demos) || 0)));
       const won = !!body.won;
-      const difficulty = Math.max(0, Math.min(3, Math.floor(Number(body.difficulty) || 0)));
-      const isTournament = !!body.tournament;
+      // Difficulty and tournament flag come from the session, not the report
+      const difficulty = session.difficulty;
+      const isTournament = session.tournament;
 
       if (!user.stats) user.stats = { matches: 0, wins: 0, losses: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, mpMatches: 0, mpWins: 0 };
       user.stats.matches++;
@@ -1058,11 +1156,18 @@ const wss = new WebSocketServer({
   maxPayload: 16384,
   verifyClient: (info, done) => {
     if (!isRequestAllowed(info.req)) return done(false, 403, 'Forbidden');
+    if (!hasValidClientCookie(info.req)) return done(false, 403, 'Forbidden');
     done(true);
   }
 });
 
-wss.on('connection', (ws) => {
+// Refresh the page cookie on every successful upgrade so long sessions keep working.
+wss.on('headers', (headers, req) => {
+  headers.push('Set-Cookie: ' + issueClientCookie(req));
+});
+
+wss.on('connection', (ws, req) => {
+  ws.ip = getClientIp(req);
   ws.isAlive = true;
   ws.authed = false;
   ws.userId = null;
@@ -1203,6 +1308,8 @@ wss.on('connection', (ws) => {
         break;
       }
       case 'lobby_create': {
+        const me = db.users[ws.usernameLower];
+        if (acBanRemainingMs(me) > 0) return send(ws, { type: 'error', text: acBanMessage(me) });
         if (ws.lobbyCode) leaveLobby(ws);
         let code;
         do { code = randomCode(6); } while (lobbies.has(code));
@@ -1327,83 +1434,59 @@ wss.on('connection', (ws) => {
         }
         lb.status = 'in_match';
         lb.ac = new Map();
-        lb.match = {
-          startedAt: now,
-          lastGoalAt: 0,
-          lastResetAt: now,
-          score: [0, 0],
-          finished: false
-        };
+        lb.match = { startedAt: now, finished: false };
+        const settings = lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : Object.assign({}, lb.settings);
         const snap = lobbySnapshot(lb);
+        let sim;
+        try {
+          sim = new ServerMatch({
+            settings,
+            players: snap.players.filter(p => p.team === 0 || p.team === 1).map(p => ({ userId: p.id, username: p.username, team: p.team, car: p.car })),
+            broadcast: m => broadcastLobby(lb, m),
+            sendRaw: (userId, raw) => {
+              const pws = clientsByUserId.get(userId);
+              if (pws && pws.readyState === 1 && pws.lobbyCode === lb.code) pws.send(raw);
+            },
+            spectators: raw => {
+              for (const p of lb.players.values()) {
+                if (p.team === 0 || p.team === 1) continue;
+                const pws = clientsByUserId.get(p.userId);
+                if (pws && pws.readyState === 1) pws.send(raw);
+              }
+            },
+            onGoal: info => broadcastLobby(lb, Object.assign({ type: 'match_goal_ack' }, info)),
+            onEnd: ({ score, stats }) => finalizeMultiplayerMatch(lb, score, stats)
+          });
+        } catch (err) {
+          console.error('[SIM] Failed to start match:', err);
+          lb.status = 'waiting'; lb.match = null;
+          return send(ws, { type: 'error', text: 'Server could not start the match.' });
+        }
+        lb.sim = sim;
         broadcastLobby(lb, {
           type: 'match_start',
           lobby: snap,
           hostId: lb.hostId,
-          settings: lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : lb.settings,
-          players: snap.players
+          settings,
+          players: snap.players,
+          cars: sim.carInfo,
+          serverSim: true
         });
+        sim.start();
         break;
       }
 
-      // ---- IN-MATCH REAL-TIME SYNC + ANTI-CHEAT ----
-      case 'p_state': {
+      // ---- IN-MATCH: clients send only their controls; the server simulates ----
+      case 'in': {
         const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.status !== 'in_match') return;
-        const validated = validatePlayerState(lb, ws, msg);
-        if (!validated) return;
-        broadcastLobby(lb, validated, ws.userId);
-        break;
-      }
-      case 'b_state': {
-        const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId) return;
-        const validated = validateBallState(lb, msg);
-        if (!validated) return;
-        broadcastLobby(lb, validated, ws.userId);
-        break;
-      }
-      case 'match_kickoff': {
-        const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId) return;
-        if (lb.match) lb.match.lastResetAt = now;
-        broadcastLobby(lb, { type: 'match_kickoff' }, ws.userId);
-        break;
-      }
-      case 'match_goal': {
-        const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId || !lb.match) return;
-        // Anti-cheat goal validation
-        if (now - lb.match.lastGoalAt < 2500) return;
-        const goalTeam = Number(msg.goalTeam);
-        if (goalTeam !== 0 && goalTeam !== 1) return;
-        const pos = isVec3(msg.pos) ? msg.pos : [0, 2, goalTeam === 0 ? -55 : 55];
-        if (Math.abs(pos[2]) < 30) return; // ball must actually be in goal area
-        const speed = Math.min(250, Math.max(0, Math.round(Number(msg.speed) || 0)));
-
-        lb.match.lastGoalAt = now;
-        lb.match.lastResetAt = now;
-        const scoringTeam = 1 - goalTeam;
-        lb.match.score[scoringTeam]++;
-
-        broadcastLobby(lb, {
-          type: 'match_goal_ack',
-          goalTeam,
-          scoringTeam,
-          score: lb.match.score.slice(),
-          scorerName: typeof msg.scorerName === 'string' ? msg.scorerName.slice(0, 24) : '',
-          assistName: typeof msg.assistName === 'string' ? msg.assistName.slice(0, 24) : '',
-          own: !!msg.own,
-          speed,
-          pos,
-          explosion: Number(msg.explosion) || 0
-        }, ws.userId);
-        break;
-      }
-      case 'match_end': {
-        const lb = lobbies.get(ws.lobbyCode);
-        if (!lb || lb.status !== 'in_match' || lb.hostId !== ws.userId || !lb.match) return;
-        const score = Array.isArray(msg.score) ? msg.score : lb.match.score;
-        finalizeMultiplayerMatch(lb, score, msg.stats || {});
+        if (!lb || lb.status !== 'in_match' || !lb.sim) return;
+        const rec = acRecord(lb, ws.userId);
+        if (!rec.inPkt) rec.inPkt = { pktWindow: now, pktCount: 0 };
+        if (!packetRateOk(rec.inPkt, now, AC_INPUT_MAX_PER_SEC)) {
+          if (rec.inPkt.pktCount === AC_INPUT_MAX_PER_SEC * 2) addStrike(lb, ws, 'Input packet flood', 2);
+          return;
+        }
+        if (!lb.sim.pushInput(ws.userId, msg.s, msg.c)) addStrike(lb, ws, 'Malformed input packet', 1);
         break;
       }
     }

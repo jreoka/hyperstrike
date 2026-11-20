@@ -9,7 +9,7 @@ ENV DATA_DIR=/data
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-COPY server.js index.html ./
+COPY server.js sim.js match.js index.html ./
 
 RUN mkdir -p /data && chown -R node:node /app /data
 USER node
