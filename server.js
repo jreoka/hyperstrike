@@ -11,6 +11,7 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const INDEX_FILE = path.join(__dirname, 'index.html');
+let cachedIndexHtml = null;
 const simPool = new SimPool();
 const REGION = process.env.FLY_REGION || 'local';
 const ALLOWED_URL_RAW = (process.env.URL || '').trim();
@@ -234,19 +235,35 @@ function loadDb() {
 }
 
 let dbDirty = false;
+let dbFlushing = false;
 function markDirty() { dbDirty = true; }
 
-function flushDb() {
+function flushDb(sync = false) {
   if (!dbDirty) return;
-  dbDirty = false;
-  try {
-    const tmp = DB_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
-    fs.renameSync(tmp, DB_FILE);
-  } catch (err) {
-    console.error('[DB] Flush error:', err.message);
-    dbDirty = true;
+  if (sync) {
+    dbDirty = false;
+    try {
+      const tmp = DB_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
+      fs.renameSync(tmp, DB_FILE);
+    } catch (err) {
+      console.error('[DB] Flush error:', err.message);
+      dbDirty = true;
+    }
+    return;
   }
+  if (dbFlushing) return;
+  dbDirty = false;
+  dbFlushing = true;
+  const payload = JSON.stringify(db);
+  const tmp = DB_FILE + '.tmp';
+  fs.promises.writeFile(tmp, payload, 'utf8')
+    .then(() => fs.promises.rename(tmp, DB_FILE))
+    .catch((err) => {
+      console.error('[DB] Async flush error:', err.message);
+      dbDirty = true;
+    })
+    .finally(() => { dbFlushing = false; });
 }
 
 loadDb();
@@ -603,8 +620,8 @@ const AC_WARN_STRIKES = 6;
 const AC_DECAY_MS = 15000;
 const AC_BASE_BAN_MS = 10 * 60 * 1000;
 const AC_MAX_BAN_MS = 7 * 24 * 60 * 60 * 1000;
-const AC_INPUT_MAX_PER_SEC = 90;    // client sends 60Hz
-const AC_INPUT_STRIKE_AT = 110;     // sustained flood above rate limit
+const AC_INPUT_MAX_PER_SEC = 105;   // client sends ~60Hz (+ jitter bursts)
+const AC_INPUT_STRIKE_AT = 135;     // sustained flood above rate limit
 
 function acLog(user, reason) {
   console.warn(`[ANTI-CHEAT] ${user ? user.username : '?'}: ${reason}`);
@@ -978,12 +995,15 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // Static index.html serving
+  // Static index.html serving (cached in memory so HTTP loads never block the event loop)
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     try {
-      let html = fs.readFileSync(INDEX_FILE, 'utf8');
-      if (ALLOWED_ORIGIN) {
-        html = html.replace('</head>', `<script>window.__HYPERSTRIKE_URL__=${JSON.stringify(ALLOWED_ORIGIN)};</script></head>`);
+      if (!cachedIndexHtml) {
+        let html = fs.readFileSync(INDEX_FILE, 'utf8');
+        if (ALLOWED_ORIGIN) {
+          html = html.replace('</head>', `<script>window.__HYPERSTRIKE_URL__=${JSON.stringify(ALLOWED_ORIGIN)};</script></head>`);
+        }
+        cachedIndexHtml = Buffer.from(html, 'utf8');
       }
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
@@ -992,7 +1012,7 @@ const server = http.createServer(async (req, res) => {
         'Content-Security-Policy': "frame-ancestors 'self'",
         'X-Frame-Options': 'SAMEORIGIN'
       });
-      return res.end(html);
+      return res.end(cachedIndexHtml);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       return res.end('index.html not found');
@@ -1193,6 +1213,7 @@ wss.on('headers', (headers, req) => {
 });
 
 wss.on('connection', (ws, req) => {
+  if (req.socket && req.socket.setNoDelay) req.socket.setNoDelay(true);
   ws.ip = getClientIp(req);
   ws.isAlive = true;
   ws.authed = false;
@@ -1694,7 +1715,7 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log('[HYPERSTRIKE] Shutting down, flushing DB...');
-  flushDb();
+  flushDb(true);
   simPool.shutdown().finally(() => process.exit(0));
 }
 process.on('SIGINT', shutdown);
