@@ -1643,21 +1643,22 @@ class Car {
       const traction = this.traction;
       const stick = PHYS.sticky * (1 + (1 - Math.abs(n.y)));
       const slowOnWall = Math.abs(n.y) < 0.6 && this.vel.lengthSq() < 9 && Math.abs(throttleIn) < 0.1;
-      if (!this.jumping && !slowOnWall) acc.addScaledVector(n, -stick);
+      const hooked = this.hookT > 0; // grapple reel-in: tyres stop fighting the pull, whatever way the car faces
+      if (!this.jumping && !slowOnWall && !hooked) acc.addScaledVector(n, -stick);
       const ft = _cv.copy(f).addScaledVector(n, -f.dot(n)).normalize();
       const rt = _cv2.crossVectors(ft, n);
       const vf = this.vel.dot(ft), vr = this.vel.dot(rt);
       let a = 0;
       if (Math.abs(throttleIn) > 0.01) {
-        if (vf * throttleIn < 0 && Math.abs(vf) > 0.15) a = Math.sign(throttleIn) * PHYS.brake;
+        if (vf * throttleIn < 0 && Math.abs(vf) > 0.15) a = hooked ? 0 : Math.sign(throttleIn) * PHYS.brake;
         else a = throttleIn * curve(THROTTLE_CURVE, Math.abs(vf));
-      } else {
+      } else if (!hooked) {
         a = -Math.sign(vf) * Math.min(PHYS.coast, Math.abs(vf) / dt);
       }
       acc.addScaledVector(ft, a * traction);
       const sliding = c.handbrake;
       this.sliding = damp(this.sliding, sliding ? 1 : 0, sliding ? 14 : 3.5, dt);
-      const maxLat = lerp(62, 6.5, this.sliding);
+      const maxLat = hooked ? 3 : lerp(62, 6.5, this.sliding);
       let dvl = -vr; const lim = maxLat * dt * traction;
       if (dvl > lim) dvl = lim; if (dvl < -lim) dvl = -lim;
       this.vel.addScaledVector(rt, dvl);
@@ -5815,6 +5816,17 @@ class PowerVisuals {
         const from = this.g.visualPos(S.from);
         start = tmpV.copy(from).addScaledVector(S.from.basis.f, 0.6).addScaledVector(S.from.basis.u, 0.2);
       }
+      if (S.kind === 'swap') {
+        const L = this.lines[li++]; if (!L) continue;
+        const end = tmpV2.copy(R ? (R.overrides[S.toIdx] ? R.overrides[S.toIdx].pos : S.pos) : this.g.visualPos(S.to));
+        const d = tmpV3.copy(end).sub(start); const len = d.length();
+        const pulse = 0.5 + 0.5 * Math.sin(t * 30);
+        L.line.material.color.setHex(0xd07aff).multiplyScalar(2 + pulse * 2); L.head.material.color.setHex(0xd07aff).multiplyScalar(3);
+        L.line.visible = L.head.visible = len > 0.05; L.line.position.copy(start); L.line.scale.set(1.5 + pulse * 2, len, 1.5 + pulse * 2); L.line.quaternion.setFromUnitVectors(V3Up, d.normalize());
+        L.head.position.copy(end); L.head.quaternion.copy(L.line.quaternion);
+        if (dt > 0 && Math.random() < 0.8) { const fx = this.g.fx; fx.sparks(Math.random() < 0.5 ? start : end, 2, 0xd07aff, 4, null, 0.3, 0.05); }
+        continue;
+      }
       if (S.kind === 'grapple' || S.kind === 'tether') {
         const L = this.lines[li++]; if (!L) continue; const end = S.phase === 'pull' ? bp : S.pos; const d = tmpV2.copy(end).sub(start); const len = d.length();
         const col = S.kind === 'grapple' ? 0x8aff5a : 0xffa04a; L.line.material.color.setHex(col).multiplyScalar(2.5); L.head.material.color.setHex(col).multiplyScalar(2.5);
@@ -6041,6 +6053,7 @@ class AudioSystem {
       case 'overdrive': this.tone('sawtooth', 220, 880, 0.4, 0.07, pos, 0.3); this.burst(3200, 2, 0.4, 0.15, pos, 0.4, 'bandpass'); break;
       case 'ovHit': this.burst(5000, 1.5, 0.15, 0.25, pos, 0.4, 'bandpass'); this.tone('square', 1200, 300, 0.12, 0.08, pos, 0.3); break;
       case 'scramble': for (let i = 0; i < 9; i++) this.tone('square', 200 + Math.random() * 1200, 200 + Math.random() * 1200, 0.04, 0.05, pos, 0.1, i * 0.04); break;
+      case 'swapCharge': this.tone('sine', 220, 880, 0.95, 0.12, pos, 0.45); this.tone('triangle', 330, 1320, 0.95, 0.06, pos, 0.45, 0.05); break;
       case 'swap': this.tone('sine', 300, 1400, 0.35, 0.12, pos, 0.5); this.tone('sine', 1400, 300, 0.35, 0.12, pos, 0.5); this.burst(3000, 1, 0.3, 0.1, pos, 0.5, 'bandpass', 0, 600); break;
       case 'antigrav': this.tone('sine', 180, 720, 0.7, 0.12, pos, 0.6); this.tone('triangle', 360, 1440, 0.7, 0.05, pos, 0.6, 0.05); break;
       case 'nitro': this.burst(700, 0.8, 0.6, 0.3, pos, 0.3, 'bandpass', 0, 2600); this.tone('sawtooth', 110, 220, 0.5, 0.06, pos, 0.2); break;
@@ -6852,7 +6865,7 @@ const POWERS = [
     icon: '<path d="M12 2.5v10.5a4.5 4.5 0 11-4.5-4.5M12 13a4.5 4.5 0 104.5-4.5" stroke="currentColor" stroke-width="2.3" fill="none" stroke-linecap="round"/><path d="M8.5 5L12 2.5 15.5 5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/>' },
   { id: 'tether', name: 'TETHER', color: '#ffa04a', hex: 0xffa04a, target: 'ball', range: 48, desc: 'Latches onto the ball and yanks it back toward you.',
     icon: '<path d="M3.5 20.5L12 12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M10 8.5a6.5 6.5 0 019 0l1 1a6.5 6.5 0 010 9z" fill="currentColor"/>' },
-  { id: 'punch', name: 'PUNCH', color: '#ff4a3a', hex: 0xff4a3a, target: 'ball', range: 30, cone: 0.35, desc: 'Launches a rocket fist that smashes the ball away from you.',
+  { id: 'punch', name: 'PUNCH', color: '#ff4a3a', hex: 0xff4a3a, target: 'ball', range: 30, desc: 'Launches a rocket fist that smashes the ball away from you.',
     icon: '<rect x="3" y="6" width="13" height="12" rx="4" fill="currentColor"/><rect x="14" y="8.5" width="7" height="7" rx="2.5" fill="currentColor"/><path d="M7 6.5v5M10.5 6.5v5" stroke="#000" stroke-opacity=".35" stroke-width="1.6"/>' },
   { id: 'boot', name: 'BOOT', color: '#ffb04a', hex: 0xffb04a, target: 'enemy', range: 42, desc: 'Kicks the nearest opponent into the air.',
     icon: '<path d="M6 2h7v10l7 3a2 2 0 011.2 1.9V19H3v-2a3 3 0 013-3z" fill="currentColor"/>' },
@@ -6862,13 +6875,14 @@ const POWERS = [
     icon: '<path d="M13.5 1.5L4 14h7l-1.5 8.5L20 9.5h-7z" fill="currentColor"/>' },
   { id: 'scramble', name: 'SCRAMBLE', color: '#5aff9a', hex: 0x5aff9a, target: 'enemy', range: 48, desc: 'Hacks the nearest opponent: inverted steering and no boost.',
     icon: '<path d="M3 5h6v3H3zM11 5h10v3H11zM3 10.5h12v3H3zM17 10.5h4v3h-4zM6 16h9v3H6zM17 16h2v3h-2z" fill="currentColor"/>' },
-  { id: 'swap', name: 'SWAP', color: '#d07aff', hex: 0xd07aff, target: 'enemy', range: 60, desc: 'Instantly trade places with the nearest opponent.',
+  { id: 'swap', name: 'SWAP', color: '#d07aff', hex: 0xd07aff, target: 'enemy', range: 60, desc: 'Locks onto the nearest opponent and, after a one-second charge, trades places with them.',
     icon: '<path d="M4 8h14l-4-4M20 16H6l4 4" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' },
   { id: 'antigrav', name: 'ZERO-G', color: '#b48aff', hex: 0xb48aff, desc: 'Removes almost all gravity from the ball for a few seconds.',
     icon: '<circle cx="12" cy="15" r="6" fill="currentColor"/><path d="M12 1.5v5.5M8.8 4.2L12 1.5l3.2 2.7M4 6.5l2 2M20 6.5l-2 2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>' },
   { id: 'nitro', name: 'NITRO', color: '#4afff0', hex: 0x4afff0, desc: 'Unlimited, extra-powerful boost and a higher top speed.',
     icon: '<path d="M12 1.5c1 4.2 6.5 6.3 6.5 12.5a6.5 6.5 0 01-13 0c0-3.2 2.2-5.4 3.2-7.6 0 3 1 4.4 2.2 4.4 0-3.2-1.3-6 1.1-9.3z" fill="currentColor"/>' }
 ];
+const SWAP_CHARGE = 1.0; // seconds between using SWAP and the cars trading places
 const POWER_BY_ID = Object.fromEntries(POWERS.map(p => [p.id, p]));
 const powerIcon = (id, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24">${(POWER_BY_ID[id] || {}).icon || ''}</svg>`;
 const _pw1 = new V3(), _pw2 = new V3(), _pw3 = new V3(), _pw4 = new V3();
@@ -6886,7 +6900,7 @@ class PowerSystem {
   clearEffects() {
     const b = this.w.ball; b.stuckTo = null; b.iceT = 0; b.gScale = 1; b.antiT = 0;
     this.tornados.length = 0; this.shots.length = 0;
-    for (const c of this.w.cars) { this.ensure(c); c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = 0; c.speedMul = 1; }
+    for (const c of this.w.cars) { this.ensure(c); c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = c.hookT = 0; c.speedMul = 1; }
   }
   reset() { this.clearEffects(); for (const c of this.w.cars) { c.item = null; c.itemNext = rand(1.2, 3.2); c.prevItem = false; } }
   pickItem(c) {
@@ -6929,7 +6943,9 @@ class PowerSystem {
       case 'shock': this.shockwave(c); break;
       case 'overdrive': c.ovT = 8; break;
       case 'scramble': tgt.scrT = 4.5; tgt.spikeT = 0; if (b.stuckTo === tgt) this.release(false); this.ev('scrambled', { car: tgt, by: c }); break;
-      case 'swap': this.swap(c, tgt); break;
+      case 'swap':
+        for (let i = this.shots.length - 1; i >= 0; i--) if (this.shots[i].kind === 'swap' && this.shots[i].from === c) this.shots.splice(i, 1);
+        this.shots.push({ kind: 'swap', from: c, to: tgt, pos: tgt.pos.clone(), t: 0, phase: 'pull', pt: 0 }); break;
       case 'antigrav': b.antiT = 6; break;
       case 'nitro': c.nitroT = 5; c.boost = 100; break;
     }
@@ -6946,7 +6962,7 @@ class PowerSystem {
   shatter(by) { const b = this.w.ball; if (b.iceT <= 0) return; b.iceT = 0; this.ev('shatter', { pos: b.pos.clone(), car: by }); }
   onDemolish(c) {
     if (this.w.ball.stuckTo === c) this.release(false);
-    c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = 0; c.speedMul = 1;
+    c.spikeT = c.magT = c.ovT = c.nitroT = c.scrT = c.tornT = c.hookT = 0; c.speedMul = 1;
     for (let i = this.tornados.length - 1; i >= 0; i--) {
       if (this.tornados[i].owner === c) { const T = this.tornados.splice(i, 1)[0]; this.ev('tornadoEnd', { pos: T.pos.clone() }); }
     }
@@ -7013,6 +7029,7 @@ class PowerSystem {
     for (const c of w.cars) {
       this.ensure(c);
       if (c.demolished) { c.prevItem = c.controls.item; continue; }
+      if (c.hookT > 0) c.hookT = Math.max(0, c.hookT - dt);
       if (c.spikeT > 0) c.spikeT -= dt; if (c.magT > 0) c.magT -= dt; if (c.ovT > 0) c.ovT -= dt; if (c.nitroT > 0) c.nitroT -= dt; if (c.scrT > 0) c.scrT -= dt;
       if (!c.item && this.enabled && !w.kickoffFreeze) { c.itemNext -= dt; if (c.itemNext <= 0) { c.item = this.pickItem(c); this.ev('get', { car: c, id: c.item }); } }
       const pressed = c.controls.item && !c.prevItem; c.prevItem = c.controls.item;
@@ -7041,6 +7058,11 @@ class PowerSystem {
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const S = this.shots[i]; S.t += dt; const c = S.from, tgt = S.to;
       if (c.demolished || tgt.demolished || (tgt === b && b.frozen) || S.t > 3) { this.shots.splice(i, 1); continue; }
+      if (S.kind === 'swap') {
+        S.pt += dt; S.pos.copy(tgt.pos);
+        if (S.pt >= SWAP_CHARGE) { this.shots.splice(i, 1); this.swap(c, tgt); }
+        continue;
+      }
       if (S.phase === 'fly') {
         const sp = S.kind === 'punch' ? 115 : S.kind === 'boot' ? 95 : 80;
         const to = _pw1.copy(tgt.pos).sub(S.pos); const d = to.length();
@@ -7050,8 +7072,8 @@ class PowerSystem {
         S.pt += dt; S.pos.copy(tgt.pos);
         if (S.kind === 'grapple') {
           const to = _pw1.copy(b.pos).sub(c.pos); const d = to.length();
-          if (d < 2.4 || S.pt > 1.5 || b.stuckTo) { this.shots.splice(i, 1); c.speedMul = c.nitroT > 0 ? 1.22 : 1; continue; }
-          c.speedMul = 1.35; c.vel.addScaledVector(to, 52 * dt / d); c.vel.y += PHYS.g * 0.8 * dt;
+          if (d < 2.4 || S.pt > 1.5 || b.stuckTo) { this.shots.splice(i, 1); c.speedMul = c.nitroT > 0 ? 1.22 : 1; c.hookT = 0; continue; }
+          c.speedMul = 1.35; c.hookT = 0.1; c.vel.addScaledVector(to, 52 * dt / d); c.vel.y += PHYS.g * 0.8 * dt;
         } else {
           const tp = _pw2.copy(c.pos).addScaledVector(c.basis.f, 2.2); const to = tp.sub(b.pos); const d = to.length();
           if (d < 3.2 || S.pt > 1.7 || b.stuckTo || b.iceT > 0) { this.shots.splice(i, 1); continue; }
@@ -7192,7 +7214,7 @@ class ReplayRecorder {
       } : null,
       events: this.takeEvents(tick)
     };
-    for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0, c.supersonic ? 1 : 0, c.spikeT || 0, c.magT || 0, c.ovT || 0, c.nitroT || 0, c.scrT || 0]);
+    for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0, c.supersonic ? 1 : 0, c.spikeT || 0, c.magT || 0, c.ovT || 0, c.nitroT || 0, c.scrT || 0, c.onGround ? 1 : 0, +(c.slipSpeed || 0).toFixed(2)]);
     return f;
   }
   push(f) {
@@ -7629,6 +7651,9 @@ class OnlineMatchMode extends MatchMode {
     this.qAvg = 2; this.qTarget = 2; this.lastStarves = -1;
     this.lastStarveAt = performance.now(); this.lastTargetDecay = this.lastStarveAt;
     this.unfreezeTick = -1; this.lastSnapTick = -1; this.specLead = 3;
+    // FREEZE is predicted locally: the server only confirms it a round-trip later, by which time
+    // the ball had kept rolling and then snapped back to where it was when the button was pressed.
+    this.predFreezeSeq = 0; this.predFreezeAt = -1e9; this.prevItemBit = 0; this.liveSeq = 0; this.replaySeq = 0;
     this.pendingEvents = []; this.kickCars = null;
     this.mid = Number.isInteger(cfg.mid) ? cfg.mid : null; // server match id, tags our inputs
     this.inputsClosed = false; this.pendingSnap = null;
@@ -7659,14 +7684,22 @@ class OnlineMatchMode extends MatchMode {
   // (quantized) values for both ticks so local prediction matches the server.
   beforeTick() {
     const g = this.game, p = g.player;
+    this.liveSeq = 0;
     if (!p || !g.online || this.inputsClosed) return;
     if (this.inTick++ % NET_TICKS_PER_INPUT === 0) {
       const packed = packControls(p.controls);
       const seq = ++this.inSeq;
-      this.curInput = packed;
+      this.curInput = packed; this.liveSeq = seq;
       this.inHist.push({ seq, c: packed, t: performance.now() });
       if (this.inHist.length > 240) this.inHist.shift();
       g.online.wsSend(this.mid !== null ? { type: 'in', s: seq, c: packed, m: this.mid } : { type: 'in', s: seq, c: packed });
+      // Same rising-edge test the server's PowerSystem.preCars applies to this input
+      const itemBit = packed[5] & 16, pressed = itemBit && !this.prevItemBit; this.prevItemBit = itemBit;
+      const w = this.world;
+      if (pressed && p.item === 'freeze' && w.powers && !w.frozen && w.ball.stuckTo !== p && w.powers.targetFor(p, 'freeze')) {
+        this.predFreezeSeq = seq; this.predFreezeAt = performance.now();
+        w.events.push({ type: 'power', kind: 'freeze', car: p, predicted: true });
+      }
     }
     if (this.curInput) unpackControls(this.curInput, p.controls);
   }
@@ -7674,10 +7707,13 @@ class OnlineMatchMode extends MatchMode {
   // events for effects/sounds; replay ticks (rollback) are silent.
   netStep(dt, live) {
     const w = this.world, ball = w.ball, me = this.game.player;
-    if (live) { this.beforeTick(); w.events.length = 0; }
+    if (live) { w.events.length = 0; this.beforeTick(); }
     ball.savePrev(); for (const c of w.cars) c.savePrev();
     if (this.unfreezeTick >= 0 && w.tick >= this.unfreezeTick) { this.unfreezeTick = -1; this.goPlay(); }
     if (!w.frozen) {
+      // Predicted FREEZE lands on the first tick of the input that pressed it, exactly as on the server
+      const sq = live ? this.liveSeq : this.replaySeq;
+      if (sq && sq === this.predFreezeSeq && !ball.frozen) { ball.stuckTo = null; ball.iceT = 3.2; ball.vel.set(0, 0, 0); }
       for (const c of w.cars) {
         if (c.demolished) continue; // respawns come from the server
         if (c !== me) Object.assign(c.controls, c.netCtl);
@@ -7916,7 +7952,11 @@ class OnlineMatchMode extends MatchMode {
         }
       }
       if (Array.isArray(m.ev)) {
-        const evs = m.ev.map(e => this.deserializeEvent(e));
+        // Our own FREEZE was already shown (effects, sound, replay event) when we pressed it
+        const evs = m.ev.map(e => this.deserializeEvent(e)).filter(e => {
+          if (e.type === 'power' && e.kind === 'freeze' && me && e.car === me && now - this.predFreezeAt < 1500) { this.predFreezeAt = -1e9; return false; }
+          return true;
+        });
         for (const e of evs) this.pendingEvents.push(e);
         w.recorder.captureEvents(evs, s.tick);
       }
@@ -7961,6 +8001,7 @@ class OnlineMatchMode extends MatchMode {
     let replay = null, ticks = 0;
     if (me) {
       while (this.inHist.length && this.inHist[0].seq <= s.ack) this.inHist.shift();
+      if (this.predFreezeSeq && s.ack >= this.predFreezeSeq) this.predFreezeSeq = 0; // the server state has it now
       if (s.ack >= this.inSeq) {
         // Server has consumed past our newest input (e.g. after goal slow-mo or a stall): jump ahead
         this.inSeq = s.ack + Math.ceil(this.qTarget);
@@ -7984,8 +8025,9 @@ class OnlineMatchMode extends MatchMode {
         for (let i = 0; i < replay.length; i++) {
           unpackControls(replay[i].c, me.controls);
           const n = (i === replay.length - 1 && this.inTick % NET_TICKS_PER_INPUT === 1) ? 1 : NET_TICKS_PER_INPUT;
-          for (let t = 0; t < n; t++) this.netStep(PHYS.dt, false);
+          for (let t = 0; t < n; t++) { this.replaySeq = t === 0 ? replay[i].seq : 0; this.netStep(PHYS.dt, false); }
         }
+        this.replaySeq = 0;
       } else for (let t = 0; t < ticks; t++) this.netStep(PHYS.dt, false);
       if (me) Object.assign(me.controls, this._ctlSave);
     }
@@ -9543,6 +9585,8 @@ class ReplayPlayer {
     g.fx.clear();
     if (g.powerVis) g.powerVis.resetTransient();
     this.overrides = g.world.cars.map(() => ({ pos: new V3(), quat: new QT(), vel: new V3(), boost: false, dead: false, supersonic: false, spikeT: 0, magT: 0, ovT: 0, nitroT: 0, scrT: 0, nitro: false }));
+    // Stand-ins for the cars that AudioSystem.updateEngines reads, so replays have engine/boost sound
+    this.audioCars = this.overrides.map(o => ({ pos: o.pos, vel: o.vel, controls: { throttle: 0 }, onGround: true, isBoosting: false, boostT: 0, slipSpeed: 0, supersonic: false, demolished: false }));
     this.active = true; this.apply(0, 0);
     g.ballVisual.lastPos.copy(this.ballPos);
   }
@@ -9580,6 +9624,12 @@ class ReplayPlayer {
       o.nitroT = lerp(c0[13] || 0, c1[13] || 0, k);
       o.scrT = lerp(c0[14] || 0, c1[14] || 0, k);
       o.nitro = o.nitroT > 0;
+      const a = this.audioCars && this.audioCars[ci];
+      if (a) {
+        a.isBoosting = o.boost; a.supersonic = o.supersonic; a.demolished = o.dead;
+        a.onGround = c0[15] !== undefined ? !!c0[15] : o.pos.y < 1.2; a.slipSpeed = c0[16] || 0;
+        a.controls.throttle = o.boost ? 1 : clamp(o.vel.length() / 20, 0, 1);
+      }
     });
     const p0 = f0.powers, p1 = f1.powers;
     this.tornados.length = 0; this.shots.length = 0;
@@ -9617,6 +9667,7 @@ class ReplayPlayer {
       g.ballVisual.mesh.visible = false;
     }
     const i = Math.floor(fi); this.dispatchEvents(i); this.apply(i, fi - i);
+    if (this.audioCars) for (const a of this.audioCars) a.boostT = a.isBoosting ? a.boostT + dt * slow : 0;
     // Ball is parked off-field after the goal; keep the camera focused on the explosion point
     if (this.boomT >= 0 && this.boom) this.ballPos.copy(this.boom.pos);
     if (fi < n - 1) return false;
@@ -10090,11 +10141,10 @@ class GameEngine {
       case 'get': if (e.car === p) { au.power('get'); ui.itemGot(); } break;
       case 'fail': if (e.car === p) { au.power('fail'); ui.toast('NO TARGET IN RANGE'); } break;
       case 'use':
-        if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id, at(e.car));
+        if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id === 'swap' ? 'swapCharge' : e.id, at(e.car));
         if (!isEx) ui.feed(`${e.car.name} · ${P.name}${e.target && e.target.name ? ' → ' + e.target.name : ''}`, e.car.team, e.id);
         if (e.car === p) this.vibrate(0.3, 100);
-        if (e.target === p && e.id === 'swap') { ui.popup('SWAPPED!', '#d07aff'); this.camera.snap(); }
-        if (e.car === p && e.id === 'swap') this.camera.snap();
+        if (e.target === p && e.id === 'swap') ui.popup('SWAP INCOMING!', '#d07aff');
         break;
       case 'freeze': au.power('freeze', this.world.ball.pos); break;
       case 'shatter': au.power('shatter', e.pos); if (e.car === p) ui.popup('ICE BREAKER!', '#9fe8ff'); break;
@@ -10105,7 +10155,11 @@ class GameEngine {
       case 'bootHit': au.power('bootHit', e.pos); if (e.target === p) { ui.popup('BOOTED!', '#ffb04a'); this.vibrate(0.8, 300); this.camera.addShake(0.4); } break;
       case 'hook': au.power('hook', e.pos); break;
       case 'shock': au.power('shock', at(e.car)); break;
-      case 'swap': au.power('swap', e.to); break;
+      case 'swap':
+        au.power('swap', e.car === p || e.target === p ? null : e.to);
+        if (e.target === p) ui.popup('SWAPPED!', '#d07aff');
+        if (e.car === p || e.target === p) this.camera.snap();
+        break;
       case 'scrambled': if (e.car === p) { ui.popup('SCRAMBLED!', '#5aff9a'); au.power('scramble'); this.vibrate(0.6, 400); } break;
       case 'ovHit': au.power('ovHit', e.pos); break;
     }
@@ -10153,7 +10207,7 @@ class GameEngine {
       }
       case 'power': {
         if (this.powerVis) this.powerVis.onReplayEvent(e);
-        if (e.kind === 'use') { if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id, pos); }
+        if (e.kind === 'use') { if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id === 'swap' ? 'swapCharge' : e.id, pos); }
         else if (e.kind === 'swap') au.power('swap', aux.set(e.tx, e.ty, e.tz));
         else if (e.kind === 'scrambled') au.power('scramble', pos);
         else if (e.kind !== 'tornadoEnd') au.power(e.kind, pos);
@@ -10295,7 +10349,12 @@ class GameEngine {
     this.fx.update(vdt, R.camera);
     if (this.audio.ready) {
       this.audio.updateListener(R.camera);
-      if (this.inGame && !this.paused && !replaying) this.audio.updateEngines(w.cars, p); else if (this.audio.engines.size) this.audio.stopEngines();
+      // Replays drive the engines from the recorded footage (fresh voices, so live ones never carry over)
+      const engMode = !this.inGame || this.paused ? 0 : replaying ? 2 : 1;
+      if (engMode !== this._engMode && this.audio.engines.size) this.audio.stopEngines();
+      this._engMode = engMode;
+      if (engMode === 1) this.audio.updateEngines(w.cars, p);
+      else if (engMode === 2 && this.replay.audioCars) this.audio.updateEngines(this.replay.audioCars, null);
       this.audio.updateAmbience(vdt, ballHeat);
     }
     const av = this.arenaVisual;
