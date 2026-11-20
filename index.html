@@ -6960,9 +6960,11 @@ class ReplayRecorder {
     };
     for (const c of w.cars) f.cars.push([c.pos.x, c.pos.y, c.pos.z, c.quat.x, c.quat.y, c.quat.z, c.quat.w, c.isBoosting ? 1 : 0, c.demolished ? 1 : 0, c.supersonic ? 1 : 0, c.spikeT || 0, c.magT || 0, c.ovT || 0, c.nitroT || 0, c.scrT || 0]);
     this.frames.push(f); if (this.frames.length > this.max) this.frames.shift();
+    // After a goal, keep appending frames to the goal replay so it shows the aftermath too
+    if (this.tail && this.tail.length < this.tailMax) this.tail.push(f);
   }
   snapshot(seconds) { const n = Math.min(this.frames.length, Math.round(seconds * 120 / this.every)); return this.frames.slice(this.frames.length - n); }
-  clear() { this.frames.length = 0; this.pendingEvents.length = 0; }
+  clear() { this.frames.length = 0; this.pendingEvents.length = 0; this.tail = null; }
 }
 
 const BALL_GLSL = `
@@ -7337,7 +7339,8 @@ class MatchMode extends ModeBase {
     }
     if (w.powers) w.powers.clearEffects();
     w.ball.frozen = true; w.ball.pos.set(0, -50, 0); w.ball.vel.set(0, 0, 0); g.ballVisual.mesh.visible = false;
-    this.replayFrames = w.recorder.snapshot(5.5); this.replayGoalZ = pos.z; this.lastScorer = scorer;
+    this.replayFrames = w.recorder.snapshot(5.5); this.replayGoalIdx = this.replayFrames.length - 1; this.replayGoalZ = pos.z; this.lastScorer = scorer;
+    w.recorder.tail = this.replayFrames; w.recorder.tailMax = this.replayFrames.length + 150; // ~2.5s of post-goal action
     this.replayBoom = { pos: pos.clone(), team: scoringTeam, type: explosionType, dir: new V3(0, 0, goalTeam === 0 ? 1 : -1) };
     this.setState('goal'); w.kickoff = false;
     if (!this.exhibition) {
@@ -7350,8 +7353,8 @@ class MatchMode extends ModeBase {
     g.arenaExcite = 1.0;
   }
   startReplay() {
-    const g = this.game; this.setState('replay'); g.ui.replayTag(true);
-    g.replay.start(this.replayFrames, this.replayGoalZ, this.replayBoom);
+    const g = this.game; this.setState('replay'); g.ui.replayTag(true); this.world.recorder.tail = null;
+    g.replay.start(this.replayFrames, this.replayGoalZ, this.replayBoom, this.replayGoalIdx);
   }
   finish() {
     const g = this.game; this.setState('ended'); this.world.frozen = true;
@@ -9028,8 +9031,8 @@ class ReplayPlayer {
     this.ballTeam = -1; this.ballIceT = 0; this.ballAntiT = 0; this.ballStuck = false;
     this.tornados = []; this.shots = []; this.lastEvFrame = -1;
   }
-  start(frames, goalZ, boom) {
-    this.frames = frames; this.t = 0; this.goalZ = goalZ; this.boom = boom || null; this.boomT = -1; this.lastEvFrame = -1;
+  start(frames, goalZ, boom, goalIdx) {
+    this.frames = frames; this.t = 0; this.goalIdx = goalIdx !== undefined ? Math.min(goalIdx, frames.length - 1) : frames.length - 1; this.goalZ = goalZ; this.boom = boom || null; this.boomT = -1; this.lastEvFrame = -1;
     this.tornados = []; this.shots = [];
     const g = this.g;
     g.camera.mode = 'replay'; g.camera.replayShot = 0; g.camera.replayT = 0; g.camera.snap();
@@ -9099,20 +9102,24 @@ class ReplayPlayer {
     }
   }
   update(dt) {
-    const n = this.frames.length;
-    if (this.boomT >= 0) { this.boomT += dt; return this.boomT > 2.6; }
-    const slow = this.t * 60 > n - 50 ? 0.45 : 1;
-    this.t += dt * slow; const fi = this.t * 60;
-    if (fi >= n - 1) {
-      this.dispatchEvents(n - 1);
-      this.apply(n - 1, 0);
-      if (!this.boom) return true;
+    const n = this.frames.length, gi = this.goalIdx;
+    if (this.boomT >= 0) this.boomT += dt;
+    const f0 = this.t * 60;
+    const slow = f0 > gi - 50 && f0 < gi + 45 ? 0.45 : 1; // slow-mo around the goal moment
+    this.t += dt * slow; const fi = Math.min(this.t * 60, n - 1);
+    if (this.boomT < 0 && fi >= gi && this.boom) {
+      this.dispatchEvents(gi); this.apply(gi, 0);
       const g = this.g, b = this.boom; this.boomT = 0;
       g.fx.goalExplosion(b.pos.clone(), b.team, b.type, b.dir.clone());
       g.audio.goal(); g.camera.addShake(0.8); g.ui.flash(0.5);
-      g.ballVisual.mesh.visible = false; return false;
+      g.ballVisual.mesh.visible = false;
     }
-    const i = Math.floor(fi); this.dispatchEvents(i); this.apply(i, fi - i); return false;
+    const i = Math.floor(fi); this.dispatchEvents(i); this.apply(i, fi - i);
+    // Ball is parked off-field after the goal; keep the camera focused on the explosion point
+    if (this.boomT >= 0 && this.boom) this.ballPos.copy(this.boom.pos);
+    if (fi < n - 1) return false;
+    if (this.boomT < 0) return true;
+    return this.boomT > (n - 1 - gi > 30 ? 0.4 : 2.6); // short hold if we have aftermath footage, old hold otherwise
   }
   stop() {
     this.active = false; this.tornados.length = 0; this.shots.length = 0;
