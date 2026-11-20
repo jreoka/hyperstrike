@@ -1564,7 +1564,8 @@ class Car {
     this.pos.set(x, y, z); this.vel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.quat.setFromAxisAngle(tmpV.set(0, 1, 0), yaw); this.savePrev();
     this.jumping = this.jumped = this.flipping = this.doubleJumped = false; this.hasFlip = false; this.airTime = 0; this.coyoteT = 0;
-    this.supersonic = this.wasSupersonic = false;
+    this.supersonic = this.wasSupersonic = false; this.isBoosting = false; this.boostT = 0;
+    if (this.bot) Object.assign(this.controls, makeControls());
     this.basis.fromQuat(this.quat); this.contacts = 4; this.onGround = true;
     for (const w of this.wheels) { w.len = w.prevLen = PHYS.suspRest - 0.044; w.contact = true; }
   }
@@ -6235,10 +6236,10 @@ class BotAI {
     for (const o of w.cars) if (o.team === car.team && !o.demolished) { const d = Math.hypot(o.pos.x, o.pos.z - gz); if (d < bd) { bd = d; best = o; } }
     return best === car;
   }
-  bestPad(w, maxD = 45) {
+  bestPad(w, maxD = 45, filter = null) {
     const car = this.car; let best = null, bs = 1e9;
     for (const p of w.pads) {
-      if (!p.active) continue;
+      if (!p.active || (filter && !filter(p))) continue;
       const d = car.pos.distanceTo(p.pos); const behind = (p.pos.z - w.ball.pos.z) * this.attackDir < 5;
       const inGoal = Math.abs(p.pos.z) > w.shape.L - 2;
       const sc = d * (p.big ? 0.55 : 1.2) + (behind ? 0 : 25);
@@ -6369,7 +6370,16 @@ class BotAI {
   }
   kickoff(dt, w) {
     const car = this.car, c = car.controls, ball = w.ball;
-    const kicker = w.kicker(car.team) === car;
+    let kicker = w.kicker(car.team) === car;
+    if (kicker) {
+      // Yield if a human teammate is clearly going for the ball and is at least as close
+      const myD = car.pos.distanceTo(ball.pos);
+      for (const o of w.cars) {
+        if (o === car || o.team !== car.team || o.bot || o.demolished) continue;
+        const od = o.pos.distanceTo(ball.pos); const toB = _a2.copy(ball.pos).sub(o.pos).normalize();
+        if (od < myD + 2 && o.vel.dot(toB) > 4) { w.brain.kickers[car.team] = o; kicker = false; break; }
+      }
+    }
     if (kicker) {
       const d = car.pos.distanceTo(ball.pos);
       const t = _a1.copy(ball.pos); t.x += (car.pos.x > 0.5 ? 0.25 : car.pos.x < -0.5 ? -0.25 : 0); t.z -= this.attackDir * 0.4;
@@ -6381,8 +6391,17 @@ class BotAI {
       const team = w.cars.filter(o => o.team === car.team);
       const gz = -this.attackDir * w.shape.L;
       if (team.length > 2 && this.closestToGoal(w)) { this.driveTo(_a1.set(0, 0, gz + this.attackDir * 2), 18, w, true); return; }
-      const pad = this.bestPad(w);
-      if (pad && pad.big) this.driveTo(pad.pos, 23, w, false); else this.driveTo(_a1.set(0, 0, gz * 0.5), 18, w, false);
+      // Stay out of the kicking teammate's lane (kicker -> ball) so we never cut across their path
+      const k = w.kicker(car.team);
+      const lane = (k && k !== car && !k.demolished) ? k : null;
+      const laneD = (p) => { const ax = lane.pos.x, az = lane.pos.z, bx = ball.pos.x - ax, bz = ball.pos.z - az; const L2 = bx * bx + bz * bz || 1; const t = clamp(((p.x - ax) * bx + (p.z - az) * bz) / L2, 0, 1); return Math.hypot(p.x - ax - bx * t, p.z - az - bz * t); };
+      const pad = this.bestPad(w, 45, lane ? (p => laneD(p.pos) > 7) : null);
+      if (pad && (pad.big || lane)) this.driveTo(pad.pos, 23, w, false);
+      else {
+        const t = _a1.set(0, 0, gz * 0.5);
+        if (lane && laneD(t) < 8) t.x = (Math.sign(car.pos.x - lane.pos.x) || (car.pos.x >= 0 ? 1 : -1)) * 12;
+        this.driveTo(t, 18, w, false);
+      }
     }
   }
   driveTo(target, desiredSpeed, w, cautious) {
@@ -6522,7 +6541,8 @@ class TeamBrain {
   chooseKickers(cars, ball) {
     for (const team of [0, 1]) {
       const mem = cars.filter(c => c.team === team);
-      let best = null, bd = 1e9; for (const c of mem) { const d = c.pos.distanceTo(ball.pos) + (c.pos.x * (team === 0 ? 1 : -1) < -0.5 ? -0.01 : 0); if (d < bd - 0.3) { bd = d; best = c; } }
+      // Humans win ties (e.g. mirrored diagonal spots) so a bot teammate never races them to the ball
+      let best = null, bd = 1e9; for (const c of mem) { const d = c.pos.distanceTo(ball.pos) - (c.bot ? 0 : 1.0) + (c.pos.x * (team === 0 ? 1 : -1) < -0.5 ? -0.01 : 0); if (d < bd - 0.3) { bd = d; best = c; } }
       this.kickers[team] = best;
     }
   }
