@@ -312,7 +312,6 @@ class ServerMatch {
 
   kickoffPositions() {
     const S = this.S, w = this.world, s = w.shape;
-    const sx = s.W / 40.96, sz = s.L / 51.2;
     const set = S.pick(S.KICKOFF_SETS[Math.min(5, this.settings.teamSize)] || S.KICKOFF_SETS[1]);
     const order = set.slice();
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
@@ -320,7 +319,8 @@ class ServerMatch {
       const mem = w.cars.filter(c => c.team === team);
       mem.forEach((c, i) => {
         const spot = S.KICKOFF_SPOTS[order[i % order.length]] || S.KICKOFF_SPOTS[4];
-        let x = spot[0] * sx, z = spot[1] * sz; if (team === 1) { x = -x; z = -z; }
+        const v = s.kickoffPos(spot, team);
+        let x = v.x, z = v.z;
         if (i >= order.length) x += (i - order.length + 1) * 4;
         c.place(x, 0.35, z, S.yawToward(x, z, 0, 0)); c.boost = 33; c.demolished = false; if (c.bot) c.bot.reset();
         c._kick = [r3(x), 0.35, r3(z), r4(S.yawToward(x, z, 0, 0))];

@@ -418,7 +418,8 @@ function defaultLobbySettings(hostName) {
   };
 }
 
-const ARENA_COUNT = 12;
+const STANDARD_ARENA_COUNT = 12;
+const ARENA_COUNT = 15;
 
 function sanitizeLobbySettings(raw, current) {
   const s = Object.assign({}, current);
@@ -429,7 +430,7 @@ function sanitizeLobbySettings(raw, current) {
   if (Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 4) s.teamSize = raw.teamSize;
   if (VALID_MODES.has(raw.mode)) s.mode = raw.mode;
   if ([6, 10, 15].includes(raw.interval)) s.interval = raw.interval;
-  if (Number.isInteger(raw.arena) && raw.arena >= -1 && raw.arena <= 11) s.arena = raw.arena;
+  if (Number.isInteger(raw.arena) && raw.arena >= -1 && raw.arena < ARENA_COUNT) s.arena = raw.arena;
   if (VALID_LAYOUTS.has(raw.layout)) s.layout = raw.layout;
   if ([0, 120, 180, 300].includes(raw.duration)) s.duration = raw.duration;
   if (typeof raw.botFill === 'boolean') s.botFill = raw.botFill;
@@ -1516,7 +1517,7 @@ wss.on('connection', (ws, req) => {
         });
         const matchObj = { startedAt: now, finished: false, participants };
         lb.match = matchObj;
-        const settings = lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * ARENA_COUNT) }) : Object.assign({}, lb.settings);
+        const settings = lb.settings.arena === -1 ? Object.assign({}, lb.settings, { arena: Math.floor(Math.random() * STANDARD_ARENA_COUNT) }) : Object.assign({}, lb.settings);
         const snap = lobbySnapshot(lb);
         const matchPlayers = snap.players
           .filter(p => p.team === 0 || p.team === 1)
@@ -1600,7 +1601,7 @@ wss.on('connection', (ws, req) => {
         const teamSize = Number.isInteger(raw.teamSize) && raw.teamSize >= 1 && raw.teamSize <= 5 ? raw.teamSize : 2;
         const difficulty = Number.isInteger(raw.difficulty) && raw.difficulty >= 0 && raw.difficulty <= 3 ? raw.difficulty : 1;
         const duration = tournament ? 180 : ([0, 120, 180, 300].includes(Number(raw.duration)) ? Number(raw.duration) : 300);
-        const arena = Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena < ARENA_COUNT ? raw.arena : Math.floor(Math.random() * ARENA_COUNT);
+        const arena = Number.isInteger(raw.arena) && raw.arena >= 0 && raw.arena < ARENA_COUNT ? raw.arena : Math.floor(Math.random() * STANDARD_ARENA_COUNT);
         const layout = VALID_LAYOUTS.has(raw.layout) ? raw.layout : 'default';
         const mode = VALID_MODES.has(raw.mode) ? raw.mode : 'standard';
         const interval = [6, 10, 15].includes(Number(raw.interval)) ? Number(raw.interval) : 10;
