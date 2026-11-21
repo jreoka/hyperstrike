@@ -82,17 +82,21 @@ impl Config {
         if !self.allowed_origin.is_empty() {
             return self.allowed_origin.clone();
         }
-        let host = request_host(headers);
+        let host = request_host_with_proxy(headers, self.trust_proxy);
         if host.is_empty() {
             return String::new();
         }
-        let proto = headers
-            .get("x-forwarded-proto")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| if is_tls { "https".into() } else { "http".into() });
+        let proto = if self.trust_proxy {
+            headers
+                .get("x-forwarded-proto")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| s == "http" || s == "https")
+        } else {
+            None
+        }
+        .unwrap_or_else(|| if is_tls { "https".into() } else { "http".into() });
         format!("{proto}://{host}")
     }
 
@@ -104,7 +108,7 @@ impl Config {
         if self.allowed_origin.is_empty() {
             return true;
         }
-        let host = request_host(headers);
+        let host = request_host_with_proxy(headers, self.trust_proxy);
         if host == self.allowed_host {
             return true;
         }
@@ -141,17 +145,25 @@ impl Config {
     }
 }
 
-pub fn request_host(headers: &HeaderMap) -> String {
-    let raw = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get("host"))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+pub fn request_host_with_proxy(headers: &HeaderMap, trust_proxy: bool) -> String {
+    let raw = if trust_proxy {
+        headers
+            .get("x-forwarded-host")
+            .or_else(|| headers.get("host"))
+    } else {
+        headers.get("host")
+    }
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("");
     raw.split(',')
         .next()
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase()
+}
+
+pub fn request_host(headers: &HeaderMap) -> String {
+    request_host_with_proxy(headers, true)
 }
 
 pub fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
@@ -309,6 +321,35 @@ mod tests {
             "referer",
             HeaderValue::from_static("https://hyperstrike.fly.dev/index.html"),
         );
+        assert!(cfg.is_request_allowed(&h, false));
+    }
+
+    #[test]
+    fn forwarded_headers_ignored_when_trust_proxy_is_false() {
+        let mut cfg = Config {
+            port: 8080,
+            data_dir: PathBuf::from("data"),
+            db_file: PathBuf::from("data/db.json"),
+            index_file: PathBuf::from("index.html"),
+            region: "local".into(),
+            allowed_origin: String::new(),
+            allowed_host: String::new(),
+            client_secret: "secret".into(),
+            sim_workers: 1,
+            trust_proxy: false,
+        };
+
+        let mut h = HeaderMap::new();
+        h.insert("host", HeaderValue::from_static("localhost:8080"));
+        h.insert("x-forwarded-host", HeaderValue::from_static("evil.example"));
+        h.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+        h.insert("origin", HeaderValue::from_static("https://evil.example"));
+
+        assert_eq!(cfg.expected_origin(&h, false), "http://localhost:8080");
+        assert!(!cfg.is_request_allowed(&h, false));
+
+        cfg.trust_proxy = true;
+        assert_eq!(cfg.expected_origin(&h, false), "https://evil.example");
         assert!(cfg.is_request_allowed(&h, false));
     }
 }

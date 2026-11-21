@@ -688,6 +688,7 @@ fn add_solo_strike(
 fn finalize_solo_match(
     state: &AppState,
     conn_id: u64,
+    solo_gen: u64,
     sim_score: [i32; 2],
     player_stats: HashMap<String, MatchStatsEntry>,
 ) {
@@ -696,6 +697,9 @@ fn finalize_solo_match(
 
     let (sm, uid, ulower) = match rt.conns.get_mut(&conn_id) {
         Some(c) => {
+            if c.solo_gen != solo_gen {
+                return;
+            }
             let Some(sm) = c.solo_match.as_mut() else {
                 return;
             };
@@ -951,21 +955,40 @@ struct LobbyEventSink {
     match_gen: u64,
 }
 
+impl LobbyEventSink {
+    fn is_current(&self, lb: &Lobby) -> bool {
+        lb.status == LobbyStatus::InMatch
+            && lb
+                .active_match
+                .as_ref()
+                .is_some_and(|m| m.match_gen == self.match_gen && !m.finished)
+    }
+}
+
 impl MatchEventSink for LobbyEventSink {
     fn broadcast(&self, msg: Value) {
         let rt = self.state.rt.lock().unwrap();
-        if let Some(lb) = rt.lobbies.get(&self.lobby_code) {
+        if let Some(lb) = rt.lobbies.get(&self.lobby_code)
+            && self.is_current(lb)
+        {
             broadcast_lobby(&rt, lb, &msg, None);
         }
     }
 
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload) {
         let rt = self.state.rt.lock().unwrap();
+        let Some(lb) = rt.lobbies.get(&self.lobby_code) else {
+            return;
+        };
+        if !self.is_current(lb) {
+            return;
+        }
         if let Some(&cid) = rt.clients_by_user_id.get(user_id)
             && let Some(c) = rt.conns.get(&cid)
-                && c.lobby_code.as_deref() == Some(&self.lobby_code) {
-                    c.send_snapshot_if_unblocked(payload);
-                }
+            && c.lobby_code.as_deref() == Some(&self.lobby_code)
+        {
+            c.send_snapshot_if_unblocked(payload);
+        }
     }
 
     fn send_spectators(&self, payload: SnapshotPayload) {
@@ -973,14 +996,18 @@ impl MatchEventSink for LobbyEventSink {
         let Some(lb) = rt.lobbies.get(&self.lobby_code) else {
             return;
         };
+        if !self.is_current(lb) {
+            return;
+        }
         for p in lb.players.values() {
             if p.team == 0 || p.team == 1 {
                 continue;
             }
             if let Some(&cid) = rt.clients_by_user_id.get(&p.user_id)
-                && let Some(c) = rt.conns.get(&cid) {
-                    c.send_snapshot_if_unblocked(payload.clone());
-                }
+                && let Some(c) = rt.conns.get(&cid)
+            {
+                c.send_snapshot_if_unblocked(payload.clone());
+            }
         }
     }
 
@@ -1045,10 +1072,20 @@ struct SoloEventSink {
     solo_gen: u64,
 }
 
+impl SoloEventSink {
+    fn is_current(&self, rt: &RuntimeState) -> bool {
+        rt.conns
+            .get(&self.conn_id)
+            .is_some_and(|c| c.solo_gen == self.solo_gen)
+    }
+}
+
 impl MatchEventSink for SoloEventSink {
     fn broadcast(&self, msg: Value) {
         let rt = self.state.rt.lock().unwrap();
-        send_to_conn(&rt, self.conn_id, &msg);
+        if self.is_current(&rt) {
+            send_to_conn(&rt, self.conn_id, &msg);
+        }
     }
 
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload) {
@@ -1056,7 +1093,9 @@ impl MatchEventSink for SoloEventSink {
             return;
         }
         let rt = self.state.rt.lock().unwrap();
-        if let Some(c) = rt.conns.get(&self.conn_id) {
+        if self.is_current(&rt)
+            && let Some(c) = rt.conns.get(&self.conn_id)
+        {
             c.send_snapshot_if_unblocked(payload);
         }
     }
@@ -1073,18 +1112,13 @@ impl MatchEventSink for SoloEventSink {
     }
 
     fn on_end(&self, score: [i32; 2], stats: HashMap<String, MatchStatsEntry>) {
-        finalize_solo_match(&self.state, self.conn_id, score, stats);
+        finalize_solo_match(&self.state, self.conn_id, self.solo_gen, score, stats);
     }
 
     fn on_error(&self, message: String) {
         eprintln!("[SIM] Solo match aborted: {message}");
         let mut rt = self.state.rt.lock().unwrap();
-        let matches_gen = rt
-            .conns
-            .get(&self.conn_id)
-            .map(|c| c.solo_gen == self.solo_gen)
-            .unwrap_or(false);
-        if !matches_gen {
+        if !self.is_current(&rt) {
             return;
         }
         stop_solo_match(&mut rt, self.conn_id);
@@ -1136,6 +1170,17 @@ fn handle_ws_message(
 
         let mut rt = state.rt.lock().unwrap();
         let db = state.db.lock().unwrap();
+        // If this socket was already authenticated as a different user, clean up the prior identity.
+        if let Some(old_uid) = rt.conns.get(&conn_id).and_then(|c| c.user_id.clone())
+            && old_uid != uid
+        {
+            stop_solo_match(&mut rt, conn_id);
+            leave_lobby(&mut rt, &db, conn_id, "left");
+            leave_squad(&mut rt, &db, conn_id);
+            if rt.clients_by_user_id.get(&old_uid).copied() == Some(conn_id) {
+                rt.clients_by_user_id.remove(&old_uid);
+            }
+        }
         if let Some(&prev_cid) = rt.clients_by_user_id.get(&uid)
             && prev_cid != conn_id {
                 send_to_conn(
@@ -1310,15 +1355,20 @@ fn handle_ws_message(
             let Some(sq_code) = rt.conns.get(&conn_id).and_then(|c| c.squad_code.clone()) else {
                 return;
             };
-            let is_leader = rt
+            let allowed = rt
                 .squads
                 .get(&sq_code)
-                .map(|s| s.leader_id == user_id)
+                .map(|s| s.leader_id == user_id && s.members.contains_key(target_id))
                 .unwrap_or(false);
-            if !is_leader {
+            if !allowed {
                 return;
             }
-            if let Some(&target_cid) = rt.clients_by_user_id.get(target_id) {
+            if let Some(&target_cid) = rt.clients_by_user_id.get(target_id)
+                && rt
+                    .conns
+                    .get(&target_cid)
+                    .is_some_and(|c| c.squad_code.as_deref() == Some(sq_code.as_str()))
+            {
                 leave_squad(&mut rt, &db, target_cid);
                 send_to_conn(
                     &rt,
@@ -1611,12 +1661,21 @@ fn handle_ws_message(
             let allowed = rt
                 .lobbies
                 .get(&code)
-                .map(|lb| lb.host_id == user_id && lb.status == LobbyStatus::Waiting)
+                .map(|lb| {
+                    lb.host_id == user_id
+                        && lb.status == LobbyStatus::Waiting
+                        && lb.players.contains_key(target_id)
+                })
                 .unwrap_or(false);
             if !allowed {
                 return;
             }
-            if let Some(&target_cid) = rt.clients_by_user_id.get(target_id) {
+            if let Some(&target_cid) = rt.clients_by_user_id.get(target_id)
+                && rt
+                    .conns
+                    .get(&target_cid)
+                    .is_some_and(|c| c.lobby_code.as_deref() == Some(code.as_str()))
+            {
                 leave_lobby(&mut rt, &db, target_cid, "kicked");
                 send_to_conn(
                     &rt,
@@ -2157,10 +2216,9 @@ fn handle_ws_message(
             // Solo match input
             let solo_sim = rt.conns.get(&conn_id).and_then(|c| c.solo_sim.clone());
             if let Some(sim) = solo_sim {
-                if let Some(m) = in_mid
-                    && m != sim.id() {
-                        return;
-                    }
+                if in_mid != Some(sim.id()) {
+                    return;
+                }
                 let (rate_ok, pkt_count) = {
                     let c = rt.conns.get_mut(&conn_id).unwrap();
                     let rec = c.solo_ac.get_or_insert_with(|| make_ac_rec(now));
@@ -2193,10 +2251,9 @@ fn handle_ws_message(
                 let Some(sim) = lb.sim.clone() else {
                     return;
                 };
-                if let Some(m) = in_mid
-                    && m != sim.id() {
-                        return;
-                    }
+                if in_mid != Some(sim.id()) {
+                    return;
+                }
                 sim
             };
             let (rate_ok, pkt_count) = {

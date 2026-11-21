@@ -49,6 +49,7 @@ pub struct TokioMatchHandle {
     car_info: Value,
     stopped: AtomicBool,
     tx: mpsc::UnboundedSender<MatchCmd>,
+    sim_rt: tokio::runtime::Handle,
     load: Mutex<LoadState>,
     active_matches: Arc<AtomicUsize>,
     released: AtomicBool,
@@ -120,7 +121,7 @@ impl MatchHandle for TokioMatchHandle {
         }
         let tx = self.tx.clone();
         // Hold kickoff countdown at most 5s while clients finish building the arena.
-        tokio::spawn(async move {
+        self.sim_rt.spawn(async move {
             tokio::time::sleep(Duration::from_millis(5000)).await;
             let _ = tx.send(MatchCmd::Start);
         });
@@ -212,14 +213,26 @@ impl MatchHandle for TokioMatchHandle {
 
 pub struct SimPool {
     worker_count: usize,
+    sim_rt: Option<tokio::runtime::Runtime>,
+    sim_handle: tokio::runtime::Handle,
     active_matches: Arc<AtomicUsize>,
     next_id: AtomicU64,
 }
 
 impl SimPool {
     pub fn new(worker_count: usize) -> Self {
+        let worker_count = worker_count.max(1);
+        let sim_rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_count)
+            .thread_name("sim-worker")
+            .enable_time()
+            .build()
+            .expect("failed to build simulation worker runtime");
+        let sim_handle = sim_rt.handle().clone();
         Self {
-            worker_count: worker_count.max(1),
+            worker_count,
+            sim_rt: Some(sim_rt),
+            sim_handle,
             active_matches: Arc::new(AtomicUsize::new(0)),
             next_id: AtomicU64::new(1),
         }
@@ -227,6 +240,14 @@ impl SimPool {
 
     pub fn from_env() -> Self {
         Self::new(detect_worker_count())
+    }
+}
+
+impl Drop for SimPool {
+    fn drop(&mut self) {
+        if let Some(rt) = self.sim_rt.take() {
+            rt.shutdown_background();
+        }
     }
 }
 
@@ -247,6 +268,7 @@ impl MatchBackend for SimPool {
     fn create_match(&self, opts: MatchCreateOptions) -> CreateMatchFuture {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let active_matches = self.active_matches.clone();
+        let sim_rt = self.sim_handle.clone();
         Box::pin(async move {
             let humans: HashMap<String, i64> = opts
                 .players
@@ -265,6 +287,7 @@ impl MatchBackend for SimPool {
                 car_info,
                 stopped: AtomicBool::new(false),
                 tx,
+                sim_rt: sim_rt.clone(),
                 load: Mutex::new(LoadState {
                     started: false,
                     pending: None,
@@ -275,7 +298,7 @@ impl MatchBackend for SimPool {
             });
 
             let handle_for_task = handle.clone();
-            tokio::spawn(run_match_loop(sim, rx, handle_for_task));
+            sim_rt.spawn(run_match_loop(sim, rx, handle_for_task));
 
             Ok(handle as Arc<dyn MatchHandle>)
         })
