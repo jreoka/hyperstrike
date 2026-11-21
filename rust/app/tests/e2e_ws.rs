@@ -109,14 +109,13 @@ async fn e2e_websocket_auth_and_live_solo_match_snapshots() {
     ws.send(Message::Text(
         json!({
             "type": "solo_start",
-            "settings": {
+            "cfg": {
                 "teamSize": 1,
                 "mode": "mayhem",
                 "arena": 0,
                 "layout": "default",
                 "duration": 120,
-                "botFill": true,
-                "botDiff": 1
+                "difficulty": 1
             }
         })
         .to_string()
@@ -137,6 +136,8 @@ async fn e2e_websocket_auth_and_live_solo_match_snapshots() {
                 let v: Value = serde_json::from_str(&txt).unwrap();
                 match v["type"].as_str() {
                     Some("solo_match_start") => {
+                        assert_eq!(v["settings"]["mode"], "mayhem");
+                        assert_eq!(v["settings"]["teamSize"], 1);
                         saw_started = true;
                         let mid = v["mid"].as_u64().expect("mid");
                         ws.send(Message::Text(
@@ -181,6 +182,160 @@ async fn e2e_websocket_auth_and_live_solo_match_snapshots() {
     .await
     .unwrap();
     let _ = ws.close(None).await;
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[tokio::test]
+async fn e2e_cross_room_kick_blocked_and_reauth_cleans_up() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "hyperstrike_e2e_sec_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = Config::from_env(&repo_root);
+    config.data_dir = tmp_dir.clone();
+    config.db_file = tmp_dir.join("db.json");
+    config.client_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into();
+    config.allowed_origin.clear();
+    config.allowed_host.clear();
+
+    let backend = Arc::new(SimPool::new(1));
+    let state = AppState::new(config.clone(), backend);
+    let (tok_a, tok_b, tok_c) = {
+        let mut db = state.db.lock().unwrap();
+        let make_user = |id: &str, name: &str| server_core::db::User {
+            id: id.into(),
+            username: name.into(),
+            pass_hash: "00".repeat(64),
+            salt: "testsalt12345678".into(),
+            created_at: 1_700_000_000_000,
+            level: 1,
+            xp: 0,
+            total_xp: 0,
+            rp: 100,
+            peak_rp: 100,
+            stats: server_core::db::UserStats::default(),
+            car: server_core::db::sanitize_car(None),
+            anti_cheat_flags: 0,
+            last_report_at: 0,
+            ac_ban_until: None,
+            ac_log: Vec::new(),
+        };
+        db.data.users.insert("alice".into(), make_user("u_a", "Alice"));
+        db.data.users.insert("bob".into(), make_user("u_b", "Bob"));
+        db.data.users.insert("charlie".into(), make_user("u_c", "Charlie"));
+        (
+            db.create_session("alice"),
+            db.create_session("bob"),
+            db.create_session("charlie"),
+        )
+    };
+
+    let app = server_core::router(Arc::clone(&state));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
+    });
+
+    let set_cookie = issue_client_cookie(&config.client_secret, "");
+    let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+    let connect = || {
+        let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+        req.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+        req.headers_mut()
+            .insert("Origin", format!("http://{addr}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+
+    let (mut ws_a, _) = connect().await.expect("WS A");
+    let (mut ws_b, _) = connect().await.expect("WS B");
+
+    ws_a.send(Message::Text(json!({ "type": "auth", "token": tok_a }).to_string().into()))
+        .await
+        .unwrap();
+    ws_b.send(Message::Text(json!({ "type": "auth", "token": tok_b }).to_string().into()))
+        .await
+        .unwrap();
+
+    // Drain auth_ok
+    let _ = tokio::time::timeout(Duration::from_secs(1), ws_a.next()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), ws_b.next()).await;
+
+    // Both create their own squad and lobby
+    ws_a.send(Message::Text(json!({ "type": "squad_create" }).to_string().into())).await.unwrap();
+    ws_a.send(Message::Text(json!({ "type": "lobby_create" }).to_string().into())).await.unwrap();
+    ws_b.send(Message::Text(json!({ "type": "squad_create" }).to_string().into())).await.unwrap();
+    ws_b.send(Message::Text(json!({ "type": "lobby_create" }).to_string().into())).await.unwrap();
+
+    // Drain squad_update + lobby_joined for both
+    for _ in 0..2 {
+        let _ = tokio::time::timeout(Duration::from_secs(1), ws_a.next()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), ws_b.next()).await;
+    }
+
+    // Bob attempts to kick Alice from her lobby and squad
+    ws_b.send(Message::Text(json!({ "type": "lobby_kick", "userId": "u_a" }).to_string().into()))
+        .await
+        .unwrap();
+    ws_b.send(Message::Text(json!({ "type": "squad_kick", "userId": "u_a" }).to_string().into()))
+        .await
+        .unwrap();
+
+    // Send a ping on ws_b to ensure prior messages were processed
+    ws_b.send(Message::Text(json!({ "type": "ping", "t": 1.0 }).to_string().into()))
+        .await
+        .unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(1), ws_b.next()).await;
+
+    {
+        let rt = state.rt.lock().unwrap();
+        let a_cid = *rt.clients_by_user_id.get("u_a").expect("Alice online");
+        let a_conn = rt.conns.get(&a_cid).expect("Alice conn");
+        assert!(a_conn.lobby_code.is_some(), "Alice should still be in her lobby");
+        assert!(a_conn.squad_code.is_some(), "Alice should still be in her squad");
+    }
+
+    // Bob re-authenticates as Charlie on the same socket
+    ws_b.send(Message::Text(json!({ "type": "auth", "token": tok_c }).to_string().into()))
+        .await
+        .unwrap();
+    let msg = tokio::time::timeout(Duration::from_secs(1), ws_b.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    if let Message::Text(txt) = msg {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        assert_eq!(v["type"], "auth_ok");
+        assert_eq!(v["user"]["username"], "Charlie");
+    } else {
+        panic!("expected auth_ok text message");
+    }
+
+    {
+        let rt = state.rt.lock().unwrap();
+        assert!(!rt.clients_by_user_id.contains_key("u_b"), "Bob should be removed on re-auth");
+        let c_cid = *rt.clients_by_user_id.get("u_c").expect("Charlie online");
+        let c_conn = rt.conns.get(&c_cid).expect("Charlie conn");
+        assert!(c_conn.lobby_code.is_none(), "Old lobby should be left on re-auth");
+        assert!(c_conn.squad_code.is_none(), "Old squad should be left on re-auth");
+        assert_eq!(rt.lobbies.len(), 1, "Only Alice's lobby should remain");
+        assert_eq!(rt.squads.len(), 1, "Only Alice's squad should remain");
+    }
+
+    let _ = ws_a.close(None).await;
+    let _ = ws_b.close(None).await;
     server_task.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }

@@ -49,7 +49,7 @@ async fn main() {
 
     let backend = Arc::new(SimPool::new(sim_workers));
     let state = AppState::new(config, backend);
-    state.spawn_background_tasks();
+    let bg_tasks = state.spawn_background_tasks();
 
     let app = server_core::router(Arc::clone(&state));
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
@@ -71,5 +71,6 @@ async fn main() {
     .await
     .expect("serving");
 
+    bg_tasks.shutdown().await;
     state.flush_db_sync();
 }

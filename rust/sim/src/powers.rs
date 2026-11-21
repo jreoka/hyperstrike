@@ -607,10 +607,14 @@ impl PowerSystem {
         w.ball.vel = c.vel + c.ang_vel.cross(off);
         w.ball.ang_vel = c.ang_vel;
         w.ball.quat = w.ball.quat.integrate(w.ball.ang_vel, dt);
+        w.ball.on_ground = false;
         let d = w.shape.dist(w.ball.pos.x, w.ball.pos.y, w.ball.pos.z);
         if d < w.ball.r {
             let n = w.shape.normal(w.ball.pos.x, w.ball.pos.y, w.ball.pos.z);
             w.ball.pos += n * (w.ball.r - d);
+            if n.y > 0.7 {
+                w.ball.on_ground = true;
+            }
             if w.ball.r - d > 0.35 {
                 self.release(false, w);
             }

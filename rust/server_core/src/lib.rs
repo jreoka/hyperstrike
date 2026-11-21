@@ -44,36 +44,79 @@ impl AppState {
         db.flush_sync();
     }
 
-    pub fn spawn_background_tasks(self: &Arc<Self>) {
+    pub fn spawn_background_tasks(self: &Arc<Self>) -> BackgroundTasks {
+        let (shutdown_tx, mut shutdown_rx_db) = tokio::sync::watch::channel(false);
+        let mut shutdown_rx_rl = shutdown_tx.subscribe();
+
         let state_db = Arc::clone(self);
-        tokio::spawn(async move {
+        let db_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(2));
             interval.tick().await;
             loop {
-                interval.tick().await;
-                let payload = {
-                    let mut db = state_db.db.lock().unwrap();
-                    db.take_flush_payload()
-                };
-                if let Some((path, json)) = payload
-                    && let Err(err) = atomic_write_async(&path, &json).await {
-                        eprintln!("[DB] Async flush error: {err}");
-                        let mut db = state_db.db.lock().unwrap();
-                        db.mark_dirty();
+                tokio::select! {
+                    _ = shutdown_rx_db.changed() => {
+                        if *shutdown_rx_db.borrow() {
+                            break;
+                        }
                     }
+                    _ = interval.tick() => {
+                        let payload = {
+                            let mut db = state_db.db.lock().unwrap();
+                            db.take_flush_payload()
+                        };
+                        if let Some((path, json)) = payload
+                            && let Err(err) = atomic_write_async(&path, &json).await {
+                                eprintln!("[DB] Async flush error: {err}");
+                                let mut db = state_db.db.lock().unwrap();
+                                db.mark_dirty();
+                            }
+                    }
+                }
             }
         });
 
         let state_rl = Arc::clone(self);
-        tokio::spawn(async move {
+        let rl_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             interval.tick().await;
             loop {
-                interval.tick().await;
-                let mut rl = state_rl.rate_limiter.lock().unwrap();
-                rl.cleanup();
+                tokio::select! {
+                    _ = shutdown_rx_rl.changed() => {
+                        if *shutdown_rx_rl.borrow() {
+                            break;
+                        }
+                    }
+                    _ = interval.tick() => {
+                        let mut rl = state_rl.rate_limiter.lock().unwrap();
+                        rl.cleanup();
+                    }
+                }
             }
         });
+
+        BackgroundTasks {
+            shutdown_tx,
+            db_task: Some(db_task),
+            rl_task: Some(rl_task),
+        }
+    }
+}
+
+pub struct BackgroundTasks {
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    db_task: Option<tokio::task::JoinHandle<()>>,
+    rl_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl BackgroundTasks {
+    pub async fn shutdown(mut self) {
+        let _ = self.shutdown_tx.send(true);
+        if let Some(t) = self.db_task.take() {
+            let _ = t.await;
+        }
+        if let Some(t) = self.rl_task.take() {
+            let _ = t.await;
+        }
     }
 }
 
