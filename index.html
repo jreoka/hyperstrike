@@ -133,6 +133,8 @@ button{font-family:inherit;color:inherit}
 .sect{margin:18px 0 9px;font-size:10px;font-weight:800;letter-spacing:.34em;color:var(--ink2);text-transform:uppercase;display:flex;align-items:center;gap:10px}
 .sect::before{content:"";width:6px;height:6px;background:var(--accent);transform:rotate(45deg);flex:none;box-shadow:0 0 8px var(--accent)}
 .sect::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.sect.weird::before{background:#ff3fd8;box-shadow:0 0 8px #ff3fd8}
+.sect .sbadge{font-size:8px;letter-spacing:.22em;padding:2px 6px;border-radius:3px;background:rgba(255,63,216,.16);border:1px solid rgba(255,63,216,.45);color:#ff8be8}
 .seg{display:flex;gap:5px;flex-wrap:wrap}
 .seg button{position:relative;isolation:isolate;flex:1 0 auto;padding:11px 16px;border:0;background:none;color:var(--ink2);font-weight:800;font-stretch:88%;
   letter-spacing:.1em;font-size:12.5px;cursor:pointer;transition:color .14s;text-transform:uppercase;outline:none;white-space:nowrap}
@@ -1210,6 +1212,39 @@ const ARENAS = [
     grade: { exposure: 1.02, contrast: 1.12, sat: 1.22, tint: [1.04, 0.95, 1.08], bloom: 0.9, thresh: 0.82 },
     fogDensity: 0.0038, reverb: 2.5, ambient: 'synth', grid: 0xff36b8, glassA: 0.18, capA: 0.04, floorGlow: 1.7, reflect: 0.6,
     dust: 0xff50c8, dusty: false, indoor: false, crowdBase: 0.06
+  },
+  {
+    id: 'figure8', name: 'HYPERLOOP 8', tag: 'LABS · FIGURE-8', weird: true,
+    desc: 'A pinched figure-8 orbital arena where two wide bowls funnel through a tight midfield waist. Chaos at the choke point.',
+    shape: { type: 'figure8', W: 39, L: 62, Rc: 8, Zc: 36, Rl: 39, Kf: 10 }, H: 21, Rf: 3.6, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 4, sky: 4, wall: 4,
+    c: { base1: 0x060b1c, base2: 0x0f1838, line: 0x3ef2ff, wallTint: 0x3ef2ff, accent: 0xff3fd8, fog: 0x040612, glass: 0x162458 },
+    light: { hemiSky: 0x6ac8ff, hemiGround: 0x1a082c, hemi: 0.65, sun: 0xffe8e0, sunI: 2.0, sunDir: [-0.55, 0.65, 0.5] },
+    grade: { exposure: 1.02, contrast: 1.1, sat: 1.2, tint: [0.98, 0.99, 1.08], bloom: 0.85, thresh: 0.84 },
+    fogDensity: 0.002, reverb: 3.1, ambient: 'stars', grid: 0x3ef2ff, glassA: 0.16, capA: 0.04, floorGlow: 1.5, reflect: 0.45,
+    dust: 0x40a0ff, dusty: false, indoor: true, crowdBase: 0.02
+  },
+  {
+    id: 'standalone', name: 'THROWBACK CORE', tag: 'LABS · FORWARD GOAL', weird: true,
+    desc: 'Standalone armored goals pulled deep into the pitch with a full drivable wrap-around lane behind every net.',
+    shape: { type: 'standalone', W: 42, L: 61, Rc: 14, goalZ: 39 }, H: 20, Rf: 3.6, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 1, sky: 1, wall: 1,
+    c: { base1: 0x225632, base2: 0x2f7042, line: 0xffffff, wallTint: 0x7ef4ff, accent: 0xffd23f, fog: 0xaec8dc, glass: 0x8fb8d8 },
+    light: { hemiSky: 0xc2deff, hemiGround: 0x3a5a3a, hemi: 0.92, sun: 0xfff2dc, sunI: 3.1, sunDir: [-0.5, 0.78, 0.35] },
+    grade: { exposure: 1.0, contrast: 1.05, sat: 1.08, tint: [1.02, 1.01, 0.97], bloom: 0.58, thresh: 1.08 },
+    fogDensity: 0.0024, reverb: 1.2, ambient: 'none', grid: 0xffffff, glassA: 0.11, capA: 0.0, floorGlow: 0.5, reflect: 0,
+    dust: 0x5a8a52, dusty: true, indoor: false, crowdBase: 0.07
+  },
+  {
+    id: 'splitgoal', name: 'TWIN VORTEX', tag: 'LABS · DUAL GOALS', weird: true,
+    desc: 'Two angled goal entrances per end split by a central prow. Defend both lanes or bank shots off the chevron walls.',
+    shape: { type: 'splitgoal', W: 46, L: 58, Rc: 4.5, chX: 31, chZ: 44, sideZ: 22 }, H: 20, Rf: 3.4, gw: 6.8, gh: 6.4, gd: 8.8,
+    floor: 11, sky: 11, wall: 11,
+    c: { base1: 0x0a071a, base2: 0x160f32, line: 0x58e6ff, wallTint: 0x58e6ff, accent: 0xff9a2a, fog: 0x14082c, glass: 0x2a1458 },
+    light: { hemiSky: 0x9070ff, hemiGround: 0x200a38, hemi: 0.68, sun: 0xff8098, sunI: 1.9, sunDir: [0.0, 0.38, -0.92] },
+    grade: { exposure: 1.02, contrast: 1.12, sat: 1.2, tint: [1.02, 0.97, 1.08], bloom: 0.9, thresh: 0.82 },
+    fogDensity: 0.0036, reverb: 2.5, ambient: 'synth', grid: 0x7a4cff, glassA: 0.18, capA: 0.04, floorGlow: 1.6, reflect: 0.58,
+    dust: 0x6a90ff, dusty: false, indoor: false, crowdBase: 0.06
   }
 ];
 ARENAS.forEach((a, i) => { const dd = [0x2a2440, 0x6a8a4a, 0x5a5048, 0xd8b080, 0x403a60][i]; if (a.dust === undefined) a.dust = dd; if (a.dusty === undefined) a.dusty = a.floor === 1 || a.floor === 3; if (a.indoor === undefined) a.indoor = a.floor !== 1 && a.floor !== 3; if (a.crowdBase === undefined) a.crowdBase = a.floor === 4 ? 0.02 : a.floor === 2 ? 0.04 : 0.07; if (a.reflect === undefined) a.reflect = [0.5, 0, 0.25, 0, 0.42][i] || 0; });
@@ -1228,6 +1263,7 @@ function shapeOutline(sp) {
   switch (sp.type) {
     case 'octagon': return [[0, L], [W - sp.ch, L], [W, L - sp.ch], [W, 0]];
     case 'hexagon': return [[0, L], [sp.A, L], [W, 0]];
+    case 'splitgoal': return [[0, L], [sp.chX, sp.chZ], [W, sp.sideZ], [W, 0]];
     case 'round': {
       const p0 = Math.acos(sp.A / W), Lr = L / Math.sin(p0), N = sp.N || 8, pts = [[0, L]];
       for (let i = 0; i <= N; i++) { const p = p0 * (1 - i / N); pts.push([W * Math.cos(p), Lr * Math.sin(p)]); }
@@ -1236,6 +1272,12 @@ function shapeOutline(sp) {
     default: return [[0, L], [W, L], [W, 0]];
   }
 }
+function sdBox(px, py, pz, hx, hy, hz) {
+  const qx = (px < 0 ? -px : px) - hx, qy = (py < 0 ? -py : py) - hy, qz = (pz < 0 ? -pz : pz) - hz;
+  const ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0, oz = qz > 0 ? qz : 0;
+  const m = qx > qy ? (qx > qz ? qx : qz) : (qy > qz ? qy : qz);
+  return Math.sqrt(ox * ox + oy * oy + oz * oz) + (m < 0 ? m : 0);
+}
 
 class ArenaShape {
   constructor(d, opts = {}) {
@@ -1243,11 +1285,46 @@ class ArenaShape {
     const sp = Object.assign({ type: 'rect', W: d.W, L: d.L, Rc: d.Rc }, d.shape || {}, lay ? lay.shape : {});
     const k = opts.scale || 1;
     this.type = sp.type; this.layout = lay ? lay.id : 'default';
+    this.goalMode = sp.type === 'standalone' ? 'standalone' : sp.type === 'splitgoal' ? 'split' : 'standard';
     this.W = sp.W * k; this.L = sp.L * k; this.Rc = sp.Rc * k; this.H = d.H; this.Rf = d.Rf;
     this.goalTaper = this.Rf * 1.8;
     this.gw = d.gw * (k > 1 ? 1.06 : 1); this.gh = d.gh; this.gd = d.gd;
-    this.outline = shapeOutline(Object.assign({}, sp, { W: this.W, L: this.L, A: sp.A && sp.A * k, ch: sp.ch && sp.ch * k }));
+    if (this.type === 'figure8') {
+      this.fig8 = { Zc: (sp.Zc || 36) * k, Rl: (sp.Rl || 39) * k, Kf: (sp.Kf || 10) * k, Rc: this.Rc };
+    }
+    if (this.goalMode === 'standalone') {
+      this.goalZ = (sp.goalZ || 39) * k;
+      this.gt = 0.75;
+    }
+    this.outline = shapeOutline(Object.assign({}, sp, {
+      W: this.W, L: this.L, A: sp.A && sp.A * k, ch: sp.ch && sp.ch * k,
+      chX: sp.chX && sp.chX * k, chZ: sp.chZ && sp.chZ * k, sideZ: sp.sideZ && sp.sideZ * k
+    }));
+    if (this.goalMode === 'split') {
+      const a = this.outline[0], b = this.outline[1];
+      const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
+      this.splitGoal = {
+        gx: (a[0] + b[0]) * 0.5, gz: (a[1] + b[1]) * 0.5,
+        gtx: dx / len, gtz: dz / len,
+        gnx: -dz / len, gnz: dx / len
+      };
+    }
     this.buildInset();
+  }
+  goalLineZ() {
+    if (this.goalMode === 'standalone') return this.goalZ;
+    if (this.goalMode === 'split') return this.splitGoal.gz;
+    return this.L;
+  }
+  kickoffPos(spot, team) {
+    const sx = this.W / 40.96, sz = (this.goalMode === 'standalone' ? this.goalZ : this.L) / 51.2;
+    let x = spot[0] * sx, z = spot[1] * sz;
+    if (team === 1) { x = -x; z = -z; }
+    const v = this.pushInside({ x, z }, 4.0);
+    if (this.goalMode === 'standalone' && Math.abs(v.z) > this.goalZ - 3.0) {
+      v.z = (v.z < 0 ? -1 : 1) * (this.goalZ - 3.0);
+    }
+    return v;
   }
   buildInset() {
     const V = this.outline, Rc = this.Rc, E = [];
@@ -1263,10 +1340,21 @@ class ArenaShape {
     const e = E[E.length - 1]; I.push([e.h / e.ox, 0]);
     this.E = E; this.I = I;
     this.S = []; for (let i = 0; i < I.length - 1; i++) { const dx = I[i + 1][0] - I[i][0], dz = I[i + 1][1] - I[i][1]; this.S.push({ x: I[i][0], z: I[i][1], dx, dz, il: 1 / Math.max(1e-9, dx * dx + dz * dz) }); }
-    if (I.length > 1 && I[1][0] < this.gw + this.Rf) console.warn('Arena layout: flat goal wall too short', I[1][0]);
+    if (this.goalMode === 'standard' && this.type !== 'figure8' && I.length > 1 && I[1][0] < this.gw + this.Rf) console.warn('Arena layout: flat goal wall too short', I[1][0]);
   }
   // 2D distance from (ax, az) [first quadrant] to the wall, positive inside
   d2(ax, az) {
+    if (this.fig8) {
+      const f = this.fig8;
+      const dPos = Math.hypot(ax, az - f.Zc) - f.Rl;
+      const dNeg = Math.hypot(ax, az + f.Zc) - f.Rl;
+      const h1 = Math.max(f.Kf - Math.abs(dPos - dNeg), 0) / f.Kf;
+      const dLobes = (dPos < dNeg ? dPos : dNeg) - h1 * h1 * f.Kf * 0.25;
+      const dEnd = az - this.L;
+      const h2 = Math.max(f.Rc - Math.abs(dLobes - dEnd), 0) / f.Rc;
+      const dOut = (dLobes > dEnd ? dLobes : dEnd) + h2 * h2 * f.Rc * 0.25;
+      return -dOut;
+    }
     const E = this.E; let mx = -1e9;
     for (let i = 0; i < E.length; i++) { const e = E[i]; const v = e.ox * ax + e.oz * az - e.h; if (v > mx) mx = v; }
     if (mx <= 0) return this.Rc - mx;
@@ -1297,6 +1385,37 @@ class ArenaShape {
   // Wall outline path offset outward by `offset` (0 = wall base). Points carry outward normal + arc length.
   path(step = 1.0, offset = 0) {
     const key = step + '|' + offset; this._pc = this._pc || {}; if (this._pc[key]) return this._pc[key];
+    if (this.fig8) {
+      const M = Math.max(48, Math.ceil(160 / Math.max(0.4, step)));
+      const maxR = this.W + this.L + Math.abs(offset) + 30;
+      const q = [];
+      for (let i = 0; i <= M; i++) {
+        const a = (i / M) * (PI * 0.5), ca = Math.cos(a), sa = Math.sin(a);
+        let lo = 0, hi = maxR;
+        for (let it = 0; it < 24; it++) {
+          const m = (lo + hi) * 0.5;
+          if (this.d2(m * ca, m * sa) + offset > 0) lo = m; else hi = m;
+        }
+        q.push([lo * ca, lo * sa]);
+      }
+      // Build full CCW loop from first-quadrant samples
+      const raw = [];
+      for (let i = 0; i < q.length; i++) raw.push([q[i][0], q[i][1]]);
+      for (let i = q.length - 2; i >= 0; i--) raw.push([-q[i][0], q[i][1]]);
+      for (let i = 1; i < q.length; i++) raw.push([-q[i][0], -q[i][1]]);
+      for (let i = q.length - 2; i >= 1; i--) raw.push([q[i][0], -q[i][1]]);
+      const g = { x: 0, z: 0 }, pts = [];
+      let s = 0;
+      for (let i = 0; i < raw.length; i++) {
+        const [x, z] = raw[i];
+        if (i > 0) s += Math.hypot(x - raw[i - 1][0], z - raw[i - 1][1]);
+        this.grad2D(x, z, g);
+        pts.push({ x, z, nx: -g.x, nz: -g.z, s });
+      }
+      s += Math.hypot(raw[0][0] - raw[raw.length - 1][0], raw[0][1] - raw[raw.length - 1][1]);
+      pts.push(Object.assign({}, pts[0], { s }));
+      return (this._pc[key] = { pts, length: s });
+    }
     const P = this.insetLoop(), n = P.length, r = Math.max(0.3, this.Rc + offset);
     const nrm = []; for (let i = 0; i < n; i++) { const a = P[i], b = P[(i + 1) % n]; const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1; nrm.push([dz / l, -dx / l]); }
     const pts = []; let s = 0;
@@ -1324,8 +1443,44 @@ class ArenaShape {
   }
   halfWidthAt(z) { let lo = 0, hi = this.W + 2; for (let i = 0; i < 18; i++) { const m = (lo + hi) / 2; if (this.d2(m, Math.abs(z)) > 0) lo = m; else hi = m; } return lo; }
   dist(x, y, z) {
-    const W = this.W, L = this.L, Rf = this.Rf, gw = this.gw, gh = this.gh;
+    const L = this.L, Rf = this.Rf, gw = this.gw, gh = this.gh;
     const ax = x < 0 ? -x : x, az = z < 0 ? -z : z;
+    if (this.goalMode === 'standalone') {
+      let d = this.shellDist(ax, y, az);
+      const gz = this.goalZ, gd = this.gd, gt = this.gt;
+      if (az > gz - 4.0 && az < gz + gd + gt + 4.0 && ax < gw + gt + 4.0 && y < gh + gt + 4.0) {
+        const dSide = sdBox(ax - (gw + gt * 0.5), y - (gh + gt) * 0.5, az - (gz + (gd + gt) * 0.5), gt * 0.5, (gh + gt) * 0.5, (gd + gt) * 0.5);
+        const dBack = sdBox(ax, y - (gh + gt) * 0.5, az - (gz + gd + gt * 0.5), gw + gt, (gh + gt) * 0.5, gt * 0.5);
+        const dRoof = sdBox(ax, y - (gh + gt * 0.5), az - (gz + (gd + gt) * 0.5), gw + gt, gt * 0.5, (gd + gt) * 0.5);
+        if (dSide < d) d = dSide;
+        if (dBack < d) d = dBack;
+        if (dRoof < d) d = dRoof;
+      }
+      return d;
+    }
+    if (this.goalMode === 'split') {
+      const sg = this.splitGoal;
+      const u = (ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz;
+      const v = (ax - sg.gx) * sg.gnx + (az - sg.gz) * sg.gnz;
+      const au = u < 0 ? -u : u;
+      if (v > -(Rf + 1.0) && au < gw + 2.0 && y < gh + 2.0) {
+        if (v > 0) {
+          const ex = au - gw, ey = y - gh;
+          if (ex <= 0 && ey <= 0) {
+            let d = -ex; if (-ey < d) d = -ey; if (y < d) d = y; const back = this.gd - v; if (back < d) d = back; return d;
+          }
+          const ox = ex > 0 ? ex : 0, oy = ey > 0 ? ey : 0;
+          const dOut = Math.sqrt(ox * ox + oy * oy);
+          return -(dOut < v ? dOut : v);
+        }
+        if (au < gw && y < gh) {
+          const dv = -v, lx = gw - au, ly = gh - y, dr = lx < ly ? lx : ly;
+          const rim = Math.sqrt(dv * dv + dr * dr);
+          return y < rim ? y : rim;
+        }
+      }
+      return this.shellDist(ax, y, az);
+    }
     if (az > L - Rf - 1.0 && ax < gw + 2.0 && y < gh + 2.0) {
       if (az > L) {
         const ex = ax - gw, ey = y - gh;
@@ -1344,11 +1499,30 @@ class ArenaShape {
     }
     return this.shellDist(ax, y, az);
   }
-  floorFilletR(ax) {
+  floorFilletR(ax, az = this.L) {
+    if (this.goalMode === 'standalone') return this.Rf;
+    if (this.goalMode === 'split') {
+      const sg = this.splitGoal;
+      const v = (ax - sg.gx) * sg.gnx + (az - sg.gz) * sg.gnz;
+      if (v < -(this.Rf + 4.0)) return this.Rf;
+      const u = Math.abs((ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz);
+      const t = clamp((u - this.gw) / this.goalTaper, 0, 1);
+      return this.Rf * t * t * (3 - 2 * t);
+    }
     const t = clamp((ax - this.gw) / this.goalTaper, 0, 1);
     return this.Rf * t * t * (3 - 2 * t);
   }
-  floorFilletDR(ax) {
+  floorFilletDR(ax, az = this.L) {
+    if (this.goalMode === 'standalone') return 0;
+    if (this.goalMode === 'split') {
+      const sg = this.splitGoal;
+      const v = (ax - sg.gx) * sg.gnx + (az - sg.gz) * sg.gnz;
+      if (v < -(this.Rf + 4.0)) return 0;
+      const u = Math.abs((ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz);
+      const t = (u - this.gw) / this.goalTaper;
+      if (t <= 0 || t >= 1) return 0;
+      return (this.Rf / this.goalTaper) * 6 * t * (1 - t);
+    }
     const t = (ax - this.gw) / this.goalTaper;
     if (t <= 0 || t >= 1) return 0;
     return (this.Rf / this.goalTaper) * 6 * t * (1 - t);
@@ -1356,7 +1530,7 @@ class ArenaShape {
   shellDist(ax, y, az) {
     const Rf = this.Rf, H = this.H;
     const d2 = this.d2(ax, az);
-    const rf = this.floorFilletR(ax);
+    const rf = this.floorFilletR(ax, az);
     if (rf > 1e-4 && d2 < rf && y < rf) { const a = rf - d2, b = rf - y; return rf - Math.sqrt(a * a + b * b); }
     if (d2 < Rf && H - y < Rf) { const a = Rf - d2, b = Rf - (H - y); return Rf - Math.sqrt(a * a + b * b); }
     const dy = y < H - y ? y : H - y;
@@ -1383,6 +1557,18 @@ class ArenaShape {
   }
   wallDist2D(x, z) { return this.d2(x < 0 ? -x : x, z < 0 ? -z : z); }
   inGoal(p, r) {
+    if (this.goalMode === 'standalone') {
+      const az = Math.abs(p.z);
+      if (Math.abs(p.x) < this.gw && p.y < this.gh && az > this.goalZ + r && az < this.goalZ + this.gd) return p.z < 0 ? 0 : 1;
+      return -1;
+    }
+    if (this.goalMode === 'split') {
+      const sg = this.splitGoal, ax = Math.abs(p.x), az = Math.abs(p.z);
+      const u = (ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz;
+      const v = (ax - sg.gx) * sg.gnx + (az - sg.gz) * sg.gnz;
+      if (Math.abs(u) < this.gw && p.y < this.gh && v > r) return p.z < 0 ? 0 : 1;
+      return -1;
+    }
     if (Math.abs(p.x) < this.gw && p.y < this.gh && Math.abs(p.z) > this.L + r) return p.z < 0 ? 0 : 1;
     return -1;
   }
@@ -1994,14 +2180,30 @@ class BoostPad {
   constructor(x, z, big) { this.pos = new V3(x, 0, z); this.big = big; this.active = true; this.timer = 0; this.radius = big ? 2.08 : 1.44; this.respawn = big ? 10 : 4; this.amount = big ? 100 : 12; this.anim = 0; }
 }
 function makeBoostPads(shape) {
-  const sx = (shape.W - 2) / 40.96, sz = (shape.L - 1.5) / 51.2;
+  const sx = (shape.W - 2) / 40.96, sz = (shape.goalMode === 'standalone' ? shape.goalZ - 1.5 : shape.L - 1.5) / 51.2;
   const big = [[-35.84, 0], [35.84, 0], [-30.72, 40.96], [30.72, 40.96], [-30.72, -40.96], [30.72, -40.96]];
   const small = [[0, -42.4], [-17.92, -41.84], [17.92, -41.84], [-9.4, -33.08], [9.4, -33.08], [0, -28.16], [-35.84, -24.84], [35.84, -24.84],
     [-17.88, -23], [17.88, -23], [-20.48, -10.36], [0, -10.24], [20.48, -10.36], [-10.24, 0], [10.24, 0], [-20.48, 10.36], [0, 10.24], [20.48, 10.36],
     [-17.88, 23], [17.88, 23], [-35.84, 24.84], [35.84, 24.84], [0, 28.16], [-9.4, 33.08], [9.4, 33.08], [-17.92, 41.84], [17.92, 41.84], [0, 42.4]];
   const pads = [];
-  for (const [x, z] of big) { const v = shape.pushInside({ x: x * sx, z: z * sz }, shape.Rf + 2.4); pads.push(new BoostPad(v.x, v.z, true)); }
-  for (const [x, z] of small) { const v = shape.pushInside({ x: x * sx, z: z * sz }, shape.Rf + 1.6); pads.push(new BoostPad(v.x, v.z, false)); }
+  const clearGoal = (v) => {
+    if (shape.goalMode !== 'standalone') return v;
+    const ax = Math.abs(v.x), az = Math.abs(v.z);
+    if (ax < shape.gw + shape.gt + 2.2 && az > shape.goalZ - 2.0 && az < shape.goalZ + shape.gd + shape.gt + 2.2) {
+      v.z = (v.z < 0 ? -1 : 1) * (shape.goalZ - 3.0);
+    }
+    return v;
+  };
+  for (const [x, z] of big) { const v = clearGoal(shape.pushInside({ x: x * sx, z: z * sz }, shape.Rf + 2.4)); pads.push(new BoostPad(v.x, v.z, true)); }
+  for (const [x, z] of small) { const v = clearGoal(shape.pushInside({ x: x * sx, z: z * sz }, shape.Rf + 1.6)); pads.push(new BoostPad(v.x, v.z, false)); }
+  if (shape.goalMode === 'standalone') {
+    const bz = (shape.goalZ + shape.gd + shape.gt + shape.L) * 0.5;
+    for (const side of [-1, 1]) {
+      pads.push(new BoostPad(0, side * bz, false));
+      pads.push(new BoostPad(-11, side * bz, false));
+      pads.push(new BoostPad(11, side * bz, false));
+    }
+  }
   // keep pads off each other after being pushed in from cut corners
   for (let i = 0; i < pads.length; i++) for (let j = i + 1; j < pads.length; j++) {
     const a = pads[i], b = pads[j]; const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z, d = Math.hypot(dx, dz), need = a.radius + b.radius + 0.6;
@@ -2690,9 +2892,19 @@ function placed(geo, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
 }
 
 const FLOOR_FRAG = `
-uniform float uW, uL, uRc, uRf, uGW, uGD, uTime, uGlow; uniform int uType; uniform vec3 uBase1, uBase2, uLine, uBlue, uOrange, uGrid; uniform vec2 uPulse;
+uniform float uW, uL, uRc, uRf, uGW, uGD, uTime, uGlow, uGoalZ; uniform int uType, uShapeMode, uGoalMode; uniform vec4 uFig8, uSplitG; uniform vec3 uBase1, uBase2, uLine, uBlue, uOrange, uGrid; uniform vec2 uPulse;
 uniform vec2 uPoly[16]; uniform int uPolyN; uniform sampler2D tRefl; uniform mat4 uReflMat; uniform float uReflOn, uReflect;
-float sdArena(vec2 p){ vec2 a = abs(p); float mx = -1e9;
+float sdArena(vec2 p){ vec2 a = abs(p);
+  if(uShapeMode == 1){
+    float d1 = length(a - vec2(0.0, uFig8.x)) - uFig8.y;
+    float d2 = length(a + vec2(0.0, uFig8.x)) - uFig8.y;
+    float h1 = max(uFig8.z - abs(d1 - d2), 0.0) / uFig8.z;
+    float dl = min(d1, d2) - h1 * h1 * uFig8.z * 0.25;
+    float de = a.y - uL;
+    float h2 = max(uFig8.w - abs(dl - de), 0.0) / uFig8.w;
+    return max(dl, de) + h2 * h2 * uFig8.w * 0.25;
+  }
+  float mx = -1e9;
   for(int i=0;i<15;i++){ if(i >= uPolyN - 1) break; vec2 e = uPoly[i+1] - uPoly[i]; vec2 o = normalize(vec2(-e.y, e.x)); mx = max(mx, dot(o, a - uPoly[i])); }
   if(mx <= 0.0) return mx - uRc;
   float best = 1e9;
@@ -2882,15 +3094,31 @@ float lw = 0.13; float ln = 0.0;
 ln += lmask(fp.y, lw) * step(uRf + 0.6, -d2);
 ln += lmask(length(fp) - 9.5, lw);
 ln += 1.0 - smoothstep(0.6, 0.7, length(fp));
-float bx = abs(fp.x) - (uGW + 5.5), bz = (uL - 10.0) - abs(fp.y);
-ln += lmask(max(bx, bz), lw) * step(abs(fp.y), uL);
+float bx = abs(fp.x) - (uGW + 5.5), bz = (uGoalZ - 10.0) - abs(fp.y);
+if(uGoalMode == 2){
+  vec2 qa = abs(fp) - uSplitG.xy;
+  vec2 gn = uSplitG.zw; vec2 gt = vec2(gn.y, -gn.x);
+  float su = dot(qa, gt), sv = dot(qa, gn);
+  ln += lmask(max(abs(su) - (uGW + 3.5), -9.0 - sv), lw) * step(sv, 0.0);
+  ln += lmask(sv - 0.15, lw * 1.3) * step(abs(su), uGW);
+} else {
+  ln += lmask(max(bx, bz), lw) * step(abs(fp.y), uGoalZ);
+  ln += lmask(abs(fp.y) - uGoalZ - 0.15, lw * 1.3) * step(abs(fp.x), uGW);
+}
 ln += lmask(d2 + uRf + 0.7, lw * 1.2);
-ln += lmask(abs(fp.y) - uL - 0.15, lw * 1.3) * step(abs(fp.x), uGW);
 ln = clamp(ln, 0.0, 1.0);
-vec3 lc = mix(uLine, teamCol * 1.3 + 0.2, step(uL - 10.5, abs(fp.y)) * 0.6);
+vec3 lc = mix(uLine, teamCol * 1.3 + 0.2, step(uGoalZ - 10.5, abs(fp.y)) * 0.6);
 if(uType == 1 || uType == 3 || uType == 7 || uType == 10){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.68, ln); }
 else { base = mix(base, lc * 0.72, ln * 0.88); fRough = mix(fRough, 0.55, ln); fEmis += lc * ln * uGlow * 0.4; }
-if(abs(fp.y) > uL){ base = mix(base, teamCol * 0.25, 0.5); float gp = fp.y < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * (0.14 + gp * 2.6) * (0.6 + 0.4 * sin(abs(fp.y) * 3.0 - uTime * 4.0)); }
+float inGoalFloor = 0.0;
+if(uGoalMode == 0) inGoalFloor = step(uL, abs(fp.y));
+else if(uGoalMode == 1) inGoalFloor = step(uGoalZ, abs(fp.y)) * step(abs(fp.y), uGoalZ + uGD) * step(abs(fp.x), uGW);
+else {
+  vec2 qa = abs(fp) - uSplitG.xy;
+  vec2 gn = uSplitG.zw; vec2 gt = vec2(gn.y, -gn.x);
+  inGoalFloor = step(0.0, dot(qa, gn)) * step(abs(dot(qa, gt)), uGW + 0.1);
+}
+if(inGoalFloor > 0.5){ base = mix(base, teamCol * 0.25, 0.5); float gp = fp.y < 0.0 ? uPulse.x : uPulse.y; fEmis += teamCol * (0.14 + gp * 2.6) * (0.6 + 0.4 * sin(length(fp) * 3.0 - uTime * 4.0)); }
 // Geometric specular anti-aliasing to prevent distant highlight shimmering without washing out near roughness
 float aaRough = clamp(length(fwidth(fp)) * 0.22, 0.0, 0.38);
 fRough = clamp(max(mix(fRough, 1.0, 0.22), aaRough), 0.14, 0.98);
@@ -2982,13 +3210,37 @@ class ArenaVisual {
     const W = s.W, L = s.L, Rc = s.Rc, gw = s.gw, gd = s.gd;
     const sh = new THREE.Shape(); const op = s.path(0.8, 0).pts;
     sh.moveTo(op[0].x, -op[0].z); for (let i = 1; i < op.length - 1; i++) sh.lineTo(op[i].x, -op[i].z);
-    const parts = [new THREE.ShapeGeometry(sh)];
-    for (const side of [-1, 1]) { const gp = new THREE.PlaneGeometry(gw * 2, gd + 0.02, 1, 1); gp.translate(0, -side * (L + gd / 2 - 0.01), 0); parts.push(gp); }
-    const g = mergeGeoms(parts); g.rotateX(-PI / 2);
+    const mainFloor = new THREE.ShapeGeometry(sh); mainFloor.rotateX(-PI / 2);
+    const parts = [mainFloor];
+    if (s.goalMode === 'standard') {
+      for (const side of [-1, 1]) {
+        const gp = new THREE.PlaneGeometry(gw * 2, gd + 0.02, 1, 1);
+        gp.rotateX(-PI / 2); gp.translate(0, 0, side * (L + gd / 2 - 0.01));
+        parts.push(gp);
+      }
+    } else if (s.goalMode === 'split') {
+      const sg = s.splitGoal;
+      for (const sz of [-1, 1]) for (const sx of [-1, 1]) {
+        const nx = sx * sg.gnx, nz = sz * sg.gnz;
+        const gp = new THREE.PlaneGeometry(gw * 2, gd + 0.04, 1, 1);
+        gp.rotateX(-PI / 2);
+        gp.rotateY(Math.atan2(nx, nz));
+        gp.translate(sx * sg.gx + nx * (gd / 2 - 0.02), 0, sz * sg.gz + nz * (gd / 2 - 0.02));
+        parts.push(gp);
+      }
+    }
+    const g = mergeGeoms(parts);
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0 });
     const poly = []; for (let i = 0; i < 16; i++) { const v = s.I[Math.min(i, s.I.length - 1)]; poly.push(new THREE.Vector2(v[0], v[1])); }
+    const f8 = s.fig8 || { Zc: 36, Rl: 39, Kf: 10, Rc: 8 };
+    const sg = s.splitGoal || { gx: 0, gz: L, gnx: 0, gnz: 1 };
     const U = {
       uW: { value: W }, uL: { value: L }, uRc: { value: Rc }, uRf: { value: s.Rf }, uGW: { value: gw }, uGD: { value: gd }, uTime: this.uniforms.uTime, uPulse: this.uniforms.uPulse,
+      uGoalZ: { value: s.goalMode === 'standalone' ? s.goalZ : L },
+      uShapeMode: { value: s.fig8 ? 1 : 0 },
+      uGoalMode: { value: s.goalMode === 'standalone' ? 1 : s.goalMode === 'split' ? 2 : 0 },
+      uFig8: { value: new THREE.Vector4(f8.Zc, f8.Rl, f8.Kf, f8.Rc) },
+      uSplitG: { value: new THREE.Vector4(sg.gx, sg.gz, sg.gnx, sg.gnz) },
       uPoly: { value: poly }, uPolyN: { value: s.I.length },
       tRefl: this.refl.tex, uReflMat: this.refl.mat, uReflOn: this.refl.on, uReflect: this.refl.strength,
       uType: { value: d.floor }, uBase1: { value: new THREE.Color(d.c.base1) }, uBase2: { value: new THREE.Color(d.c.base2) }, uLine: { value: new THREE.Color(d.c.line) },
@@ -3022,10 +3274,18 @@ class ArenaVisual {
   wallProfileAt(p) {
     const s = this.shape, Rf = s.Rf, H = s.H, yTop = H - Rf, N = 12;
     const steps = Math.max(2, Math.ceil(yTop / 1.5));
-    const ax = Math.abs(p.x);
-    const rf = s.floorFilletR(ax);
+    const ax = Math.abs(p.x), az = Math.abs(p.z);
+    const rf = s.floorFilletR(ax, az);
     const tx = -p.nz, tz = p.nx;
-    const drds = s.floorFilletDR(ax) * (p.x >= 0 ? 1 : -1) * tx;
+    let drds = 0;
+    if (s.goalMode === 'split') {
+      const sg = s.splitGoal;
+      const u = (ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz;
+      const du = ((p.x >= 0 ? 1 : -1) * tx * sg.gtx + (p.z >= 0 ? 1 : -1) * tz * sg.gtz) * (u >= 0 ? 1 : -1);
+      drds = s.floorFilletDR(ax, az) * du;
+    } else {
+      drds = s.floorFilletDR(ax, az) * (p.x >= 0 ? 1 : -1) * tx;
+    }
     const prof = [];
     for (let i = 0; i <= N; i++) {
       const a = i / N * PI / 2, sa = Math.sin(a), ca = Math.cos(a);
@@ -3044,31 +3304,68 @@ class ArenaVisual {
   buildWalls() {
     const d = this.def, s = this.shape;
     const path = s.path(0.8, 0).pts;
-    const inMouth = p => Math.abs(p.z) > s.L - 0.01 && Math.abs(p.x) < s.gw - 0.001;
+    const sg = s.splitGoal;
+    const splitUV = p => {
+      const ax = Math.abs(p.x), az = Math.abs(p.z);
+      return {
+        u: (ax - sg.gx) * sg.gtx + (az - sg.gz) * sg.gtz,
+        v: (ax - sg.gx) * sg.gnx + (az - sg.gz) * sg.gnz
+      };
+    };
+    const inMouth = p => {
+      if (s.goalMode === 'standalone') return false;
+      if (s.goalMode === 'split') { const uv = splitUV(p); return Math.abs(uv.v) < 0.05 && Math.abs(uv.u) < s.gw - 0.001; }
+      return Math.abs(p.z) > s.L - 0.01 && Math.abs(p.x) < s.gw - 0.001;
+    };
+    const isMouthEdge = p => {
+      if (s.goalMode === 'standalone') return false;
+      if (s.goalMode === 'split') { const uv = splitUV(p); return Math.abs(uv.v) < 0.05 && Math.abs(Math.abs(uv.u) - s.gw) < 0.004; }
+      return Math.abs(p.z) > s.L - 0.01 && Math.abs(Math.abs(p.x) - s.gw) < 0.002;
+    };
     const pts = [];
     for (let i = 0; i < path.length; i++) {
       const p = path[i]; pts.push(p);
       const q = path[i + 1];
-      if (q && Math.abs(p.z) > s.L - 0.01 && Math.abs(q.z) > s.L - 0.01) {
-        for (const gx of [s.gw, -s.gw]) if ((p.x - gx) * (q.x - gx) < 0) { const t = (gx - p.x) / (q.x - p.x); pts.push({ x: gx, z: p.z, nx: p.nx, nz: p.nz, s: lerp(p.s, q.s, t) }); }
+      if (!q) continue;
+      if (s.goalMode === 'standard' && Math.abs(p.z) > s.L - 0.01 && Math.abs(q.z) > s.L - 0.01) {
+        const cuts = [];
+        for (const gx of [s.gw, -s.gw]) if ((p.x - gx) * (q.x - gx) < 0) cuts.push((gx - p.x) / (q.x - p.x));
+        cuts.sort((a, b) => a - b);
+        for (const t of cuts) pts.push({ x: lerp(p.x, q.x, t), z: p.z, nx: p.nx, nz: p.nz, s: lerp(p.s, q.s, t) });
+      } else if (s.goalMode === 'split' && p.x * q.x >= -1e-4 && p.z * q.z >= -1e-4) {
+        const up = splitUV(p), uq = splitUV(q);
+        if (Math.abs(up.v) < 0.05 && Math.abs(uq.v) < 0.05) {
+          const cuts = [];
+          for (const gu of [s.gw, -s.gw]) if ((up.u - gu) * (uq.u - gu) < 0) cuts.push((gu - up.u) / (uq.u - up.u));
+          cuts.sort((a, b) => a - b);
+          for (const t of cuts) {
+            let nx = lerp(p.nx, q.nx, t), nz = lerp(p.nz, q.nz, t); const nl = Math.hypot(nx, nz) || 1;
+            pts.push({ x: lerp(p.x, q.x, t), z: lerp(p.z, q.z, t), nx: nx / nl, nz: nz / nl, s: lerp(p.s, q.s, t) });
+          }
+        }
       }
     }
     const upper = this.wallProfile(s.gh, false);
     const runsOuter = [], runsMouth = []; let cur = [], curM = [];
     for (const p of pts) {
-      const edge = Math.abs(p.z) > s.L - 0.01 && Math.abs(Math.abs(p.x) - s.gw) < 0.002;
+      const edge = isMouthEdge(p);
       const m = inMouth(p);
       if (!m || edge) cur.push(p); if (m || edge) curM.push(p);
       if (m && !edge && cur.length) { runsOuter.push(cur); cur = []; }
       if (!m && !edge && curM.length) { runsMouth.push(curM); curM = []; }
     }
     if (cur.length) runsOuter.push(cur); if (curM.length) runsMouth.push(curM);
+    const nearTaper = p => {
+      if (s.goalMode === 'standalone') return false;
+      if (s.goalMode === 'split') { const uv = splitUV(p); return uv.v > -(s.Rf + 4.0) && Math.abs(uv.u) < s.gw + s.goalTaper + 0.6; }
+      return Math.abs(p.x) < s.gw + s.goalTaper + 0.5;
+    };
     const refineTaper = r => {
-      const out = [r[0]], lim = s.gw + s.goalTaper + 0.5;
+      const out = [r[0]];
       for (let i = 1; i < r.length; i++) {
         const a = r[i - 1], b = r[i];
         const len = Math.hypot(b.x - a.x, b.z - a.z);
-        if (len > 0.35 && Math.min(Math.abs(a.x), Math.abs(b.x)) < lim) {
+        if (len > 0.35 && (nearTaper(a) || nearTaper(b))) {
           const sub = Math.ceil(len / 0.35);
           for (let k = 1; k < sub; k++) {
             const t = k / sub;
@@ -3124,36 +3421,67 @@ class ArenaVisual {
   }
   buildGoals() {
     const s = this.shape;
-    for (const side of [-1, 1]) {
-      const team = side < 0 ? 0 : 1; const col = team === 0 ? this.blue : this.orange;
-      const z0 = side * s.L, z1 = side * (s.L + s.gd);
-      const netMat = new THREE.ShaderMaterial({
-        uniforms: { uCol: { value: col }, uTime: this.uniforms.uTime, uPulse: this.uniforms.uPulse, uSide: { value: team } },
-        vertexShader: `varying vec3 vP; varying vec2 vUv; void main(){ vUv = uv; vP = (modelMatrix*vec4(position,1.0)).xyz; gl_Position = projectionMatrix*viewMatrix*vec4(vP,1.0); }`,
-        fragmentShader: `uniform vec3 uCol; uniform float uTime; uniform vec2 uPulse; uniform int uSide; varying vec3 vP; varying vec2 vUv; ${GLSL_NOISE}
-          void main(){ vec2 q = vUv * vec2(18.0, 7.0); vec4 hc = hexCoords(q); float e = smoothstep(0.36, 0.5, hexDist(hc.xy));
-            float p = uSide == 0 ? uPulse.x : uPulse.y; float wave = 0.5 + 0.5 * sin(uTime * 3.0 + vUv.x * 10.0 + vUv.y * 4.0);
-            vec3 c = mix(vec3(0.85), uCol, 0.55) * (0.1 + e * (0.32 + wave * 0.06 + p * 5.0)); float a = 0.12 + e * 0.6 + p * 0.3;
-            gl_FragColor = vec4(c, a); }`,
-        transparent: true, depthWrite: false, side: THREE.DoubleSide
-      });
-      const t = 0.32, inset = 0.06, netBack = t - inset, netD = s.gd - netBack, netZ = side * (s.L + netBack + netD / 2);
-      const back = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, s.gh), netMat); back.position.set(0, s.gh / 2, z1); back.renderOrder = 3; this.add(back);
-      for (const sx of [-1, 1]) { const sw = new THREE.Mesh(new THREE.PlaneGeometry(netD, s.gh), netMat); sw.rotation.y = PI / 2; sw.position.set(sx * s.gw, s.gh / 2, netZ); sw.renderOrder = 3; this.add(sw); }
-      const roof = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, netD), netMat); roof.rotation.x = PI / 2; roof.position.set(0, s.gh, netZ); roof.renderOrder = 3; this.add(roof);
-      const fm = new THREE.MeshPhysicalMaterial({ color: col.clone().multiplyScalar(0.75), emissive: col, emissiveIntensity: 0.18, roughness: 0.32, metalness: 0.15, clearcoat: 0.6, clearcoatRoughness: 0.2 });
-      const fz = z0 + side * (t / 2 - inset); const parts = [];
+    const makeNetMat = (col, team) => new THREE.ShaderMaterial({
+      uniforms: { uCol: { value: col }, uTime: this.uniforms.uTime, uPulse: this.uniforms.uPulse, uSide: { value: team } },
+      vertexShader: `varying vec3 vP; varying vec2 vUv; void main(){ vUv = uv; vP = (modelMatrix*vec4(position,1.0)).xyz; gl_Position = projectionMatrix*viewMatrix*vec4(vP,1.0); }`,
+      fragmentShader: `uniform vec3 uCol; uniform float uTime; uniform vec2 uPulse; uniform int uSide; varying vec3 vP; varying vec2 vUv; ${GLSL_NOISE}
+        void main(){ vec2 q = vUv * vec2(18.0, 7.0); vec4 hc = hexCoords(q); float e = smoothstep(0.36, 0.5, hexDist(hc.xy));
+          float p = uSide == 0 ? uPulse.x : uPulse.y; float wave = 0.5 + 0.5 * sin(uTime * 3.0 + vUv.x * 10.0 + vUv.y * 4.0);
+          vec3 c = mix(vec3(0.85), uCol, 0.55) * (0.1 + e * (0.32 + wave * 0.06 + p * 5.0)); float a = 0.12 + e * 0.6 + p * 0.3;
+          gl_FragColor = vec4(c, a); }`,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide
+    });
+    const buildGoalUnit = (team, col, isStandalone) => {
+      const grp = new THREE.Group();
+      const netMat = makeNetMat(col, team);
+      const t = 0.32, inset = 0.06, netBack = t - inset, netD = s.gd - netBack, netZ = netBack + netD / 2;
+      const back = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, s.gh), netMat); back.position.set(0, s.gh / 2, s.gd); back.renderOrder = 3; grp.add(back);
+      for (const sx of [-1, 1]) { const sw = new THREE.Mesh(new THREE.PlaneGeometry(netD, s.gh), netMat); sw.rotation.y = PI / 2; sw.position.set(sx * s.gw, s.gh / 2, netZ); sw.renderOrder = 3; grp.add(sw); }
+      const roof = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, netD), netMat); roof.rotation.x = PI / 2; roof.position.set(0, s.gh, netZ); roof.renderOrder = 3; grp.add(roof);
+      const fm = new THREE.MeshPhysicalMaterial({ color: col.clone().multiplyScalar(0.75), emissive: col, emissiveIntensity: 0.22, roughness: 0.32, metalness: 0.15, clearcoat: 0.6, clearcoatRoughness: 0.2 });
+      const fz = t / 2 - inset; const parts = [];
       parts.push(placed(new THREE.BoxGeometry(t, s.gh, t), -(s.gw + t / 2), s.gh / 2, fz));
       parts.push(placed(new THREE.BoxGeometry(t, s.gh, t), (s.gw + t / 2), s.gh / 2, fz));
       parts.push(placed(new THREE.BoxGeometry(s.gw * 2 + t * 2, t, t), 0, s.gh + t / 2, fz));
-      this.add(new THREE.Mesh(mergeGeoms(parts), fm));
+      grp.add(new THREE.Mesh(mergeGeoms(parts), fm));
       const dm = new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: 0.4, metalness: 0.8 });
       const ip = [];
-      for (const sx of [-1, 1]) { ip.push(placed(new THREE.BoxGeometry(0.12, 0.12, netD), sx * s.gw, s.gh, netZ)); ip.push(placed(new THREE.BoxGeometry(0.12, s.gh, 0.12), sx * s.gw, s.gh / 2, z1)); }
-      ip.push(placed(new THREE.BoxGeometry(s.gw * 2, 0.12, 0.12), 0, s.gh, z1));
-      this.add(new THREE.Mesh(mergeGeoms(ip), dm));
+      for (const sx of [-1, 1]) { ip.push(placed(new THREE.BoxGeometry(0.12, 0.12, netD), sx * s.gw, s.gh, netZ)); ip.push(placed(new THREE.BoxGeometry(0.12, s.gh, 0.12), sx * s.gw, s.gh / 2, s.gd)); }
+      ip.push(placed(new THREE.BoxGeometry(s.gw * 2, 0.12, 0.12), 0, s.gh, s.gd));
+      grp.add(new THREE.Mesh(mergeGeoms(ip), dm));
       const gl = new THREE.Mesh(new THREE.PlaneGeometry(s.gw * 2, 0.35), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(0.9), transparent: true, opacity: 0.75 }));
-      gl.rotation.x = -PI / 2; gl.position.set(0, 0.02, z0 + side * 0.2); this.add(gl);
+      gl.rotation.x = -PI / 2; gl.position.set(0, 0.02, 0.2); grp.add(gl);
+      return grp;
+    };
+    if (s.goalMode === 'standalone') {
+      for (const side of [-1, 1]) {
+        const team = side < 0 ? 0 : 1, col = team === 0 ? this.blue : this.orange;
+        const g = buildGoalUnit(team, col, true);
+        g.position.set(0, 0, side * s.goalZ);
+        if (side < 0) g.rotation.y = PI;
+        this.add(g);
+      }
+      return;
+    }
+    if (s.goalMode === 'split') {
+      const sg = s.splitGoal;
+      for (const sz of [-1, 1]) {
+        const team = sz < 0 ? 0 : 1, col = team === 0 ? this.blue : this.orange;
+        for (const sx of [-1, 1]) {
+          const g = buildGoalUnit(team, col, false);
+          g.position.set(sx * sg.gx, 0, sz * sg.gz);
+          g.rotation.y = Math.atan2(sx * sg.gnx, sz * sg.gnz);
+          this.add(g);
+        }
+      }
+      return;
+    }
+    for (const side of [-1, 1]) {
+      const team = side < 0 ? 0 : 1, col = team === 0 ? this.blue : this.orange;
+      const g = buildGoalUnit(team, col, false);
+      g.position.set(0, 0, side * s.L);
+      if (side < 0) g.rotation.y = PI;
+      this.add(g);
     }
   }
   buildLights() {
@@ -3170,11 +3498,12 @@ class ArenaVisual {
     this.rim.position.set(-this.sunDir.x * 80, 46, -this.sunDir.z * 80);
     this.add(this.rim);
     // Physical team-colored bounce lights at both goal mouths (flare on goal pulse)
+    const glz = s.goalLineZ();
     this.blueGoalLight = new THREE.PointLight(this.blue, 24, 34, 1.8);
-    this.blueGoalLight.position.set(0, s.gh * 0.68, -s.L + 1.8);
+    this.blueGoalLight.position.set(0, s.gh * 0.68, -glz + 1.8);
     this.add(this.blueGoalLight);
     this.orangeGoalLight = new THREE.PointLight(this.orange, 24, 34, 1.8);
-    this.orangeGoalLight.position.set(0, s.gh * 0.68, s.L - 1.8);
+    this.orangeGoalLight.position.set(0, s.gh * 0.68, glz - 1.8);
     this.add(this.orangeGoalLight);
   }
   updateShadow(focus) {
@@ -3869,7 +4198,7 @@ class ArenaVisual {
       const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, '#0a2460'); gr.addColorStop(0.5, '#0b1024'); gr.addColorStop(1, '#6a2c08');
       g.fillStyle = gr; g.fillRect(0, 0, w, h);
       g.strokeStyle = '#ffd23f'; g.lineWidth = 8; g.strokeRect(8, 8, w - 16, h - 16);
-      g.fillStyle = '#fff'; g.font = 'italic 900 44px "Segoe UI", Arial, sans-serif'; g.textAlign = 'center'; g.fillText('CHAMPIONS FIELD', w / 2, 74, w - 56);
+      g.fillStyle = '#fff'; g.font = 'italic 900 44px "Segoe UI", Arial, sans-serif'; g.textAlign = 'center'; g.fillText(this.def.name, w / 2, 74, w - 56);
       g.fillStyle = '#ffd23f'; g.font = '900 21px "Segoe UI", Arial, sans-serif'; g.fillText('HYPERSTRIKE CHAMPIONSHIP • LIVE', w / 2, 132, w - 56);
     }));
     jTex.colorSpace = THREE.SRGBColorSpace;
@@ -6264,7 +6593,7 @@ class BotAI {
     this.aimErr = (Math.random() - 0.5) * 2 * this.d.aim;
     const role = w.roleOf(car);
     const threat = w.pred.goalTeam === car.team && w.pred.goalTime < 5;
-    const ownZ = -this.attackDir * w.shape.L;
+    const ownZ = -this.attackDir * w.shape.goalLineZ();
     if (threat && (role === 'defend' || role === 'attack' || this.closestToGoal(w))) this.mode = 'save';
     else if (role === 'attack') this.mode = it.aerial ? 'aerialPrep' : 'attack';
     else if (role === 'support') this.mode = 'support';
@@ -6280,7 +6609,7 @@ class BotAI {
     if (this.mode === 'aerialPrep' && this.d.aerial * (0.6 + this.p.air * 0.6) < Math.random()) this.mode = 'attack';
   }
   closestToGoal(w) {
-    const car = this.car; const gz = -this.attackDir * w.shape.L; let best = null, bd = 1e9;
+    const car = this.car; const gz = -this.attackDir * w.shape.goalLineZ(); let best = null, bd = 1e9;
     for (const o of w.cars) if (o.team === car.team && !o.demolished) { const d = Math.hypot(o.pos.x, o.pos.z - gz); if (d < bd) { bd = d; best = o; } }
     return best === car;
   }
@@ -6302,17 +6631,17 @@ class BotAI {
       case 'attack': case 'aerialPrep': return this.attack(dt, w);
       case 'save': return this.save(dt, w);
       case 'shadow': {
-        const gz = -this.attackDir * shape.L;
+        const gz = -this.attackDir * shape.goalLineZ();
         const t = shape.pushInside(_a1.set(ball.pos.x * 0.6, 0, lerp(ball.pos.z, gz, 0.55)), 5);
         this.driveTo(t, clamp(car.pos.distanceTo(t) * 1.2, 4, 23), w, true); return;
       }
       case 'support': {
         const sl = w.brain.slotOf(car); const n = sl ? sl.n : 1;
         let z, x;
-        if (n <= 1) { z = clamp(ball.pos.z - this.attackDir * (14 + this.p.defend * 8), -shape.L + 6, shape.L - 6); x = ball.pos.x * 0.45 + (car.pos.x > 0 ? 6 : -6); }
+        if (n <= 1) { z = clamp(ball.pos.z - this.attackDir * (14 + this.p.defend * 8), -shape.goalLineZ() + 6, shape.goalLineZ() - 6); x = ball.pos.x * 0.45 + (car.pos.x > 0 ? 6 : -6); }
         else {
           const spread = (sl.i / (n - 1) - 0.5) * 2; const mid = Math.abs(spread) < 0.34;
-          z = clamp(ball.pos.z - this.attackDir * (mid ? 9 + this.p.defend * 5 : 15 + this.p.defend * 8 + Math.abs(spread) * 4), -shape.L + 6, shape.L - 6);
+          z = clamp(ball.pos.z - this.attackDir * (mid ? 9 + this.p.defend * 5 : 15 + this.p.defend * 8 + Math.abs(spread) * 4), -shape.goalLineZ() + 6, shape.goalLineZ() - 6);
           x = ball.pos.x * (mid ? 0.6 : 0.3) + spread * shape.halfWidthAt(z) * 0.58;
         }
         const t = shape.pushInside(_a1.set(x, 0, z), 5); const d = car.pos.distanceTo(t);
@@ -6324,7 +6653,7 @@ class BotAI {
         this.driveTo(p.pos, 23, w, true); return;
       }
       default: {
-        const gz = -this.attackDir * shape.L;
+        const gz = -this.attackDir * shape.goalLineZ();
         const t = _a1.set(clamp(ball.pos.x * 0.3, -shape.gw + 1.5, shape.gw - 1.5), 0, gz + this.attackDir * 3.2);
         const d = car.pos.distanceTo(t);
         if (d < 3) { this.faceBall(dt, w); return; }
@@ -6340,10 +6669,19 @@ class BotAI {
   }
   shotTarget(w, pos) {
     const shape = w.shape, ad = this.attackDir;
-    const oppZ = ad * (shape.L + 2);
-    const ownHalf = (pos.z * ad) < -shape.L * 0.35;
+    const glz = shape.goalLineZ();
+    const ownHalf = (pos.z * ad) < -glz * 0.35;
     if (ownHalf) return _a4.set(pos.x >= 0 ? shape.W * 0.9 : -shape.W * 0.9, 0, pos.z + ad * 35);
-    if (this.p.pass > 0.6 && Math.abs(pos.x) > shape.W * 0.55 && (pos.z * ad) > shape.L * 0.45) return _a4.set(0, 0, ad * (shape.L - 12));
+    if (shape.goalMode === 'standalone' && (pos.z * ad) > shape.goalZ + 1) {
+      return _a4.set(0, 0, ad * (shape.goalZ - 9));
+    }
+    if (shape.goalMode === 'split') {
+      const sg = shape.splitGoal;
+      const sx = pos.x >= 0 ? 1 : -1;
+      return _a4.set(sx * (sg.gx + sg.gnx * 2.5), 0, ad * (sg.gz + sg.gnz * 2.5));
+    }
+    const oppZ = ad * (glz + 2);
+    if (this.p.pass > 0.6 && Math.abs(pos.x) > shape.W * 0.55 && (pos.z * ad) > glz * 0.45) return _a4.set(0, 0, ad * (glz - 12));
     const gx = clamp(pos.x * 0.35, -shape.gw + 2.2, shape.gw - 2.2);
     return _a4.set(gx, 0, oppZ);
   }
@@ -6437,7 +6775,7 @@ class BotAI {
       if (!this.kickDone && d < 4.1 + car.speed * 0.14 && facing > 0.94 && this.d.flip > 0.3) { this.kickDone = true; this.startFlip(1, 0); }
     } else {
       const team = w.cars.filter(o => o.team === car.team);
-      const gz = -this.attackDir * w.shape.L;
+      const gz = -this.attackDir * w.shape.goalLineZ();
       if (team.length > 2 && this.closestToGoal(w)) { this.driveTo(_a1.set(0, 0, gz + this.attackDir * 2), 18, w, true); return; }
       // Stay out of the kicking teammate's lane (kicker -> ball) so we never cut across their path
       const k = w.kicker(car.team);
@@ -6454,15 +6792,26 @@ class BotAI {
   }
   driveTo(target, desiredSpeed, w, cautious) {
     const car = this.car, c = car.controls, b = car.basis, s = w.shape;
-    // Goal-mouth waypoint routing so bots never drive into goal posts
+    // Goal-mouth waypoint routing so bots never drive into goal posts or standalone goal backs
     const navTarget = _a5.copy(target);
     if (navTarget.y < 1.5 && Math.abs(navTarget.z) < s.L - 0.5) s.pushInside(navTarget, 1.2);
-    const inGoal = Math.abs(car.pos.z) > s.L - 0.5 && Math.abs(car.pos.x) < s.gw;
-    const tgtInGoal = Math.abs(navTarget.z) > s.L - 0.5 && Math.abs(navTarget.x) < s.gw;
-    if (inGoal && Math.abs(navTarget.x) > s.gw - 1.2) {
-      navTarget.set(clamp(navTarget.x, -s.gw + 1.5, s.gw - 1.5), 0, sign(car.pos.z) * (s.L - 2.0));
-    } else if (!inGoal && tgtInGoal && Math.abs(car.pos.x) > s.gw - 1.0 && Math.abs(car.pos.z) > s.L - 6) {
-      navTarget.set(clamp(car.pos.x, -s.gw + 1.5, s.gw - 1.5), 0, sign(navTarget.z) * (s.L - 2.0));
+    if (s.goalMode === 'standalone') {
+      const gz0 = s.goalZ, gz1 = s.goalZ + s.gd + s.gt, gxLim = s.gw + s.gt + 1.5;
+      const carBehind = Math.abs(car.pos.z) > gz1 && Math.abs(car.pos.x) < gxLim;
+      const tgtBehind = Math.abs(navTarget.z) > gz1 && Math.abs(navTarget.x) < gxLim;
+      const sameEnd = car.pos.z * navTarget.z > 0;
+      if (sameEnd && (carBehind !== tgtBehind) && Math.abs(car.pos.x) < gxLim && Math.abs(navTarget.x) < gxLim) {
+        const sideX = (car.pos.x >= 0 ? 1 : -1) * (s.gw + s.gt + 4.5);
+        navTarget.set(sideX, 0, sign(car.pos.z) * (gz0 + s.gd * 0.5));
+      }
+    } else if (s.goalMode === 'standard') {
+      const inGoal = Math.abs(car.pos.z) > s.L - 0.5 && Math.abs(car.pos.x) < s.gw;
+      const tgtInGoal = Math.abs(navTarget.z) > s.L - 0.5 && Math.abs(navTarget.x) < s.gw;
+      if (inGoal && Math.abs(navTarget.x) > s.gw - 1.2) {
+        navTarget.set(clamp(navTarget.x, -s.gw + 1.5, s.gw - 1.5), 0, sign(car.pos.z) * (s.L - 2.0));
+      } else if (!inGoal && tgtInGoal && Math.abs(car.pos.x) > s.gw - 1.0 && Math.abs(car.pos.z) > s.L - 6) {
+        navTarget.set(clamp(car.pos.x, -s.gw + 1.5, s.gw - 1.5), 0, sign(navTarget.z) * (s.L - 2.0));
+      }
     }
 
     const to = _a1.copy(navTarget).sub(car.pos); b.toLocal(to, _al);
@@ -6716,7 +7065,8 @@ class World {
   }
   respawn(c) {
     const ad = c.team === 0 ? 1 : -1; const s = this.shape;
-    const v = s.pushInside({ x: (Math.random() < 0.5 ? -1 : 1) * s.W * 0.45, z: -ad * (s.L - 8) }, 5);
+    const rz = s.goalMode === 'standalone' ? s.goalZ - 6 : s.L - 8;
+    const v = s.pushInside({ x: (Math.random() < 0.5 ? -1 : 1) * s.W * 0.45, z: -ad * rz }, 5);
     c.place(v.x, 0.35, v.z, ad > 0 ? -PI / 2 : PI / 2); c.demolished = false; c.boost = 33;
     this.events.push({ type: 'respawn', car: c });
   }
@@ -7506,14 +7856,15 @@ class ModeBase {
   onTouch() { }
   end() { }
   kickoffPositions(teamSize) {
-    const w = this.world, s = w.shape; const sx = s.W / 40.96, sz = s.L / 51.2;
+    const w = this.world, s = w.shape;
     const set = pick(KICKOFF_SETS[Math.min(5, teamSize)] || KICKOFF_SETS[1]);
     const order = set.slice().sort(() => Math.random() - 0.5);
     for (const team of [0, 1]) {
       const mem = w.cars.filter(c => c.team === team);
       mem.forEach((c, i) => {
         const spot = KICKOFF_SPOTS[order[i % order.length]] || KICKOFF_SPOTS[4];
-        let x = spot[0] * sx, z = spot[1] * sz; if (team === 1) { x = -x; z = -z; }
+        const v = s.kickoffPos(spot, team);
+        let x = v.x, z = v.z;
         if (i >= order.length) x += (i - order.length + 1) * 4;
         c.place(x, 0.35, z, yawToward(x, z, 0, 0)); c.boost = 33; c.demolished = false; if (c.bot) c.bot.reset();
       });
@@ -8634,10 +8985,17 @@ const ARENA_ART = [
   'radial-gradient(ellipse at 50% 115%,#ffb040 0%,#ff3000 28%,transparent 62%),radial-gradient(circle at 20% 30%,rgba(255,80,20,.35),transparent 30%),linear-gradient(180deg,#0e0504,#3a0e04 62%,#140806)',
   'radial-gradient(circle at 72% 36%,#ffe0c8 0%,#ff98b8 20%,transparent 48%),linear-gradient(180deg,#201842 0%,#f092a8 58%,#3b262a 59%,#2b2029)',
   'radial-gradient(circle at 30% 28%,#fffbe0 0%,rgba(255,235,170,.65) 18%,transparent 42%),linear-gradient(180deg,#1c6ad4 0%,#cfe8ff 58%,#e8eef6 59%,#c8d8ec)',
-  'radial-gradient(circle at 50% 48%,#ffea40 0%,#ff4a48 22%,#b01070 36%,transparent 37%),repeating-linear-gradient(0deg,transparent 0 6px,rgba(255,54,184,.28) 6px 7px),linear-gradient(180deg,#050114 0%,#7a1058 56%,#120526 57%,#080212)'
+  'radial-gradient(circle at 50% 48%,#ffea40 0%,#ff4a48 22%,#b01070 36%,transparent 37%),repeating-linear-gradient(0deg,transparent 0 6px,rgba(255,54,184,.28) 6px 7px),linear-gradient(180deg,#050114 0%,#7a1058 56%,#120526 57%,#080212)',
+  'radial-gradient(circle at 50% 26%,rgba(62,242,255,.55),transparent 36%),radial-gradient(circle at 50% 74%,rgba(255,63,216,.55),transparent 36%),linear-gradient(160deg,#090f2e,#030510)',
+  'radial-gradient(circle at 50% 50%,rgba(126,244,255,.35),transparent 52%),linear-gradient(180deg,#2c6cb8 0%,#b8d8f0 48%,#225632 49%,#2f7042 75%,#1c4628)',
+  'radial-gradient(circle at 25% 28%,rgba(88,230,255,.55),transparent 34%),radial-gradient(circle at 75% 72%,rgba(255,154,42,.55),transparent 34%),repeating-linear-gradient(45deg,transparent 0 10px,rgba(122,76,255,.22) 10px 11px),linear-gradient(160deg,#140932,#070314)'
 ];
 const RANDOM_ARENA_ART = 'radial-gradient(circle at 30% 30%,rgba(62,242,255,.45),transparent 40%),radial-gradient(circle at 75% 70%,rgba(255,63,216,.45),transparent 42%),repeating-linear-gradient(45deg,transparent 0 12px,rgba(255,255,255,.06) 12px 13px),linear-gradient(160deg,#141a34,#05060f)';
-const resolveArena = a => (Number.isInteger(a) && ARENAS[a]) ? a : Math.floor(Math.random() * ARENAS.length);
+const resolveArena = a => {
+  if (Number.isInteger(a) && ARENAS[a]) return a;
+  const std = ARENAS.map((ar, i) => ar.weird ? -1 : i).filter(i => i >= 0);
+  return std[Math.floor(Math.random() * std.length)];
+};
 
 class UIManager {
   constructor(game) {
@@ -8780,12 +9138,42 @@ class UIManager {
   hideMenu() { $('menu').classList.add('hidden'); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
   seg(key, opts, cls = '') { return `<div class="seg ${cls}">` + opts.map(([v, l, c]) => `<button class="${c || ''} ${this.setup[key] === v ? 'on' : ''}" data-set="${key}" data-val='${JSON.stringify(v)}'><span>${l}</span></button>`).join('') + '</div>'; }
   shapeSvg(def, layout) {
-    const sh = new ArenaShape(def, { layout }); const pts = sh.path(4, 0).pts; const k = 30 / Math.max(sh.W, sh.L + sh.gd);
+    const sh = new ArenaShape(def, { layout }); const pts = sh.path(4, 0).pts; const k = 28 / Math.max(sh.W, sh.L + sh.gd);
     const d = pts.map((p, i) => (i ? 'L' : 'M') + (32 + p.x * k).toFixed(1) + ' ' + (32 + p.z * k).toFixed(1)).join(' ') + 'Z';
-    const gw = sh.gw * k, gz = sh.L * k, gd = sh.gd * k * 0.6;
-    return `<svg class="shp" viewBox="0 0 64 64"><path d="${d}" fill="rgba(255,255,255,.12)" stroke="#fff" stroke-width="2"/><rect x="${32 - gw}" y="${32 - gz - gd}" width="${gw * 2}" height="${gd}" fill="#ff8a1f"/><rect x="${32 - gw}" y="${32 + gz}" width="${gw * 2}" height="${gd}" fill="#2f8fff"/></svg>`;
+    let goals = '';
+    if (sh.goalMode === 'standalone') {
+      const gw = sh.gw * k, gz = sh.goalZ * k, gd = sh.gd * k * 0.75;
+      goals = `<rect x="${(32 - gw).toFixed(1)}" y="${(32 - gz - gd).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#2f8fff" stroke="#fff" stroke-width="1"/>` +
+        `<rect x="${(32 - gw).toFixed(1)}" y="${(32 + gz).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#ff8a1f" stroke="#fff" stroke-width="1"/>`;
+    } else if (sh.goalMode === 'split') {
+      const sg = sh.splitGoal, gw = sh.gw, gd = sh.gd * 0.7;
+      for (const sz of [-1, 1]) {
+        const col = sz < 0 ? '#2f8fff' : '#ff8a1f';
+        for (const sx of [-1, 1]) {
+          const cx = sx * sg.gx, cz = sz * sg.gz, tx = sx * sg.gtx, tz = sz * sg.gtz, nx = sx * sg.gnx, nz = sz * sg.gnz;
+          const p0 = [32 + (cx - tx * gw) * k, 32 + (cz - tz * gw) * k];
+          const p1 = [32 + (cx + tx * gw) * k, 32 + (cz + tz * gw) * k];
+          const p2 = [32 + (cx + tx * gw + nx * gd) * k, 32 + (cz + tz * gw + nz * gd) * k];
+          const p3 = [32 + (cx - tx * gw + nx * gd) * k, 32 + (cz - tz * gw + nz * gd) * k];
+          goals += `<polygon points="${p0[0].toFixed(1)},${p0[1].toFixed(1)} ${p1[0].toFixed(1)},${p1[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)} ${p3[0].toFixed(1)},${p3[1].toFixed(1)}" fill="${col}"/>`;
+        }
+      }
+    } else {
+      const gw = sh.gw * k, gz = sh.L * k, gd = sh.gd * k * 0.6;
+      goals = `<rect x="${(32 - gw).toFixed(1)}" y="${(32 - gz - gd).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#2f8fff"/><rect x="${(32 - gw).toFixed(1)}" y="${(32 + gz).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#ff8a1f"/>`;
+    }
+    return `<svg class="shp" viewBox="0 0 64 64"><path d="${d}" fill="rgba(255,255,255,.12)" stroke="#fff" stroke-width="2"/>${goals}</svg>`;
   }
-  arenaCards(key = 'arena') { return '<div class="cards">' + `<button class="card ${this.setup[key] === -1 ? 'on' : ''}" data-set="${key}" data-val="-1"><div class="art" style="background:${RANDOM_ARENA_ART}"></div><svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg><div class="lbl"><small>SURPRISE ME</small>RANDOM</div></button>` + ARENAS.map((a, i) => `<button class="card ${this.setup[key] === i ? 'on' : ''}" data-set="${key}" data-val="${i}"><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`).join('') + '</div>'; }
+  arenaCards(key = 'arena') {
+    const std = ARENAS.map((a, i) => [a, i]).filter(([a]) => !a.weird);
+    const weird = ARENAS.map((a, i) => [a, i]).filter(([a]) => a.weird);
+    const card = (a, i) => `<button class="card ${this.setup[key] === i ? 'on' : ''}" data-set="${key}" data-val="${i}"><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`;
+    return '<div class="cards">' +
+      `<button class="card ${this.setup[key] === -1 ? 'on' : ''}" data-set="${key}" data-val="-1"><div class="art" style="background:${RANDOM_ARENA_ART}"></div><svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg><div class="lbl"><small>SURPRISE ME</small>RANDOM</div></button>` +
+      std.map(([a, i]) => card(a, i)).join('') + '</div>' +
+      `<div class="sect weird">Experimental Arenas <span class="sbadge">LABS</span></div>` +
+      '<div class="cards">' + weird.map(([a, i]) => card(a, i)).join('') + '</div>';
+  }
   layoutSeg() { return this.seg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()])); }
   powerGrid() { return '<div class="pgrid">' + POWERS.map(pw => `<div title="${pw.desc}"><svg viewBox="0 0 24 24" style="color:${pw.color}">${pw.icon}</svg>${pw.name}</div>`).join('') + '</div>'; }
   renderPanel(refocusSel = null) {
@@ -8834,7 +9222,7 @@ class UIManager {
       case 'controls': h = this.controlsHtml(); P.classList.add('wide'); break;
     }
     P.innerHTML = h; P.style.animation = 'none'; void P.offsetWidth; P.style.animation = '';
-    P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const sc = P.scrollTop; const key = b.dataset.set, raw = b.dataset.val; this.setup[key] = JSON.parse(raw); Settings.data.lastSetup = this.setup; Settings.save(); this.renderPanel(`[data-set="${key}"][data-val='${raw}']`); P.scrollTop = sc; if (key === 'arena' || key === 'layout') this.g.previewArena(this.setup.arena); });
+    P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const sc = P.scrollTop; const key = b.dataset.set, raw = b.dataset.val; this.setup[key] = JSON.parse(raw); if (key === 'arena' && ARENAS[this.setup.arena] && ARENAS[this.setup.arena].weird) this.setup.layout = 'default'; Settings.data.lastSetup = this.setup; Settings.save(); this.renderPanel(`[data-set="${key}"][data-val='${raw}']`); P.scrollTop = sc; if (key === 'arena' || key === 'layout') this.g.previewArena(this.setup.arena); });
     const on = (id, fn) => { const e = $(id); if (e) e.onclick = () => { this.g.audio.ui('click'); fn(); }; };
     on('goMatch', () => this.g.startMatch({ teamSize: s.teamSize, side: s.side, arena: resolveArena(s.arena), difficulty: s.difficulty, duration: s.duration, mode: s.mode, interval: s.interval, layout: s.layout }));
     on('goTourney', () => this.g.startTournament({ teamSize: s.tsize, difficulty: s.tdiff, mode: s.tmode }));
@@ -8950,7 +9338,9 @@ class UIManager {
       <div class="sect">Team Size</div>${lseg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [4, '4v4']])}
       <div class="sect">Mode</div>${lseg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem']])}
       <div class="sect">Arena</div>
-      <div class="seg"><button class="rand ${S.arena === -1 ? 'on' : ''}" ${amHost ? 'data-lset="arena" data-lval="-1"' : 'disabled'}><span>Random</span></button>${ARENAS.map((a, i) => `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
+      <div class="seg"><button class="rand ${S.arena === -1 ? 'on' : ''}" ${amHost ? 'data-lset="arena" data-lval="-1"' : 'disabled'}><span>Random</span></button>${ARENAS.map((a, i) => a.weird ? '' : `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
+      <div class="sect weird">Experimental Arenas <span class="sbadge">LABS</span></div>
+      <div class="seg">${ARENAS.map((a, i) => !a.weird ? '' : `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name}</span></button>`).join('')}</div>
       <div class="sect">Layout</div>${lseg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()]))}
       <div class="sect">Match Length</div>${lseg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
       <div class="sect">Bot Fill & Difficulty</div>
@@ -9881,7 +10271,7 @@ class GameEngine {
   }
   startTournament(cfg) {
     this.tournament = new Tournament(cfg);
-    const order = ARENAS.map((_, i) => i).sort(() => Math.random() - 0.5); this.tournament.arenaOrder = order;
+    const order = ARENAS.map((a, i) => a.weird ? -1 : i).filter(i => i >= 0).sort(() => Math.random() - 0.5); this.tournament.arenaOrder = order;
     this.ui.showBracket(this.tournament);
   }
   playTournamentRound() {
