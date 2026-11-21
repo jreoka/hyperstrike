@@ -1,19 +1,32 @@
-FROM node:22-alpine
+# Multi-stage pure Rust build for Hyperstrike (Fly.io 256MB RAM compatible)
+FROM rust:1-bookworm AS builder
+
+WORKDIR /build
+
+COPY index.html ./index.html
+COPY rust/sim ./rust/sim
+COPY rust/server_core ./rust/server_core
+COPY rust/match_engine ./rust/match_engine
+COPY rust/app ./rust/app
+
+RUN cargo build --release --manifest-path rust/app/Cargo.toml \
+    && strip rust/app/target/release/server
+
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
-ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/data
 
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN useradd -r -u 1000 -m hyperstrike \
+    && mkdir -p /data \
+    && chown -R hyperstrike:hyperstrike /app /data
 
-COPY server.js sim.js match.js sim-worker.js sim-pool.js index.html ./
+COPY --from=builder /build/rust/app/target/release/server /app/server
 
-RUN mkdir -p /data && chown -R node:node /app /data
-USER node
+USER hyperstrike
 
 EXPOSE 8080
 
-CMD ["node", "server.js"]
+CMD ["/app/server"]
