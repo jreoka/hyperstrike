@@ -863,11 +863,12 @@ vec4 hexCoords(vec2 uv){ vec2 r = vec2(1.0, 1.7320508); vec2 h = r*0.5; vec2 a =
 /* ---------------- Settings ---------------- */
 const SETTINGS_KEY = 'hyperstrike.settings.v2';
 const QUALITY_RES_SCALE = { low: 0.75, medium: 0.85, high: 1.0, ultra: 1.25 };
+const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
 const DEFAULT_SETTINGS = {
   fov: 100, camDist: 2.9, camHeight: 1.1, camAngle: -4, camStiffness: 0.45, swivelSpeed: 5, ballCamDefault: false, camShake: true,
   mouseSens: 1.0, camSens: 1.0, invertY: false, deadzone: 0.14, vibration: true,
   fullscreen: false,
-  quality: 'high', resScale: 1.0, bloom: true, bloomAmt: 1.0, reflections: true, showFps: false, motionFx: true,
+  quality: 'auto', autoTier: '', targetFps: 60, resScale: 1.0, dynRes: true, bloom: true, bloomAmt: 1.0, reflections: true, showFps: false, motionFx: true,
   master: 0.8, music: 0.45, sfx: 0.9, muted: false,
   showNames: true, replays: true, showRadar: true,
   playerName: 'PLAYER',
@@ -883,9 +884,16 @@ const Settings = {
     this.data.car = Object.assign({}, DEFAULT_SETTINGS.car, d.car || {});
     this.data.best = Object.assign({}, d.best || {});
     if (!d.ballCamMigrated) { this.data.ballCamDefault = false; this.data.ballCamMigrated = true; this.save(); }
+    // Players still on the old 'high' default (never picked a preset) move to Auto once
+    if (!d.autoMigrated) {
+      if (d.quality === 'high' && (d.resScale === undefined || d.resScale === 1)) { this.data.quality = 'auto'; this.data.resScale = 1; }
+      this.data.autoMigrated = true; this.save();
+    }
   },
   save() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.data)); } catch (e) { } },
   get(k) { return this.data[k]; },
+  // The quality tier actually in use (Auto resolves to the tier the framerate governor settled on)
+  quality() { const q = this.data.quality; return q === 'auto' ? (QUALITY_TIERS.includes(this.data.autoTier) ? this.data.autoTier : 'medium') : q; },
   set(k, v) { this.data[k] = v; this.save(); Events.emit('settings', k); }
 };
 Settings.load();
@@ -2213,6 +2221,18 @@ function makeBoostPads(shape) {
 }
 
 // ===== 04_render.js =====
+// Best-guess starting quality from the GPU name (players can still change it in Settings)
+function detectQuality(gl) {
+  let n = '';
+  try { const ext = gl.getExtension('WEBGL_debug_renderer_info'); n = String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '').toLowerCase(); } catch (e) { }
+  const touch = matchMedia('(pointer: coarse)').matches;
+  if (touch) return 'low';
+  if (/swiftshader|llvmpipe|software|basic render|microsoft basic/.test(n)) return 'low';
+  if (/mali|adreno|powervr|intel.*(hd|uhd) graphics|intel\(r\) (hd|uhd)/.test(n)) return 'low';
+  if (/rtx|rx [5-9]\d{3}|rx 7\d{3}|arc a[3-9]|apple m\d (pro|max|ultra)|titan/.test(n)) return 'high';
+  if (/radeon\(tm\) graphics|radeon graphics|vega \d+ graphics|iris|intel/.test(n)) return 'medium';
+  return 'medium';
+}
 const FS_VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 class Renderer {
   constructor(canvas) {
@@ -2406,23 +2426,34 @@ class Renderer {
       })
     };
     this.mips = []; this.ups = [];
+    // Auto starts from a GPU-name guess the first time, then remembers the tier it settles on
+    if (!QUALITY_TIERS.includes(Settings.data.autoTier)) { Settings.data.autoTier = detectQuality(r.getContext()); Settings.save(); }
+    // Framerate governor state (dynamic resolution + Auto tier switching)
+    this.dyn = 1; this._pAcc = 0; this._pN = 0; this._pGood = 0; this._pHold = 3; this._pSince = 0; this._pSkip = 0;
+    this._pT = 0; this._tGood = 0; this._tHold = 8; this._tUpAt = -99; this._pend = null;
+    this.refreshHz = 60; this.probeRefresh();
     this.applyQuality();
     addEventListener('resize', () => this.resize());
   }
-  applyQuality() {
-    const q = Settings.data.quality;
+  applyQuality(dyn = 1) {
+    const q = Settings.quality();
+    this.dyn = dyn; this._pHold = 3; this._pGood = 0; this._pAcc = 0; this._pN = 0; this._tGood = 0; this._pend = null;
     this.quality = q;
     this.samples = this.halfFloat ? (q === 'high' || q === 'ultra' ? 4 : q === 'medium' ? 2 : 0) : 0;
     this.r.shadowMap.enabled = q !== 'low';
+    const st = q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    if (this.r.shadowMap.type !== st) { this.r.shadowMap.type = st; this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
+    // Point lights are evaluated per pixel on every lit surface; only the top tiers get the dynamic FX lights
+    this.pointLights = q === 'low' ? 0 : q === 'medium' ? 1 : 2;
     this.shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
     this.reflScale = q === 'ultra' ? 0.75 : q === 'high' ? 0.5 : 0;
-    this.aoOn = this.halfFloat && q !== 'low';
+    this.aoOn = this.halfFloat && (q === 'high' || q === 'ultra');
     const aoN = q === 'ultra' ? 16 : q === 'high' ? 12 : 8;
     if (this.mats.ao.defines.AO_SAMPLES !== aoN) { this.mats.ao.defines.AO_SAMPLES = aoN; this.mats.ao.needsUpdate = true; }
     this.resize();
   }
   resize() {
-    const dpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : this.quality === 'medium' ? 1.25 : 1) * Settings.data.resScale;
+    const dpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * (this.isAuto() ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale) * (this.isAuto() || Settings.data.dynRes ? this.dyn : 1);
     const w = innerWidth, h = innerHeight;
     this.r.setPixelRatio(dpr); this.r.setSize(w, h, false);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -2528,6 +2559,57 @@ class Renderer {
     r.setRenderTarget(this.reflRT); r.render(this.scene, vc);
     hide.forEach((o, i) => o.visible = vis[i]); r.shadowMap.autoUpdate = au;
     refl.tex.value = this.reflRT.texture; refl.on.value = 1; return true;
+  }
+  isAuto() { return Settings.data.quality === 'auto'; }
+  // Measure the display refresh rate from requestAnimationFrame intervals (median, so hitches don't matter)
+  probeRefresh() {
+    const ts = []; const step = (t) => { ts.push(t); if (ts.length < 40) requestAnimationFrame(step); else {
+      const d = []; for (let i = 1; i < ts.length; i++) d.push(ts[i] - ts[i - 1]); d.sort((a, b) => a - b);
+      const med = d[d.length >> 1]; if (med > 2) this.refreshHz = Math.max(this.refreshHz === 60 ? 0 : this.refreshHz, 1000 / med); } };
+    requestAnimationFrame(step);
+  }
+  targetFps() { const t = +Settings.data.targetFps || 0, r = this.refreshHz * 0.97; return t > 0 ? Math.min(t, r) : r; }
+  // Called once per frame. `safe` = not in live play, so a tier switch's shader-compile hitch won't be felt.
+  perfTick(dt, safe) {
+    const auto = this.isAuto();
+    if (this._pend) {
+      this._pend.age += dt;
+      // Never switch tiers mid-play, unless a downgrade has waited a long time while the game struggles
+      if (safe || (this._pend.down && this._pend.age > 10)) { const p = this._pend; this._pend = null; this.setTier(p.tier, p.dyn); return; }
+    }
+    if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.resize(); } return; }
+    if (!(dt > 0) || dt >= 0.1 || document.hidden) return;
+    if (this._pSkip > 0) { this._pSkip -= dt; return; }
+    this._pAcc += dt; this._pN++; this._pSince += dt;
+    if (this._pAcc < 1) return;
+    const fps = this._pN / this._pAcc; this._pAcc = 0; this._pN = 0; this._pT++;
+    if (fps > this.refreshHz * 1.08) this.refreshHz = fps;
+    const target = this.targetFps(), lo = target * 0.88, hi = target * 0.95;
+    const tier = QUALITY_TIERS.indexOf(this.quality), minD = auto ? 0.7 : 0.5;
+    if (fps < lo) {
+      this._pGood = 0; this._tGood = 0;
+      if (this.dyn > minD + 1e-3) {
+        // Dropping right after a raise means that step was too far: wait longer before trying again
+        if (this._pSince < 6) this._pHold = Math.min(this._pHold * 2, 60);
+        this.dyn = Math.max(minD, this.dyn - (fps < target * 0.6 ? 0.15 : 0.08)); this._pSince = 99; this.resize();
+      } else if (auto && tier > 0 && !this._pend) {
+        // Falling back right after a tier upgrade: that tier is too heavy, be slower to retry it
+        if (this._pT - this._tUpAt < 25) this._tHold = Math.min(this._tHold * 2, 240);
+        this._pend = { tier: QUALITY_TIERS[tier - 1], dyn: 1, down: true, age: 0 };
+      }
+    } else if (fps >= hi) {
+      if (this.dyn < 1 - 1e-3) {
+        if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.resize(); }
+      } else if (auto && tier < QUALITY_TIERS.length - 1 && !this._pend && ++this._tGood >= this._tHold) {
+        this._tGood = 0; this._tUpAt = this._pT;
+        this._pend = { tier: QUALITY_TIERS[tier + 1], dyn: 0.8, down: false, age: 0 };
+      }
+    } else { this._pGood = 0; this._tGood = 0; }
+  }
+  setTier(tier, dyn) {
+    Settings.data.autoTier = tier; Settings.save();
+    this.applyQuality(dyn); this._pSkip = 2.5; this._pSince = 0;
+    Events.emit('settings', 'autoTier');
   }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(time) {
@@ -5758,7 +5840,7 @@ class ParticleSystem {
 class FX {
   constructor(scene) {
     this.scene = scene;
-    const q = Settings.data.quality; const cap = q === 'low' ? 0.4 : q === 'medium' ? 0.7 : 1;
+    const q = Settings.quality(); const cap = q === 'low' ? 0.4 : q === 'medium' ? 0.7 : 1;
     this.add = new ParticleSystem(scene, Math.floor(7000 * cap), true);
     this.alpha = new ParticleSystem(scene, Math.floor(3000 * cap), false);
     this.c = new THREE.Color(); this.c2 = new THREE.Color(); this.c3 = new THREE.Color();
@@ -9497,7 +9579,10 @@ class UIManager {
     let h = `<div class="ph"><h2>Settings</h2><span>saved automatically</span></div><div class="tabs">` + tabs.map(([k, l]) => `<button class="${this.settingsTab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`).join('') + '</div>';
     if (this.settingsTab === 'camera') h += slider('fov', 'Field of view', 70, 115, 1, v => v + '°') + slider('camDist', 'Distance', 2.0, 4.5, 0.05, v => (+v).toFixed(2)) + slider('camHeight', 'Height', 0.6, 2.2, 0.05, v => (+v).toFixed(2)) + slider('camAngle', 'Angle', -12, 4, 1, v => v + '°') + slider('camStiffness', 'Stiffness', 0, 1, 0.05, v => (+v).toFixed(2)) + slider('swivelSpeed', 'Swivel speed', 1, 10, 0.5) + tog('ballCamDefault', 'Ball cam on by default') + tog('camShake', 'Camera shake');
     if (this.settingsTab === 'controls') h += slider('mouseSens', 'Mouse sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('camSens', 'Camera (stick) sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('deadzone', 'Controller deadzone', 0.02, 0.4, 0.01, v => (+v).toFixed(2)) + tog('invertY', 'Invert aerial pitch') + tog('vibration', 'Controller vibration');
-    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:300px">${['low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
+    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:380px">${['auto', 'low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>`
+      + `<div class="desc" id="autoQDesc" style="display:${S.quality === 'auto' ? '' : 'none'}">Auto adjusts resolution and graphics detail to hold your target framerate.</div>`
+      + `<div class="set"><label>Target framerate</label><div class="seg" style="width:380px">${[[30, '30'], [60, '60'], [120, '120'], [144, '144'], [0, 'Max']].map(([v, l]) => `<button class="${(+S.targetFps || 0) === v ? 'on' : ''}" data-fps="${v}"><span>${l}</span></button>`).join('')}</div></div>`
+      + `<div id="manualQ" style="display:${S.quality === 'auto' ? 'none' : ''}">` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('dynRes', 'Dynamic resolution (keeps framerate smooth)') + '</div>' + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
     if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
     if (this.settingsTab === 'account') {
       const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
@@ -9543,6 +9628,13 @@ class UIManager {
       }
       Settings.set('quality', q);
       root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === q));
+      const mq = root.querySelector('#manualQ'), ad = root.querySelector('#autoQDesc');
+      if (mq) mq.style.display = q === 'auto' ? 'none' : ''; if (ad) ad.style.display = q === 'auto' ? '' : 'none';
+    });
+    root.querySelectorAll('[data-fps]').forEach(b => b.onclick = () => {
+      this.g.audio.ui('click');
+      Settings.set('targetFps', +b.dataset.fps);
+      root.querySelectorAll('[data-fps]').forEach(x => x.classList.toggle('on', x.dataset.fps === b.dataset.fps));
     });
     const pwForm = root.querySelector('#pwChangeForm');
     if (pwForm) {
@@ -9659,7 +9751,7 @@ class UIManager {
     this.updateTags(game);
     this.updateBallArrow(game);
     this.updateItemHud(game);
-    if (S.showFps) { $('fps').classList.remove('hidden'); this._fa = (this._fa || 0) * 0.95 + dt * 0.05; $('fps').textContent = (1 / this._fa).toFixed(0) + ' FPS'; } else $('fps').classList.add('hidden');
+    if (S.showFps) { $('fps').classList.remove('hidden'); this._fa = (this._fa || 0) * 0.95 + dt * 0.05; const R = this.g.renderer; $('fps').textContent = (1 / this._fa).toFixed(0) + ' FPS' + (R && R.isAuto() ? ' · ' + R.quality.toUpperCase() + ' ' + Math.round(R.dyn * 100) + '%' : ''); } else $('fps').classList.add('hidden');
   }
   drawRadar(game) {
     const cv = $('radar'); if (!cv || cv.classList.contains('hidden')) return;
@@ -10114,6 +10206,7 @@ class GameEngine {
     this.ui.progress(0.6, 'Assembling vehicles'); await tick();
     this.startExhibition();
     this.ui.progress(0.8, 'Compiling shaders 0%'); await tick();
+    this.applyLightBudget();
     await this.renderer.compileShaders(p => {
       this.ui.progress(0.8 + p * 0.18, `Compiling shaders ${Math.round(p * 100)}%`);
     });
@@ -10129,7 +10222,7 @@ class GameEngine {
     addEventListener('pointerdown', e => { if (this.showroom && e.target === canvas) dragX = e.clientX; });
     addEventListener('pointermove', e => { if (dragX !== null && this.showroom) { this.showroomDrag += (e.clientX - dragX) * 0.008; dragX = e.clientX; } });
     addEventListener('pointerup', () => { dragX = null; });
-    Events.on('settings', (k) => { if (k === 'quality' || k === 'resScale') { this.renderer.applyQuality(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
+    Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); if (k === 'quality' || k === 'resScale' || k === 'autoTier') { this.applyLightBudget(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
     this.last = performance.now();
     requestAnimationFrame((t) => this.frame(t));
     this.ui.loadingDone(async () => {
@@ -10147,10 +10240,11 @@ class GameEngine {
     this.arenaDef = def; this.arenaKey = key; this.arenaOpts = opts;
     this.arenaVisual = new ArenaVisual(def, new ArenaShape(def, opts), this.renderer);
     sc.add(this.arenaVisual.group);
+    this.applyLightBudget();
     if (sc.environment) sc.environment.dispose();
     sc.fog = new THREE.FogExp2(def.c.fog, def.fogDensity);
     let env = null;
-    if (this.renderer.halfFloat && Settings.data.quality !== 'low') {
+    if (this.renderer.halfFloat && this.renderer.quality !== 'low') {
       try { env = captureArenaEnv(this.renderer, def, this.arenaVisual.group, sc.fog); } catch (e) { console.warn('Arena env capture failed', e); env = null; }
     }
     sc.environment = env || buildEnvMap(this.renderer, def, this.arenaVisual.skyMat);
@@ -10159,6 +10253,13 @@ class GameEngine {
     fx.exposure = gr.exposure; fx.contrast = 1 + (gr.contrast - 1) * 0.6; fx.sat = 1 + (gr.sat - 1) * 0.45;
     fx.tint.set(...gr.tint.map(t => 1 + (t - 1) * 0.6)); fx.bloom = gr.bloom * 0.8; fx.thresh = gr.thresh * 1.1;
     this.fx.setAmbient(def.ambient); this.audio.setArena(def);
+  }
+  applyLightBudget() {
+    // Hidden lights drop out of the shader light count entirely (zero-intensity ones still cost per pixel)
+    const n = this.renderer.pointLights;
+    if (this.fx) { for (const L of this.fx.lights) L.l.visible = n >= 2; for (const l of this.fx.boostLights) l.visible = n >= 2; }
+    if (this.ballVisual) this.ballVisual.light.visible = n >= 2;
+    const av = this.arenaVisual; if (av && av.blueGoalLight) { av.blueGoalLight.visible = av.orangeGoalLight.visible = n >= 1; }
   }
   newWorld(def, opts = {}) {
     this.loadArena(def, opts);
@@ -10637,6 +10738,8 @@ class GameEngine {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
     try { this.update(dt); } catch (err) { console.error(err); }
+    const st = this.mode && this.mode.state;
+    this.renderer.perfTick(dt, !this.inGame || this.paused || !this.mode || (st !== 'play' && st !== 'countdown'));
     this.input.endFrame();
   }
   isMobilePortrait() {
