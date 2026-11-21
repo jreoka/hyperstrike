@@ -7490,7 +7490,10 @@ class ModeBase {
   constructor(game, cfg) { this.game = game; this.cfg = cfg; this.state = 'idle'; this.stateT = 0; this.timeScale = 1; }
   get world() { return this.game.world; }
   get simRunning() { return true; }
-  setState(s) { this.state = s; this.stateT = 0; }
+  setState(s) {
+    this.state = s; this.stateT = 0;
+    if ((s === 'ended' || s === 'done') && this.game && this.game.stopDrivingState) this.game.stopDrivingState();
+  }
   start() { }
   preUpdate(dt) { this.stateT += dt; }
   postStep() { }
@@ -9958,9 +9961,25 @@ class GameEngine {
     this._rumbleUntil = Math.max(this._rumbleUntil || 0, performance.now() + ms);
     if (a && a.playEffect) a.playEffect('dual-rumble', { duration: ms, strongMagnitude: clamp(strength, 0, 1), weakMagnitude: clamp(strength * 0.6, 0, 1) }).catch(() => { });
   }
+  stopDrivingState() {
+    if (this.world && this.world.cars) {
+      for (const c of this.world.cars) {
+        Object.assign(c.controls, makeControls());
+        c.isBoosting = false;
+        c.boostT = 0;
+        c.supersonic = false;
+        c.sliding = 0;
+        c.slipSpeed = 0;
+      }
+    }
+    if (this.audio && this.audio.stopEngines) this.audio.stopEngines();
+    this._engMode = 0;
+    this.updateBoostRumble();
+  }
   updateBoostRumble() {
     const a = Settings.data.vibration && this.input.pad ? this.input.pad.vibrationActuator : null;
-    const active = !!(a && a.playEffect && this.inGame && !this.paused && !this.showroom && !(this.replay && this.replay.active && this.mode && this.mode.state === 'replay') && this.player && this.player.isBoosting && !this.player.demolished);
+    const concluded = !!(this.mode && (this.mode.state === 'ended' || this.mode.state === 'done'));
+    const active = !!(a && a.playEffect && this.inGame && !this.paused && !this.showroom && !concluded && !(this.ui && this.ui.overlayOpen && !this.ui._sb) && !(this.replay && this.replay.active && this.mode && this.mode.state === 'replay') && this.player && this.player.isBoosting && !this.player.demolished);
     const now = performance.now();
     if (active) {
       if (now >= (this._rumbleUntil || 0) && now - (this._boostRumbleAt || 0) >= 50) {
@@ -10346,14 +10365,15 @@ class GameEngine {
       this.fx.boostLights.forEach((l, i) => { const c = boosting[i]; if (c && !this.showroom) { const v = this.carVisuals.find(v => v.car === c); const T = TRAILS[v ? v.custom.trail : 0]; l.position.copy(this.visualPos(c)).addScaledVector(c.basis.f, -1.0); l.intensity = 5; l.color.setHex(c.nitroT > 0 ? 0x4afff0 : T.outer < 0 ? TEAM_GLOW[c.team] : T.rainbow ? 0xffffff : T.outer); } else l.intensity = 0; });
     }
     if (!this.showroom) this.ballVisual.updateTrail(this.ballPosV, R.camera.position, vdt, ballTeam >= 0 ? TEAM_GLOW[ballTeam] : 0x9fdcff); else this.ballVisual.trail.clear();
-    if (!replaying) for (const c of w.cars) if (c.onGround && c.sliding > 0.5 && c.vel.length() > 6 && Math.random() < 0.5) { const rp = tmpV.copy(this.visualPos(c)).addScaledVector(c.basis.f, -0.5).addScaledVector(c.basis.u, -0.3); this.fx.tireSmoke(rp, this.arenaDef.dusty ? this.arenaDef.dust : 0xc8c8cc); }
+    const concluded = !!(this.mode && (this.mode.state === 'ended' || this.mode.state === 'done'));
+    if (!replaying && !concluded) for (const c of w.cars) if (c.onGround && c.sliding > 0.5 && c.vel.length() > 6 && Math.random() < 0.5) { const rp = tmpV.copy(this.visualPos(c)).addScaledVector(c.basis.f, -0.5).addScaledVector(c.basis.u, -0.3); this.fx.tireSmoke(rp, this.arenaDef.dusty ? this.arenaDef.dust : 0xc8c8cc); }
     if (this.powerVis) this.powerVis.update(vdt, this.time, replaying);
     this.fx.ambientEmit(vdt, R.camera.position);
     this.fx.update(vdt, R.camera);
     if (this.audio.ready) {
       this.audio.updateListener(R.camera);
       // Replays drive the engines from the recorded footage (fresh voices, so live ones never carry over)
-      const engMode = !this.inGame || this.paused ? 0 : replaying ? 2 : 1;
+      const engMode = !this.inGame || this.paused || concluded ? 0 : replaying ? 2 : 1;
       if (engMode !== this._engMode && this.audio.engines.size) this.audio.stopEngines();
       this._engMode = engMode;
       if (engMode === 1) this.audio.updateEngines(w.cars, p);
