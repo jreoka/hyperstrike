@@ -1582,6 +1582,11 @@ class Car {
     this.supersonic = this.wasSupersonic = false; this.isBoosting = false; this.boostT = 0;
     if (this.bot) Object.assign(this.controls, makeControls());
     this.basis.fromQuat(this.quat); this.contacts = 4; this.onGround = true;
+    // Clear state left over from wherever the car was (e.g. blasted onto a wall by a goal and
+    // frozen there during the replay): a stale ground normal tilts the follow camera during the
+    // frozen kickoff countdown and makes it fight the arena clamp (visible shake).
+    this.groundNormal.set(0, 1, 0); this.groundLock = 0; this.blastT = 0; this.sliding = 0;
+    this.flipT = 0; this.jumpHoldT = 0; this.timeSinceJump = 0; this.bodyContactT = 0; this.bodyContact = false;
     for (const w of this.wheels) { w.len = w.prevLen = PHYS.suspRest - 0.044; w.contact = true; }
   }
   applyAngImpulse(L, mass) {
@@ -7534,6 +7539,7 @@ class MatchMode extends ModeBase {
     for (const v of g.carVisuals) v.trail.clear();
     this.setState('countdown'); this.cdLast = 4; this.timerRunning = false; this.timeScale = 1;
     g.camera.mode = g.player ? 'car' : (this.exhibition ? 'orbit' : g.camera.mode === 'free' ? 'free' : g.specMode || 'broadcast'); g.camera.snap();
+    g.camera.trauma = 0; // leftover goal/replay shake must not carry into the countdown
   }
   preUpdate(dt) {
     super.preUpdate(dt);
