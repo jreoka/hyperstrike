@@ -728,7 +728,7 @@ body.portrait-lock #rotateLock{display:flex}
       <span class="p gp"><i class="pb b">B</i> Back</span>
       <span class="p gp"><i class="pb sh">LB</i><i class="pb sh">RB</i> Switch tabs</span>
     </div>
-    <div class="m-status"><span id="menuNet"><i class="dot off"></i>Connecting</span><span class="ver" id="menuVer">HYPERSTRIKE</span></div>
+    <div class="m-status"><span id="menuNet"><i class="dot off"></i>Connecting</span></div>
   </footer>
 </div>
 
@@ -9070,7 +9070,6 @@ class UIManager {
     const on = this.g.online, u = on && on.user;
     const net = $('menuNet');
     if (net && on) net.innerHTML = `<i class="dot ${on.connected ? '' : 'off'}"></i>${on.connected ? `Online · ${on.onlineCount || 1} player${(on.onlineCount || 1) === 1 ? '' : 's'}` : 'Connecting'}`;
-    const ver = $('menuVer'); if (ver && on) ver.textContent = on.region ? 'SERVER · ' + String(on.region).toUpperCase() : 'HYPERSTRIKE';
     if (!u) { el.classList.add('hidden'); sqc && sqc.classList.add('hidden'); return; }
     el.classList.remove('hidden');
     if (sqc) {
