@@ -3338,7 +3338,7 @@ class ArenaVisual {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.05 });
     injectStandard(mat, 'stand' + this.def.id, { uC1: { value: new THREE.Color(o.color) }, uC2: { value: new THREE.Color(o.seat) } }, {
       fragDecl: 'uniform vec3 uC1, uC2;',
-      mapFrag: `float rowv = fract(vWPos.y / ${o.rise.toFixed(3)}); float seatv = step(0.5, fract(length(vWPos.xz) * 1.4)); vec3 sc = mix(uC1, uC2, step(0.25, rowv) * (0.7 + 0.3 * seatv)); diffuseColor.rgb = sc * (0.85 + 0.3 * vnoise(vWPos.xz * 0.5));`
+      mapFrag: `float rowv = fract((vWPos.y - ${o.base.toFixed(3)}) / ${o.rise.toFixed(3)}); float seatv = step(0.5, fract(length(vWPos.xz) * 1.4)); float seatm = (1.0 - step(0.5, abs(vONrm.y))) * step(0.25, rowv); vec3 sc = mix(uC1, uC2, seatm * (0.7 + 0.3 * seatv)); diffuseColor.rgb = sc * (0.85 + 0.3 * vnoise(vWPos.xz * 0.5));`
     });
     this.add(new THREE.Mesh(g, mat));
     if (o.crowd) this.crowd(rawPath, o, startTier, gx, o.style === 'full' ? null : (x, z) => keepVal({ x, z }) > crowdMargin);
