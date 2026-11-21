@@ -3015,18 +3015,46 @@ float sdArena(vec2 p){ vec2 a = abs(p);
   for(int i=0;i<15;i++){ if(i >= uPolyN - 1) break; vec2 e = uPoly[i+1] - uPoly[i]; vec2 q = a - uPoly[i]; float t = clamp(dot(q, e) / dot(e, e), 0.0, 1.0); best = min(best, length(q - e * t)); }
   return best - uRc; }
 float lmask(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
+// Static (time- and view-independent) floor fields. Baked once per arena into tFloorA/B (see ArenaVisual.bakeFloor);
+// computed live only as a fallback. A.x is always the arena distance field; the rest depends on the floor type.
+// Voronoi crack edges stay live: their distance fields have a sharp crease that texture filtering would round off.
+uniform sampler2D tFloorA; uniform vec2 uBakeMin, uBakeSize;
+#define FSA(p) texture2D(tFloorA, ((p) - uBakeMin) / uBakeSize)
+void floorStatic(vec2 fp, out vec4 A){
+  A = vec4(sdArena(fp), 0.0, 0.0, 0.0);
+  if(uType == 0){ A.y = fbm(fp * 0.07); A.z = fbm(fp * 0.045 + 3.0); }
+  else if(uType == 1){ A.y = fbm(fp * 0.35); A.z = fbm(fp * 0.09 + 7.0); A.w = fbm(fp * 0.05); }
+  else if(uType == 2){ A.y = fbm(fp * 0.25); A.z = warpfbm(fp * 0.04); A.w = fbm(fp * 0.08 + 11.0); }
+  else if(uType == 3){ A.y = fbm(fp * 0.12); }
+  else if(uType == 4){ A.y = fbm(fp * 0.12 + 5.0); }
+  else if(uType == 5){ A.y = fbm(fp * 0.11 + 4.0); A.z = fbm(fp * 0.035 + 2.0); }
+  else if(uType == 6){ A.y = fbm(fp * 0.3); A.z = fbm(fp * 0.15); A.w = fbm(fp * 0.045 + 9.0); }
+  else if(uType == 7){ vec2 q = fp / vec2(3.0, 2.0); vec2 row = vec2(q.x + 0.5 * mod(floor(q.y), 2.0), q.y);
+    A.y = fbm(fp * 0.7 + hash12(floor(row)) * 10.0); A.z = fbm(fp * 0.13 + 2.0); A.w = fbm(fp * 0.08 + 5.0); }
+  else if(uType == 8){ A.y = fbm(fp * 1.5); A.z = fbm(fp * 2.0); }
+  else if(uType == 9){ vec2 q = fp / vec2(2.6, 5.2); vec2 cell = floor(vec2(q.x, q.y + 0.5 * mod(floor(q.x), 2.0)));
+    A.y = fbm(vec2(fp.x * 1.4, fp.y * 0.18 + hash12(cell) * 10.0)); }
+  else if(uType == 10){ A.y = fbm(fp * 0.18 + fbm(fp * 0.09) * 2.2); }
+  else { A.y = fbm(fp * 0.08); }
+}
 `;
 const FLOOR_MAP = `
 vec2 fp = vWPos.xz; vec3 base; float fRough = 0.5; float fMetal = 0.0; vec3 fEmis = vec3(0.0); vec3 fPert = vec3(0.0);
 vec3 Vw = normalize(cameraPosition - vWPos);
 float NdotV = clamp(Vw.y, 0.02, 1.0);
-float d2 = sdArena(fp);
+
+#ifdef FLOOR_BAKED
+vec4 fA = FSA(fp);
+#else
+vec4 fA; floorStatic(fp, fA);
+#endif
+float d2 = fA.x;
 vec3 teamCol = fp.y < 0.0 ? uBlue : uOrange;
 float endT = smoothstep(0.25, 1.0, abs(fp.y) / uL);
 if(uType == 0){
   vec4 hc = hexCoords(fp * 0.5); float hd = hexDist(hc.xy); float edge = smoothstep(0.43, 0.5, hd);
-  float n = fbm(fp * 0.07); float micro = vnoise(fp * 14.0);
-  float puddle = smoothstep(0.52, 0.68, fbm(fp * 0.045 + 3.0));
+  float n = fA.y; float micro = vnoise(fp * 14.0);
+  float puddle = smoothstep(0.52, 0.68, fA.z);
   base = mix(uBase1, uBase2, n * 0.85) * (0.9 + 0.2 * micro) * (1.0 - edge * 0.55);
   base *= mix(1.0, 0.62, puddle);
   float pulse = 0.5 + 0.5 * sin(uTime * 1.3 - length(fp) * 0.11 + hash12(hc.zw) * 6.28);
@@ -3036,16 +3064,16 @@ if(uType == 0){
 } else if(uType == 1){
   float stripe = smoothstep(0.46, 0.54, abs(fract(fp.y / 9.0) - 0.5) * 2.0);
   float stripe2 = smoothstep(0.46, 0.54, abs(fract(fp.x / 14.0) - 0.5) * 2.0);
-  float n = fbm(fp * 0.35), n2 = vnoise(fp * 9.0), blade = vnoise(fp * vec2(28.0, 4.0));
+  float n = fA.y, n2 = vnoise(fp * 9.0), blade = vnoise(fp * vec2(28.0, 4.0));
   // Mowing stripes flip light/dark with view direction (grass blades lean toward or away from the eye)
   float flip = clamp(Vw.z * 1.4, -1.0, 1.0) * 0.5 + 0.5;
   float sMix = mix(mix(stripe, 1.0 - stripe, flip), stripe2, 0.22);
   float clump = vnoise(fp * 2.2) * 0.6 + vnoise(fp * 41.0) * 0.4;
-  float dry = smoothstep(0.62, 0.8, fbm(fp * 0.09 + 7.0));
+  float dry = smoothstep(0.62, 0.8, fA.z);
   base = mix(uBase1, uBase2, sMix * 0.82 + n * 0.28);
   base *= 0.78 + 0.22 * n2 + 0.16 * blade + 0.12 * clump;
   base = mix(base, base * vec3(1.25, 1.1, 0.6), dry * 0.35);
-  base = mix(base, base * vec3(1.12, 1.06, 0.72), smoothstep(0.58, 0.84, fbm(fp * 0.05)) * 0.38);
+  base = mix(base, base * vec3(1.12, 1.06, 0.72), smoothstep(0.58, 0.84, fA.w) * 0.38);
   // Subtle backlit microfiber grass sheen at grazing angles
   float sheen = pow(1.0 - NdotV, 3.0) * (0.14 + 0.08 * sMix);
   base += vec3(0.18, 0.28, 0.09) * sheen;
@@ -3056,8 +3084,8 @@ if(uType == 0){
   float chk = mod(cell.x + cell.y, 2.0);
   vec2 rd = chk < 0.5 ? vec2(g.x + g.y, g.x - g.y) : vec2(g.x - g.y, g.x + g.y);
   float bump = 1.0 - smoothstep(0.04, 0.11, length(vec2(rd.x * 0.32, rd.y * 1.0)));
-  float grime = fbm(fp * 0.25); float rust = smoothstep(0.58, 0.85, warpfbm(fp * 0.04));
-  float oil = smoothstep(0.66, 0.78, fbm(fp * 0.08 + 11.0)) * (1.0 - rust);
+  float grime = fA.y; float rust = smoothstep(0.58, 0.85, fA.z);
+  float oil = smoothstep(0.66, 0.78, fA.w) * (1.0 - rust);
   base = mix(uBase1, uBase2, bump * 0.75) * (0.76 + 0.44 * grime);
   base = mix(base, vec3(0.32, 0.13, 0.04), rust * 0.7);
   base *= 1.0 - oil * 0.45;
@@ -3069,11 +3097,11 @@ if(uType == 0){
   fRough = clamp(mix(0.24 + grime * 0.28 + rust * 0.48, 0.06, oil) - bump * 0.06, 0.05, 0.95);
   fPert = (vec3(rd.x, 0.0, rd.y) * bump * 0.95 + vec3(0.0, 0.0, seam * 0.35)) * (1.0 - oil * 0.7);
 } else if(uType == 3){
-  float w = fbm(fp * 0.12);
+  float w = fA.y;
   float rip = sin(fp.x * 1.9 + fp.y * 0.4 + w * 9.0);
   float grain = hash12(floor(fp * 60.0));
   base = mix(uBase1, uBase2, 0.5 + 0.25 * rip + (w - 0.5) * 0.8) * (0.9 + 0.2 * grain);
-  float packed = smoothstep(4.0, 10.0, -sdArena(fp)); base = mix(base, base * vec3(1.06, 1.02, 0.95), packed * 0.4);
+  float packed = smoothstep(4.0, 10.0, -d2); base = mix(base, base * vec3(1.06, 1.02, 0.95), packed * 0.4);
   // View-dependent desert quartz micro-sparkle
   float glint = pow(hash12(floor(fp * 48.0 + floor(Vw.xz * 6.0))), 42.0) * smoothstep(0.15, 0.7, NdotV);
   fRough = clamp(0.92 - packed * 0.12 - glint * 0.5, 0.2, 0.96);
@@ -3084,7 +3112,13 @@ if(uType == 0){
   vec2 pOff = -Vw.xz / max(NdotV, 0.25) * 1.35;
   vec2 fpDeep = fp + pOff;
   float star = pow(hash12(floor(fpDeep * 5.0)), 56.0) * smoothstep(0.36, 0.0, length(fract(fpDeep * 5.0) - 0.5));
-  float neb = fbm(fpDeep * 0.05 + vec2(uTime * 0.01, 0.0)); float neb2 = fbm(fpDeep * 0.12 + 5.0);
+  float neb = fbm(fpDeep * 0.05 + vec2(uTime * 0.01, 0.0));
+#ifdef FLOOR_BAKED
+  float neb2 = FSA(fpDeep).y;
+#else
+  float neb2 = fbm(fpDeep * 0.12 + 5.0);
+#endif
+
   vec3 nc = mix(vec3(0.32, 0.06, 0.58), vec3(0.0, 0.38, 0.65), neb2) * pow(neb, 2.0);
   base = uBase1 + nc * 0.28;
   vec2 gl = abs(fract(fp / 4.0) - 0.5); float grid = smoothstep(0.47, 0.5, max(gl.x, gl.y));
@@ -3094,10 +3128,16 @@ if(uType == 0){
   // Multi-layer parallax glacial ice: surface cracks + deep refracted cracks & frozen bubbles
   vec2 refr = -Vw.xz / max(NdotV, 0.28) * 0.55;
   vec3 v = voronoi(fp * 0.16); float crack = 1.0 - smoothstep(0.0, 0.048, v.y - v.x);
+
   vec3 vDeep = voronoi((fp + refr) * 0.16 + 0.12); float crackDeep = 1.0 - smoothstep(0.0, 0.065, vDeep.y - vDeep.x);
   vec3 v2 = voronoi(fp * 0.55 + 7.0); float crack2 = (1.0 - smoothstep(0.0, 0.024, v2.y - v2.x)) * step(0.45, v.z);
+
+#ifdef FLOOR_BAKED
+  float deep = smoothstep(0.32, 0.75, FSA(fp + refr * 1.6).z);
+#else
   float deep = smoothstep(0.32, 0.75, fbm((fp + refr * 1.6) * 0.035 + 2.0));
-  float frost = smoothstep(0.56, 0.84, fbm(fp * 0.11 + 4.0));
+#endif
+  float frost = smoothstep(0.56, 0.84, fA.y);
   float wallFrost = smoothstep(7.0, 1.0, -d2);
   vec2 bp = fp + refr * 0.9;
   float bubbles = pow(hash12(floor(bp * 7.0)), 38.0) * smoothstep(0.4, 0.0, length(fract(bp * 7.0) - 0.5));
@@ -3109,9 +3149,9 @@ if(uType == 0){
   fRough = clamp(mix(0.035, 0.72, max(frost, wallFrost)) + crack2 * 0.14, 0.03, 0.92); fMetal = 0.06;
   fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * crack * 0.75 + vec3(v2.x - 0.5, 0.0, 0.0) * crack2 * 0.42;
 } else if(uType == 6){
-  float n = fbm(fp * 0.3); float rip = sin(fp.x * 1.3 + fp.y * 0.35 + fbm(fp * 0.15) * 7.0) * 0.5 + 0.5;
+  float n = fA.y; float rip = sin(fp.x * 1.3 + fp.y * 0.35 + fA.z * 7.0) * 0.5 + 0.5;
   vec4 hc = hexCoords(fp * 0.14); float tile = smoothstep(0.43, 0.48, hexDist(hc.xy));
-  float tileMask = smoothstep(0.62, 0.42, fbm(fp * 0.045 + 9.0)) * smoothstep(1.0, 6.0, -d2);
+  float tileMask = smoothstep(0.62, 0.42, fA.w) * smoothstep(1.0, 6.0, -d2);
   base = mix(uBase1, uBase2, rip * 0.35 + n * 0.55);
   vec3 stone = vec3(0.32, 0.42, 0.44) * (0.75 + 0.5 * hash12(hc.zw)) * (0.85 + 0.3 * vnoise(fp * 3.0));
   base = mix(base, mix(stone, stone * 0.35, tile), tileMask * 0.85);
@@ -3125,13 +3165,13 @@ if(uType == 0){
   vec3 causCol = vec3(causG * 0.42, causG * 0.92, causB * 1.05);
   fEmis += causCol * 0.22 * (0.7 + 0.3 * sin(uTime + fp.x * 0.05));
   base *= 0.62 + causG * 0.48;
-  fRough = mix(0.86, 0.42, tileMask); fPert = vec3(cos(fp.x * 1.3 + fbm(fp * 0.15) * 7.0) * 0.34, 0.0, 0.0) * (1.0 - tileMask) + vec3(hc.x, 0.0, hc.y) * tile * tileMask * 0.65;
+  fRough = mix(0.86, 0.42, tileMask); fPert = vec3(cos(fp.x * 1.3 + fA.z * 7.0) * 0.34, 0.0, 0.0) * (1.0 - tileMask) + vec3(hc.x, 0.0, hc.y) * tile * tileMask * 0.65;
 } else if(uType == 7){
   vec2 q = fp / vec2(3.0, 2.0); vec2 row = vec2(q.x + 0.5 * mod(floor(q.y), 2.0), q.y); vec2 cell = floor(row); vec2 f = fract(row);
   float e = min(min(f.x, 1.0 - f.x) * 3.0, min(f.y, 1.0 - f.y) * 2.0); float gap = 1.0 - smoothstep(0.04, 0.13, e);
-  float hh = hash12(cell); float n = fbm(fp * 0.7 + hh * 10.0);
+  float hh = hash12(cell); float n = fA.y;
   vec3 stone = mix(uBase1, uBase2, hh * 0.6 + n * 0.4) * (0.78 + 0.32 * vnoise(fp * 4.0));
-  float moss = clamp(smoothstep(0.52, 0.78, fbm(fp * 0.13 + 2.0)) * 0.8 + gap + smoothstep(5.0, 0.0, -d2) * 0.6, 0.0, 1.0);
+  float moss = clamp(smoothstep(0.52, 0.78, fA.z) * 0.8 + gap + smoothstep(5.0, 0.0, -d2) * 0.6, 0.0, 1.0);
   vec3 mossC = vec3(0.13, 0.27, 0.06) * (0.65 + 0.55 * vnoise(fp * 9.0));
   base = mix(stone, mossC, moss * 0.85);
   float rr = length(fp); float ring = lmask(rr - 14.5, 0.22) + lmask(rr - 17.5, 0.12);
@@ -3140,7 +3180,7 @@ if(uType == 0){
   float pulse = 0.55 + 0.45 * sin(uTime * 1.4 - rr * 0.25);
   fEmis += vec3(0.35, 1.0, 0.5) * (ring * 0.65 + glyph * 1.2) * pulse;
   base *= 1.0 - (ring + glyph) * 0.35;
-  float dampStone = smoothstep(0.45, 0.75, fbm(fp * 0.08 + 5.0)) * (1.0 - moss);
+  float dampStone = smoothstep(0.45, 0.75, fA.w) * (1.0 - moss);
   fRough = mix(mix(0.68, 0.28, dampStone), 0.94, moss);
   fPert = vec3(f.x - 0.5, 0.0, f.y - 0.5) * gap * 0.95 + vec3(n - 0.5, 0.0, 0.0) * 0.28;
 } else if(uType == 8){
@@ -3148,20 +3188,20 @@ if(uType == 0){
   float crack = 1.0 - smoothstep(0.0, 0.042, edge); float core = 1.0 - smoothstep(0.0, 0.016, edge);
   float act = smoothstep(0.38, 0.62, fbm(fp * 0.045 + 3.0 + uTime * 0.01));
   float heat = 0.5 + 0.5 * sin(uTime * 1.5 + v.z * 6.28 + fbm(fp * 0.08 + uTime * 0.04) * 4.0);
-  vec3 rock = mix(uBase1, uBase2, v.z * 0.6 + fbm(fp * 1.5) * 0.4) * (0.65 + 0.35 * smoothstep(0.0, 0.3, edge));
+  vec3 rock = mix(uBase1, uBase2, v.z * 0.6 + fA.y * 0.4) * (0.65 + 0.35 * smoothstep(0.0, 0.3, edge));
   // Physical blackbody magma gradient: incandescent yellow-white core -> molten orange -> red crust
   vec3 lava = mix(vec3(0.95, 0.16, 0.01), vec3(1.0, 0.65, 0.14), heat);
   lava = mix(lava, vec3(1.0, 0.95, 0.72), core * act * (0.45 + 0.55 * heat));
   base = mix(rock, vec3(0.05, 0.012, 0.0), crack);
   fEmis += lava * crack * (0.3 + act * 1.8) * (0.55 + heat * 0.8) + lava * pow(1.0 - smoothstep(0.0, 0.22, edge), 2.2) * 0.11 * act;
   base = mix(base, base * vec3(1.4, 0.8, 0.6), act * 0.25);
-  fRough = clamp(0.42 - crack * 0.25 + fbm(fp * 2.0) * 0.22, 0.12, 0.88); fMetal = 0.18;
+  fRough = clamp(0.42 - crack * 0.25 + fA.z * 0.22, 0.12, 0.88); fMetal = 0.18;
   fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * smoothstep(0.14, 0.0, edge) * 1.3;
 } else if(uType == 9){
   // Lacquered shrine temple planks with gold-inlay seams & fallen sakura petals
   vec2 q = fp / vec2(2.6, 5.2); vec2 cell = floor(vec2(q.x, q.y + 0.5 * mod(floor(q.x), 2.0))); vec2 f = fract(vec2(q.x, q.y + 0.5 * mod(floor(q.x), 2.0)));
   float seam = 1.0 - smoothstep(0.02, 0.06, min(min(f.x, 1.0 - f.x) * 2.6, min(f.y, 1.0 - f.y) * 5.2));
-  float grain = fbm(vec2(fp.x * 1.4, fp.y * 0.18 + hash12(cell) * 10.0));
+  float grain = fA.y;
   base = mix(uBase1, uBase2, hash12(cell) * 0.45 + grain * 0.55);
   base = mix(base, vec3(0.82, 0.58, 0.28), seam * 0.45);
   vec2 pp = fp * 0.9; vec2 pc = floor(pp); vec2 pf = fract(pp) - 0.5;
@@ -3174,7 +3214,7 @@ if(uType == 0){
   // Sunlit ivory & sky-blue marble tiles with brushed gold inlay
   vec2 tq = fp / 4.0; vec2 tc = floor(tq); vec2 tf = fract(tq);
   float chk = mod(tc.x + tc.y, 2.0);
-  float vein = smoothstep(0.45, 0.78, fbm(fp * 0.18 + fbm(fp * 0.09) * 2.2));
+  float vein = smoothstep(0.45, 0.78, fA.y);
   float e = min(min(tf.x, 1.0 - tf.x), min(tf.y, 1.0 - tf.y));
   float gold = 1.0 - smoothstep(0.012, 0.032, e);
   vec3 mCol = mix(uBase1, uBase2, chk * 0.65 + 0.2);
@@ -3187,7 +3227,7 @@ if(uType == 0){
   vec2 g1 = abs(fract(fp / 3.0) - 0.5); float gl1 = smoothstep(0.465, 0.495, max(g1.x, g1.y));
   vec2 g2 = abs(fract(fp / 12.0) - 0.5); float gl2 = smoothstep(0.482, 0.498, max(g2.x, g2.y));
   float sweep = 0.55 + 0.45 * sin(uTime * 2.2 - abs(fp.y) * 0.18);
-  float n = fbm(fp * 0.08);
+  float n = fA.y;
   base = mix(uBase1, uBase2, n * 0.75) * (1.0 - gl1 * 0.35);
   vec3 gridCol = mix(uGrid, uLine, smoothstep(0.2, 0.8, 0.5 + 0.5 * sin(fp.x * 0.08 + uTime * 0.8)));
   fEmis += gridCol * (gl1 * 0.22 * sweep + gl2 * 0.55);
@@ -3362,7 +3402,36 @@ class ArenaVisual {
           vec3 reflTint = mix(vec3(1.0), base * 1.4 + 0.25, fMetal * 0.6);
           totalEmissiveRadiance += rcol * reflTint * uReflect * 0.34 * gloss * mix(0.22, 1.0, fres) * (1.0 - ln * 0.65); }`
     });
+    this.bakeFloor(g, U, mat);
     const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.add(m); this.floor = m;
+  }
+  // Render the floor's static fields (arena distance field + time/view-independent noise) into textures once,
+  // so the per-pixel floor shader samples them instead of re-evaluating fbm/voronoi/the arena SDF every frame.
+  // Falls back to the live computation (same code path, FLOOR_BAKED undefined) if anything is unsupported.
+  bakeFloor(g, U, mat) {
+    const R = this.renderer; if (!R || !R.halfFloat || !R.pass) return;
+    try {
+      g.computeBoundingBox(); const bb = g.boundingBox, M = 6; // margin covers the parallax/refraction look-ups
+      const minX = bb.min.x - M, minZ = bb.min.z - M, sx = bb.max.x - bb.min.x + 2 * M, sz = bb.max.z - bb.min.z + 2 * M;
+      const texel = R.quality === 'low' ? 0.1 : 0.07;
+      const w = Math.min(2048, Math.ceil(sx / texel)), h = Math.min(2048, Math.ceil(sz / texel));
+      const mk = () => { const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
+        rt.texture.anisotropy = Math.min(8, R.r.capabilities.getMaxAnisotropy()); return rt; };
+      const A = mk();
+      const bakeMin = { value: new THREE.Vector2(minX, minZ) }, bakeSize = { value: new THREE.Vector2(sx, sz) };
+      const bm = new THREE.ShaderMaterial({
+        uniforms: Object.assign({}, U, { uBakeMin: bakeMin, uBakeSize: bakeSize }),
+        vertexShader: FS_VERT, depthTest: false, depthWrite: false,
+        fragmentShader: 'varying vec2 vUv;' + GLSL_NOISE + FLOOR_FRAG +
+          'void main(){ vec4 a; floorStatic(uBakeMin + vUv * uBakeSize, a); gl_FragColor = a; }'
+      });
+      const prev = R.r.getRenderTarget();
+      R.pass(bm, A);
+      R.r.setRenderTarget(prev); R.quad.material = null; bm.dispose();
+      Object.assign(U, { tFloorA: { value: A.texture }, uBakeMin: bakeMin, uBakeSize: bakeSize });
+      mat.defines = Object.assign(mat.defines || {}, { FLOOR_BAKED: 1 });
+      this.floorBake = [A];
+    } catch (e) { console.warn('Floor bake failed, using live floor shader', e); }
   }
   wallProfile(y0, includeFloorFillet) {
     const s = this.shape, Rf = s.Rf, H = s.H; const prof = [];
@@ -5282,6 +5351,7 @@ class ArenaVisual {
     for (const u of this.updaters) u(t, dt);
   }
   dispose() {
+    if (this.floorBake) { this.floorBake.forEach(rt => rt.dispose()); this.floorBake = null; }
     this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => { for (const k in m) if (m[k] && m[k].isTexture) m[k].dispose(); if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k] && m.uniforms[k].value; if (v && v.isCanvasTexture) v.dispose(); } m.dispose(); }); } });
   }
 }
