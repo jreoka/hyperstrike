@@ -20,7 +20,7 @@ pub const TICKS_PER_INPUT: usize = 2;
 pub const MAX_AHEAD_SLOTS: usize = 10;
 pub const SKIP_TO_SLOTS: usize = 3;
 pub const MAX_FUTURE_SEQ: i64 = 240;
-pub const IDLE_CLEAR_SLOTS: u32 = 30;
+pub const IDLE_CLEAR_SLOTS: u32 = 12;
 pub const COUNTDOWN_S: f64 = 3.0;
 pub const GOAL_PAUSE_S: f64 = 3.4;
 pub const REPLAY_MAX_S: f64 = 12.0;
@@ -397,6 +397,12 @@ impl ServerMatch {
         }
         if seq < h.next_seq {
             h.edge |= (packed[5] as i32) & 17;
+            if h.buf.is_empty() {
+                // Client fell behind the server's slot timeline: apply its newest steering/throttle
+                // instead of holding stale controls until the client's inSeq catches up.
+                h.applied = packed;
+                h.idle = 0;
+            }
             return true;
         }
         if seq > h.next_seq + MAX_FUTURE_SEQ {
@@ -409,6 +415,32 @@ impl ServerMatch {
     fn consume_input(h: &mut HumanState, in_play: bool) {
         if h.next_seq == 0 {
             return;
+        }
+        // If the client jumped inSeq ahead to resync after a stall, skipped sequence numbers can
+        // never arrive over ordered WebSocket. Apply the queued steering/throttle immediately (no
+        // fake starves or stale stuck turning), and fast-forward next_seq once we have >= 2 queued
+        // slots so a 1-slot jitter cushion is preserved.
+        if !h.buf.is_empty() && !h.buf.contains_key(&h.next_seq)
+            && let Some(&min_seq) = h.buf.keys().min()
+            && min_seq > h.next_seq
+        {
+            if h.buf.len() >= 2 {
+                h.next_seq = min_seq;
+            } else if let Some(&inp) = h.buf.get(&min_seq) {
+                h.depth = h.buf.len();
+                let mut peek = inp;
+                peek[5] = ((inp[5] as i32) & !17) as f64;
+                h.applied = peek;
+                h.idle = 0;
+                if h.edge != 0 {
+                    let bits = (h.applied[5] as i32) | h.edge;
+                    h.applied[5] = bits as f64;
+                    h.edge = 0;
+                }
+                h.ack = h.next_seq;
+                h.next_seq += 1;
+                return;
+            }
         }
         let mut depth = h.buf.len();
         if depth > MAX_AHEAD_SLOTS {
@@ -1080,5 +1112,88 @@ fn serialize_power_event(pe: &PowerEvent) -> Value {
         } => json!({
             "type": "power", "kind": "hook", "car": { "$c": car_idx }, "hookKind": hook_kind, "pos": vec_val(pos),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use server_core::db::sanitize_car;
+    use server_core::protocol::{MatchPlayerSpec, default_lobby_settings};
+
+    struct NullSink;
+    impl MatchEventSink for NullSink {
+        fn broadcast(&self, _msg: Value) {}
+        fn send_raw(&self, _user_id: &str, _payload: SnapshotPayload) {}
+        fn send_spectators(&self, _payload: SnapshotPayload) {}
+        fn on_goal(&self, _info: Value) {}
+        fn on_end(&self, _score: [i32; 2], _stats: HashMap<String, MatchStatsEntry>) {}
+        fn on_error(&self, _message: String) {}
+    }
+
+    fn make_test_match() -> ServerMatch {
+        let mut settings = default_lobby_settings("Tester");
+        settings.team_size = 1;
+        settings.bot_fill = false;
+        let mut m = ServerMatch::new(MatchCreateOptions {
+            settings,
+            teammate_diff: None,
+            players: vec![MatchPlayerSpec {
+                user_id: "u1".into(),
+                username: "Tester".into(),
+                team: 0,
+                car: sanitize_car(None),
+            }],
+            callbacks: Arc::new(NullSink),
+        });
+        m.start();
+        m.state = MatchState::Play;
+        m.world.frozen = false;
+        m
+    }
+
+    #[test]
+    fn late_input_replaces_stale_controls_when_buffer_empty() {
+        let mut m = make_test_match();
+        // Initial input: turning right
+        assert!(m.push_input("u1", 10, [1.0, 1.0, 0.0, 1.0, 0.0, 0.0]));
+        m.run_slot(); // consumes seq 10, next_seq becomes 11
+        m.run_slot(); // starves on 11, next_seq becomes 12
+        m.run_slot(); // starves on 12, next_seq becomes 13
+
+        // Late input (seq 11 < next_seq 13) releases steering to 0
+        assert!(m.push_input("u1", 11, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+        m.run_slot();
+        let h = m.humans.get("u1").unwrap();
+        assert_eq!(h.applied[1], 0.0, "late input should clear stale steering");
+        assert!(h.starves >= 3, "server still reports starve so client resyncs");
+    }
+
+    #[test]
+    fn jumped_inseq_gap_fast_forwards_without_starving_or_sticking() {
+        let mut m = make_test_match();
+        assert!(m.push_input("u1", 10, [1.0, 1.0, 0.0, 1.0, 0.0, 0.0]));
+        m.run_slot(); // consumes 10, next_seq = 11
+        let starves_before = m.humans.get("u1").unwrap().starves;
+
+        // Client jumps ahead to seq 20 (gap of 9) and steers left
+        assert!(m.push_input("u1", 20, [1.0, -1.0, 0.0, -1.0, 0.0, 1.0]));
+        m.run_slot(); // 1-slot peek: applies fresh steering immediately without starving
+        {
+            let h = m.humans.get("u1").unwrap();
+            assert_eq!(h.starves, starves_before);
+            assert_eq!(h.applied[1], -1.0);
+            assert_eq!(h.applied[5], 0.0, "edge bits wait for actual seq consumption");
+        }
+
+        // Second packet arrives: buffer has 2 slots -> fast-forwards to 20, consumes 20, keeps 21 cushioned
+        assert!(m.push_input("u1", 21, [1.0, -0.5, 0.0, -0.5, 0.0, 0.0]));
+        m.run_slot();
+        let h = m.humans.get("u1").unwrap();
+        assert_eq!(h.ack, 20);
+        assert_eq!(h.next_seq, 21);
+        assert_eq!(h.buf.len(), 1);
+        assert_eq!(h.starves, starves_before);
+        assert_eq!(h.applied[5], 1.0, "jump bit fires on exact consumed seq");
     }
 }

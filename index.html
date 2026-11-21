@@ -1755,6 +1755,7 @@ class Car {
     this.id = id; this.team = team; this.name = name; this.design = design;
     const hb = HITBOXES[design] || HITBOXES[0];
     this.half = new V3(hb.hx, hb.hy, hb.hz);
+    this.boundR = Math.hypot(hb.hx, hb.hy, hb.hz) + 0.02;
     const L = hb.hx * 2, Hh = hb.hy * 2, Wd = hb.hz * 2;
     this.inertia = new V3((Hh * Hh + Wd * Wd) / 12, (L * L + Wd * Wd) / 12, (L * L + Hh * Hh) / 12);
     this.pos = new V3(); this.vel = new V3(); this.quat = new QT(); this.angVel = new V3();
@@ -1994,6 +1995,18 @@ class Car {
   }
   collideArena(arena) {
     const b = this.basis.fromQuat(this.quat);
+    // Exact early-out: if the car's bounding sphere is clear of the arena shell, or on the flat
+    // pitch floor away from walls/goals with its lowest corner above y=0, none of the 26 sample
+    // points can penetrate. Cuts ~95% of SDF evaluations during online rollback ticks.
+    const px = this.pos.x, py = this.pos.y, pz = this.pos.z, br = this.boundR;
+    if (arena.dist(px, py, pz) > br) { this.bodyContact = false; this.bodyContactT = 0; return; }
+    if (!arena.goalMode && py < arena.H - arena.Rf - br) {
+      const ax = px < 0 ? -px : px, az = pz < 0 ? -pz : pz;
+      if (az <= arena.L - arena.Rf - 1.0 - br && arena.d2(ax, az) > arena.Rf + br) {
+        const minY = py - (Math.abs(b.f.y) * this.half.x + Math.abs(b.u.y) * this.half.y + Math.abs(b.r.y) * this.half.z);
+        if (minY >= 0) { this.bodyContact = false; this.bodyContactT = 0; return; }
+      }
+    }
     let touched = false;
     for (let iter = 0; iter < 3; iter++) {
       let worst = 0, wp = null;
@@ -7359,7 +7372,11 @@ function netReadCar(f, o, c, tick, ctlOut) {
   const bits = f[o + 40] | 0;
   for (let i = 0; i < NET_CAR_BOOLS.length; i++) c[NET_CAR_BOOLS[i]] = !!(bits & (1 << i));
   for (let i = 0; i < 4; i++) { const w = c.wheels[i]; w.len = f[o + 36 + i]; w.contact = !!(bits & (1 << (13 + i))); }
-  if (ctlOut) netUnpackControls([f[o + 41], f[o + 42], f[o + 43], f[o + 44], f[o + 45], f[o + 46]], ctlOut);
+  if (ctlOut) {
+    ctlOut.throttle = f[o + 41]; ctlOut.steer = f[o + 42]; ctlOut.pitch = f[o + 43]; ctlOut.yaw = f[o + 44]; ctlOut.roll = f[o + 45];
+    const cb = f[o + 46] | 0;
+    ctlOut.jump = !!(cb & 1); ctlOut.boost = !!(cb & 2); ctlOut.handbrake = !!(cb & 4); ctlOut.airRollFree = !!(cb & 8); ctlOut.item = !!(cb & 16);
+  }
   c.basis.fromQuat(c.quat);
 }
 function netWriteBall(f, o, b, cars) {
@@ -8235,7 +8252,7 @@ class MatchMode extends ModeBase {
 const NET_TICKS_PER_INPUT = NET_TPI;
 const packControls = netPackControls;
 const unpackControls = netUnpackControls;
-const NET_MAX_RESIM_TICKS = 72; // ~600ms of rewind; beyond that just accept the server state
+const NET_MAX_RESIM_TICKS = 40; // ~333ms of rewind; keeps rollback CPU bounded on slower laptops
 
 class OnlineMatchMode extends MatchMode {
   start() {
@@ -8247,6 +8264,7 @@ class OnlineMatchMode extends MatchMode {
     this.rtt = 0.06; this.clockRate = 1.0;
     this.qAvg = 2; this.qTarget = 2; this.lastStarves = -1;
     this.lastStarveAt = performance.now(); this.lastTargetDecay = this.lastStarveAt;
+    this._zeroStarveStreak = 0; this._starvedSnap = false; this._lastJumpAt = -1e9; this._frameDtAvg = 1 / 60;
     this.unfreezeTick = -1; this.lastSnapTick = -1; this.specLead = 3;
     // FREEZE is predicted locally: the server only confirms it a round-trip later, by which time
     // the ball had kept rolling and then snapped back to where it was when the button was pressed.
@@ -8388,6 +8406,7 @@ class OnlineMatchMode extends MatchMode {
   }
   preUpdate(dt) {
     const g = this.game;
+    this._frameDtAvg += (dt - this._frameDtAvg) * 0.08;
     ModeBase.prototype.preUpdate.call(this, dt);
     if (this.state === 'countdown') {
       // Count from the server's authoritative unfreeze tick once a snapshot gave it to us, so
@@ -8492,23 +8511,40 @@ class OnlineMatchMode extends MatchMode {
     }
     return out;
   }
+  netRttSlots() {
+    const on = this.game.online, slotSec = PHYS.dt * NET_TICKS_PER_INPUT;
+    // Prefer the pure ping probe (excludes server input buffer depth); fall back to ack RTT
+    const rttSec = (on && on.ping !== null && Number.isFinite(on.ping)) ? clamp(on.ping * 0.001, 0.004, 0.5) : this.rtt;
+    return Math.max(1, Math.ceil(rttSec / slotSec));
+  }
   // Keep the server's input buffer for us at a small, jitter-proof depth by running our
   // simulation clock a few percent fast or slow. Starvation grows the target; calm shrinks it.
   regulateClock(s, now) {
-    if (s.st !== 'play' && s.st !== 'countdown') { this.clockRate = 1; return; }
+    if (s.st !== 'play' && s.st !== 'countdown') { this.clockRate = 1; this._zeroStarveStreak = 0; return; }
     if (this.lastStarves < 0) this.lastStarves = s.starves;
     const newStarves = (s.starves - this.lastStarves + 0x10000) & 0xFFFF;
     this.lastStarves = s.starves;
+    const slotSec = PHYS.dt * NET_TICKS_PER_INPUT;
+    // Lower framerates send inputs in multi-slot bursts per frame; keep qTarget above the burst trough
+    const minQ = clamp(1.6 + Math.max(0, (this._frameDtAvg || slotSec) / slotSec - 1.1) * 0.85, 1.6, 3.8);
+    if (this.qTarget < minQ) this.qTarget = minQ;
     if (newStarves > 0 && newStarves < 1000) {
-      this.qTarget = Math.min(7, this.qTarget + 0.6 * Math.min(3, newStarves));
+      this.qTarget = Math.min(5.5, this.qTarget + 0.5 * Math.min(3, newStarves));
       this.lastStarveAt = now;
-    } else if (now - this.lastStarveAt > 8000 && now - this.lastTargetDecay > 1000) {
-      this.qTarget = Math.max(1.6, this.qTarget - 0.1);
-      this.lastTargetDecay = now;
+      this._starvedSnap = true;
+      if (s.depth < 0.5) this._zeroStarveStreak++;
+      else this._zeroStarveStreak = 0;
+    } else {
+      if (s.depth >= 0.5) this._zeroStarveStreak = 0;
+      if (now - this.lastStarveAt > 4000 && now - this.lastTargetDecay > 1000) {
+        this.qTarget = Math.max(minQ, this.qTarget - 0.2);
+        this.lastTargetDecay = now;
+      }
     }
-    this.qAvg += (s.depth - this.qAvg) * 0.06;
+    const alpha = s.depth < this.qAvg ? 0.2 : 0.06;
+    this.qAvg += (s.depth - this.qAvg) * alpha;
     const err = this.qTarget - this.qAvg;
-    this.clockRate = 1 + clamp(err * (Math.abs(err) > 3 ? 0.04 : 0.02), -0.08, 0.08);
+    this.clockRate = 1 + clamp(err * (Math.abs(err) > 2.5 ? 0.04 : 0.02), -0.08, 0.08);
   }
   onSnap(buf) {
     const g = this.game, w = this.world;
@@ -8598,10 +8634,20 @@ class OnlineMatchMode extends MatchMode {
     if (me) {
       while (this.inHist.length && this.inHist[0].seq <= s.ack) this.inHist.shift();
       if (this.predFreezeSeq && s.ack >= this.predFreezeSeq) this.predFreezeSeq = 0; // the server state has it now
-      if (s.ack >= this.inSeq) {
-        // Server has consumed past our newest input (e.g. after goal slow-mo or a stall): jump ahead
-        this.inSeq = s.ack + Math.ceil(this.qTarget);
+      const rttSlots = this.netRttSlots();
+      const now = performance.now();
+      const jumpCool = now - this._lastJumpAt > Math.max(120, rttSlots * 25);
+      const starvedBehind = this._starvedSnap && s.depth < 0.5 && (this.inSeq < s.ack + rttSlots + 1 || this._zeroStarveStreak >= 3);
+      this._starvedSnap = false;
+      if (s.ack > 0 && (s.ack >= this.inSeq || (starvedBehind && jumpCool))) {
+        // Server is ahead of (or about to pass) our inSeq: jump past s.ack + RTT + qTarget so
+        // the next input lands in the server's future buffer instead of being dropped late.
+        const bump = this._zeroStarveStreak >= 3 ? this.inSeq + Math.max(2, Math.ceil(this.qTarget)) : 0;
+        const targetSeq = Math.max(s.ack + rttSlots + Math.ceil(this.qTarget), bump);
+        if (targetSeq > this.inSeq) this.inSeq = targetSeq;
         this.inHist.length = 0; this.inTick = 0; this.curInput = null;
+        this._zeroStarveStreak = 0; this._lastJumpAt = now;
+        this.qAvg = this.qTarget;
       }
       if (replayable) {
         replay = this.inHist;
@@ -10950,11 +10996,11 @@ class GameEngine {
           if (this.mode.state === 'ended' || this.mode.state === 'replay' || (this.ui.overlayOpen && !this.ui._sb)) Object.assign(this.player.controls, makeControls());
         }
         this.acc += dt * ts * (m.clockRate || 1); let steps = 0;
-        while (this.acc >= PHYS.dt && steps < 12) {
+        while (this.acc >= PHYS.dt && steps < 14) {
           this.world.step(PHYS.dt); this.processEvents(); if (this.mode) this.mode.postStep(PHYS.dt);
           this.acc -= PHYS.dt; steps++;
         }
-        if (steps >= 12) this.acc = 0;
+        if (steps >= 14) this.acc = 0;
       }
     }
     this.updateBoostRumble();
