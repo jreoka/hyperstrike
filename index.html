@@ -229,6 +229,7 @@ input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.15)}
 input[type=range]::-moz-range-thumb{width:12px;height:22px;background:#fff;border:0;cursor:pointer;border-radius:0}
 input[type=text]{background:rgba(2,5,14,.7);border:1px solid var(--line2);color:#fff;padding:11px 14px;font:inherit;font-weight:700;letter-spacing:.1em;width:260px;max-width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
 input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(62,242,255,.15)}
+.dis{opacity:.38;filter:grayscale(1);pointer-events:none}
 .toggle{width:46px;height:24px;margin:0 2px;background:rgba(255,255,255,.1);position:relative;cursor:pointer;border:1px solid var(--line2);transition:all .18s;outline:none;flex:none;transform:skewX(-14deg)}
 .toggle:focus-visible,body.gp-nav .toggle:focus{outline:2px solid #fff;outline-offset:2px}
 .toggle::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;background:var(--ink3);transition:all .18s}
@@ -848,8 +849,15 @@ float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
 float vnoise3(vec3 p){ vec3 i = floor(p), f = fract(p); vec3 u = f*f*(3.0-2.0*f);
   return mix(mix(mix(hash13(i), hash13(i+vec3(1,0,0)), u.x), mix(hash13(i+vec3(0,1,0)), hash13(i+vec3(1,1,0)), u.x), u.y),
              mix(mix(hash13(i+vec3(0,0,1)), hash13(i+vec3(1,0,1)), u.x), mix(hash13(i+vec3(0,1,1)), hash13(i+vec3(1,1,1)), u.x), u.y), u.z); }
-float fbm(vec2 p){ float s = 0.0, a = 0.5; mat2 m = mat2(1.6, 1.2, -1.2, 1.6); for(int i=0;i<5;i++){ s += a*vnoise(p); p = m*p; a *= 0.5; } return s; }
-float fbm3(vec3 p){ float s = 0.0, a = 0.5; for(int i=0;i<4;i++){ s += a*vnoise3(p); p = p*2.03 + 17.1; a *= 0.5; } return s; }
+// Octave counts are lowered on Medium/Low (see setNoiseLOD); the result is rescaled to keep the same range
+#ifndef FBM_OCT
+#define FBM_OCT 5
+#endif
+#ifndef FBM3_OCT
+#define FBM3_OCT 4
+#endif
+float fbm(vec2 p){ float s = 0.0, a = 0.5; mat2 m = mat2(1.6, 1.2, -1.2, 1.6); for(int i=0;i<FBM_OCT;i++){ s += a*vnoise(p); p = m*p; a *= 0.5; } return s * (0.96875 / (1.0 - pow(0.5, float(FBM_OCT)))); }
+float fbm3(vec3 p){ float s = 0.0, a = 0.5; for(int i=0;i<FBM3_OCT;i++){ s += a*vnoise3(p); p = p*2.03 + 17.1; a *= 0.5; } return s * (0.9375 / (1.0 - pow(0.5, float(FBM3_OCT)))); }
 float warpfbm(vec2 p){ vec2 q = vec2(fbm(p), fbm(p + vec2(5.2,1.3))); return fbm(p + 3.0*q); }
 vec3 voronoi(vec2 x){ vec2 n = floor(x), f = fract(x); float md = 8.0, md2 = 8.0; vec2 mr; float id = 0.0;
   for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){ vec2 g = vec2(float(i),float(j)); vec2 o = hash22(n+g); vec2 r = g+o-f; float d = dot(r,r);
@@ -864,6 +872,14 @@ vec4 hexCoords(vec2 uv){ vec2 r = vec2(1.0, 1.7320508); vec2 h = r*0.5; vec2 a =
 const SETTINGS_KEY = 'hyperstrike.settings.v2';
 const QUALITY_RES_SCALE = { low: 0.75, medium: 0.85, high: 1.0, ultra: 1.25 };
 const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
+// Graphics options a preset sets; editing any of them on a preset switches quality to 'custom'
+const GFX_KEYS = ['resScale', 'dynRes', 'reflections', 'bloom', 'bloomAmt'];
+const QUALITY_PRESETS = {
+  low: { resScale: 0.75, dynRes: true, reflections: false, bloom: false, bloomAmt: 1 },
+  medium: { resScale: 0.85, dynRes: true, reflections: false, bloom: true, bloomAmt: 1 },
+  high: { resScale: 1.0, dynRes: true, reflections: true, bloom: true, bloomAmt: 1 },
+  ultra: { resScale: 1.25, dynRes: true, reflections: true, bloom: true, bloomAmt: 1 }
+};
 const DEFAULT_SETTINGS = {
   fov: 100, camDist: 2.9, camHeight: 1.1, camAngle: -4, camStiffness: 0.45, swivelSpeed: 5, ballCamDefault: false, camShake: true,
   mouseSens: 1.0, camSens: 1.0, invertY: false, deadzone: 0.14, vibration: true,
@@ -893,7 +909,12 @@ const Settings = {
   save() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.data)); } catch (e) { } },
   get(k) { return this.data[k]; },
   // The quality tier actually in use (Auto resolves to the tier the framerate governor settled on)
-  quality() { const q = this.data.quality; return q === 'auto' ? (QUALITY_TIERS.includes(this.data.autoTier) ? this.data.autoTier : 'medium') : q; },
+  quality() {
+    const q = this.data.quality, t = q === 'auto' ? this.data.autoTier : q === 'custom' ? this.data.customBase : q;
+    return QUALITY_TIERS.includes(t) ? t : 'medium';
+  },
+  // A graphics option's effective value: Auto ignores the manual values and uses its current tier's preset
+  gfx(k) { return this.data.quality === 'auto' ? QUALITY_PRESETS[this.quality()][k] : this.data[k]; },
   set(k, v) { this.data[k] = v; this.save(); Events.emit('settings', k); }
 };
 Settings.load();
@@ -2444,7 +2465,7 @@ class Renderer {
     const st = q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     if (this.r.shadowMap.type !== st) { this.r.shadowMap.type = st; this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
     // Point lights are evaluated per pixel on every lit surface; only the top tiers get the dynamic FX lights
-    this.pointLights = q === 'low' ? 0 : q === 'medium' ? 1 : 2;
+    this.pointLights = q === 'high' || q === 'ultra' ? 2 : 0;
     this.shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
     this.reflScale = q === 'ultra' ? 0.75 : q === 'high' ? 0.5 : 0;
     this.aoOn = this.halfFloat && (q === 'high' || q === 'ultra');
@@ -2541,7 +2562,7 @@ class Renderer {
   // Planar mirror for glossy floors (y = 0). Fills `refl.tex` + `refl.mat` uniforms; returns false when unavailable.
   renderReflection(refl, hide) {
     const cam = this.camera;
-    if (!this.reflRT || !Settings.data.reflections || refl.strength.value <= 0 || cam.position.y < 0.05) { refl.on.value = 0; return false; }
+    if (!this.reflRT || !Settings.gfx('reflections') || refl.strength.value <= 0 || cam.position.y < 0.05) { refl.on.value = 0; return false; }
     const vc = this.mirrorCam || (this.mirrorCam = new THREE.PerspectiveCamera());
     const rot = new THREE.Matrix4().extractRotation(cam.matrixWorld);
     vc.position.set(cam.position.x, -cam.position.y, cam.position.z);
@@ -2561,11 +2582,12 @@ class Renderer {
     refl.tex.value = this.reflRT.texture; refl.on.value = 1; return true;
   }
   isAuto() { return Settings.data.quality === 'auto'; }
-  // Measure the display refresh rate from requestAnimationFrame intervals (median, so hitches don't matter)
+  // Measure the display refresh rate from requestAnimationFrame intervals (median, so hitches don't matter).
+  // Never below 60: on a slow machine the probe (it runs while loading) only sees long frames, not the display.
   probeRefresh() {
     const ts = []; const step = (t) => { ts.push(t); if (ts.length < 40) requestAnimationFrame(step); else {
       const d = []; for (let i = 1; i < ts.length; i++) d.push(ts[i] - ts[i - 1]); d.sort((a, b) => a - b);
-      const med = d[d.length >> 1]; if (med > 2) this.refreshHz = Math.max(this.refreshHz === 60 ? 0 : this.refreshHz, 1000 / med); } };
+      const med = d[d.length >> 1]; if (med > 2) this.refreshHz = Math.max(this.refreshHz, 1000 / med); } };
     requestAnimationFrame(step);
   }
   targetFps() { const t = +Settings.data.targetFps || 0, r = this.refreshHz * 0.97; return t > 0 ? Math.min(t, r) : r; }
@@ -2625,7 +2647,7 @@ class Renderer {
       b.tSrc.value = this.aoRT.texture; b.uDir.value.set(1 / this.aoRT.width, 0); this.pass(this.mats.aoBlur, this.aoRT2);
       b.tSrc.value = this.aoRT2.texture; b.uDir.value.set(0, 1 / this.aoRT.height); this.pass(this.mats.aoBlur, this.aoRT);
     }
-    const bloomOn = Settings.data.bloom && fx.bloom > 0.01;
+    const bloomOn = Settings.gfx('bloom') && fx.bloom > 0.01;
     const d = this.mats.down, u = this.mats.up;
     if (bloomOn) {
       let src = this.rt.texture, sw = this.width, sh = this.height;
@@ -2643,7 +2665,7 @@ class Renderer {
     const c = this.mats.comp.uniforms;
     c.tScene.value = this.rt.texture; c.tBloom.value = bloomOn ? this.bloomTex : this.blackTex();
     c.tAO.value = aoOn ? this.aoRT.texture : this.blackTex(); c.uAO.value = aoOn ? 0.85 : 0;
-    c.uBloom.value = fx.bloom * 0.34 * (Settings.data.bloomAmt === undefined ? 1 : Settings.data.bloomAmt); c.uExposure.value = fx.exposure; c.uContrast.value = fx.contrast; c.uSat.value = fx.sat;
+    c.uBloom.value = fx.bloom * 0.34 * (Settings.gfx('bloomAmt') === undefined ? 1 : Settings.gfx('bloomAmt')); c.uExposure.value = fx.exposure; c.uContrast.value = fx.contrast; c.uSat.value = fx.sat;
     c.uTint.value.copy(fx.tint); c.uLift.value.copy(fx.lift); c.uVignette.value = fx.vignette; c.uAberr.value = Settings.data.motionFx ? fx.aberr : 0; c.uRadial.value = Settings.data.motionFx ? fx.radial : 0;
     c.uTime.value = time; c.uFlash.value = fx.flash; c.uGrain.value = fx.grain;
     this.pass(this.mats.comp, null);
@@ -2763,7 +2785,7 @@ function captureArenaEnv(renderer, def, arenaGroup, fog) {
 }
 
 function injectStandard(mat, key, uniforms, { vertexDecl = '', vertexMain = '', fragDecl = '', mapFrag = '', roughFrag = null, metalFrag = null, normalFrag = '', emisFrag = '' }) {
-  mat.customProgramCacheKey = () => key;
+  mat.customProgramCacheKey = () => key; mat.userData.noiseLOD = true;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vONrm;\n' + vertexDecl)
@@ -3281,7 +3303,7 @@ class ArenaVisual {
   build() {
     const d = this.def;
     this.skyMat = makeSkyMaterial(d);
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(1800, 48, 24), this.skyMat); sky.frustumCulled = false; sky.renderOrder = -10; this.add(sky);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(1800, 48, 24), this.skyMat); sky.frustumCulled = false; sky.renderOrder = 1e6; this.add(sky); // drawn last among opaques: depth test skips every pixel already covered
     this.buildFloor(); this.buildWalls(); this.buildGoals(); this.buildLights();
     const deco = [this.decoNeon, this.decoStadium, this.decoFoundry, this.decoMesa, this.decoOrbit, this.decoFrost, this.decoAbyss, this.decoRuins, this.decoRift, this.decoSakura, this.decoSkyline, this.decoSynthwave][d.floor];
     deco.call(this);
@@ -5613,7 +5635,29 @@ class CarModel {
       outer.frustumCulled = inner.frustumCulled = false;
       this.body.add(outer); this.body.add(inner); this.flames.push({ outer, inner }); this.mats.push(outer.material, inner.material);
     }
-    this.root.traverse(o => { if (o.isMesh && o.material !== headMat && !o.material.transparent) o.castShadow = true; });
+    this.buildShadowProxy(o => o.isMesh && o.material !== headMat && !o.material.transparent);
+  }
+  // One merged shadow caster per car instead of ~30 separate parts. Shadow-map draw calls were the single
+  // biggest per-frame cost (~200 extra draws with 6 cars). The proxy draws nothing in normal passes
+  // (empty draw range) and only fills in its triangles while the shadow map is being rendered.
+  buildShadowProxy(isCaster) {
+    this.root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(this.root.matrixWorld).invert(), m = new THREE.Matrix4(), chunks = []; let total = 0;
+    this.root.traverse(o => {
+      if (!isCaster(o) || !o.geometry.attributes.position) return;
+      o.castShadow = false;
+      const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      g.applyMatrix4(m.multiplyMatrices(inv, o.matrixWorld));
+      chunks.push(g.attributes.position.array); total += g.attributes.position.array.length; g.dispose();
+    });
+    const pos = new Float32Array(total); let off = 0; for (const c of chunks) { pos.set(c, off); off += c.length; }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); sg.computeBoundingSphere(); sg.setDrawRange(0, 0);
+    const mat = CarModel._shadowMat || (CarModel._shadowMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, depthTest: false }));
+    const proxy = new THREE.Mesh(sg, mat); proxy.castShadow = true;
+    const n = total / 3;
+    proxy.onBeforeShadow = () => { sg.drawRange.count = n; };
+    proxy.onAfterShadow = () => { sg.drawRange.count = 0; };
+    this.root.add(proxy); this.shadowProxy = proxy;
   }
   makeWheel(r, w, type, chrome, glow) {
     const g = new THREE.Group();
@@ -9579,10 +9623,10 @@ class UIManager {
     let h = `<div class="ph"><h2>Settings</h2><span>saved automatically</span></div><div class="tabs">` + tabs.map(([k, l]) => `<button class="${this.settingsTab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`).join('') + '</div>';
     if (this.settingsTab === 'camera') h += slider('fov', 'Field of view', 70, 115, 1, v => v + '°') + slider('camDist', 'Distance', 2.0, 4.5, 0.05, v => (+v).toFixed(2)) + slider('camHeight', 'Height', 0.6, 2.2, 0.05, v => (+v).toFixed(2)) + slider('camAngle', 'Angle', -12, 4, 1, v => v + '°') + slider('camStiffness', 'Stiffness', 0, 1, 0.05, v => (+v).toFixed(2)) + slider('swivelSpeed', 'Swivel speed', 1, 10, 0.5) + tog('ballCamDefault', 'Ball cam on by default') + tog('camShake', 'Camera shake');
     if (this.settingsTab === 'controls') h += slider('mouseSens', 'Mouse sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('camSens', 'Camera (stick) sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('deadzone', 'Controller deadzone', 0.02, 0.4, 0.01, v => (+v).toFixed(2)) + tog('invertY', 'Invert aerial pitch') + tog('vibration', 'Controller vibration');
-    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:380px">${['auto', 'low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>`
-      + `<div class="desc" id="autoQDesc" style="display:${S.quality === 'auto' ? '' : 'none'}">Auto adjusts resolution and graphics detail to hold your target framerate.</div>`
+    if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:460px">${['auto', 'low', 'medium', 'high', 'ultra', 'custom'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>`
+      + `<div class="desc">${S.quality === 'auto' ? 'Auto adjusts resolution and graphics detail to hold your target framerate. Pick a preset or Custom to set these yourself.' : S.quality === 'custom' ? `Custom settings on top of ${Settings.quality()} detail.` : 'Changing any option below switches to Custom.'}</div>`
       + `<div class="set"><label>Target framerate</label><div class="seg" style="width:380px">${[[30, '30'], [60, '60'], [120, '120'], [144, '144'], [0, 'Max']].map(([v, l]) => `<button class="${(+S.targetFps || 0) === v ? 'on' : ''}" data-fps="${v}"><span>${l}</span></button>`).join('')}</div></div>`
-      + `<div id="manualQ" style="display:${S.quality === 'auto' ? 'none' : ''}">` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('dynRes', 'Dynamic resolution (keeps framerate smooth)') + '</div>' + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
+      + `<div id="gfxOpts" class="${S.quality === 'auto' ? 'dis' : ''}">` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('dynRes', 'Dynamic resolution (keeps framerate smooth)') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + '</div>' + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
     if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
     if (this.settingsTab === 'account') {
       const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
@@ -9613,23 +9657,25 @@ class UIManager {
   bindSettings(root = $('menuPanel')) {
     root.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.settingsTab = b.dataset.stab; const sel = `[data-stab="${b.dataset.stab}"]`; if (root.id === 'menuPanel') this.renderPanel(sel); else this.showPauseSettings(sel); });
     const fill = r => r.style.setProperty('--p', (clamp((r.value - r.min) / (r.max - r.min), 0, 1) * 100).toFixed(1) + '%');
-    root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { fill(r); const k = r.dataset.sl; const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
-    root.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.tg; Settings.set(k, !Settings.data[k]); b.classList.toggle('on', Settings.data[k]); });
+    const rerender = (sel) => { if (root.id === 'menuPanel') this.renderPanel(sel); else this.showPauseSettings(sel); };
+    // Editing a graphics option while on a preset turns it into Custom (same detail tier underneath)
+    const toCustom = (k) => {
+      if (!GFX_KEYS.includes(k) || !QUALITY_TIERS.includes(Settings.data.quality)) return;
+      Settings.data.customBase = Settings.data.quality; Settings.data.quality = 'custom'; Settings.save();
+      root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === 'custom'));
+    };
+    if (Settings.data.quality === 'auto') root.querySelectorAll('#gfxOpts input, #gfxOpts button').forEach(el => { el.disabled = true; el.tabIndex = -1; });
+    root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { fill(r); const k = r.dataset.sl; toCustom(k); const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
+    root.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.tg; toCustom(k); Settings.set(k, !Settings.data[k]); b.classList.toggle('on', Settings.data[k]); });
     root.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       this.g.audio.ui('click');
       const q = b.dataset.q;
-      const rs = QUALITY_RES_SCALE[q];
-      if (rs !== undefined) {
-        Settings.data.resScale = rs;
-        const sl = root.querySelector('[data-sl="resScale"]');
-        if (sl) { sl.value = rs; fill(sl); }
-        const lab = root.querySelector('#v_resScale');
-        if (lab) lab.textContent = Math.round(rs * 100) + '%';
-      }
+      if (q === Settings.data.quality) return;
+      if (QUALITY_PRESETS[q]) Object.assign(Settings.data, QUALITY_PRESETS[q]);
+      // Custom picked directly: keep the current options on top of the tier in use right now
+      if (q === 'custom') Settings.data.customBase = Settings.quality();
       Settings.set('quality', q);
-      root.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x.dataset.q === q));
-      const mq = root.querySelector('#manualQ'), ad = root.querySelector('#autoQDesc');
-      if (mq) mq.style.display = q === 'auto' ? 'none' : ''; if (ad) ad.style.display = q === 'auto' ? '' : 'none';
+      rerender(`[data-q="${q}"]`);
     });
     root.querySelectorAll('[data-fps]').forEach(b => b.onclick = () => {
       this.g.audio.ui('click');
@@ -10260,6 +10306,19 @@ class GameEngine {
     if (this.fx) { for (const L of this.fx.lights) L.l.visible = n >= 2; for (const l of this.fx.boostLights) l.visible = n >= 2; }
     if (this.ballVisual) this.ballVisual.light.visible = n >= 2;
     const av = this.arenaVisual; if (av && av.blueGoalLight) { av.blueGoalLight.visible = av.orangeGoalLight.visible = n >= 1; }
+    this.setNoiseLOD();
+  }
+  // Fewer procedural-noise octaves on the lower tiers (sky, floor and other noise-driven arena shaders)
+  setNoiseLOD() {
+    const q = this.renderer.quality, oct = q === 'low' ? 3 : q === 'medium' ? 4 : 5, oct3 = q === 'low' ? 2 : q === 'medium' ? 3 : 4;
+    this.renderer.scene.traverse(o => {
+      if (!o.material) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!(m.userData.noiseLOD || (m.fragmentShader && m.fragmentShader.includes('FBM_OCT')))) continue;
+        const d = m.defines || (m.defines = {});
+        if (d.FBM_OCT !== oct || d.FBM3_OCT !== oct3) { d.FBM_OCT = oct; d.FBM3_OCT = oct3; m.needsUpdate = true; }
+      }
+    });
   }
   newWorld(def, opts = {}) {
     this.loadArena(def, opts);
@@ -10270,6 +10329,7 @@ class GameEngine {
     this.world = new World(def, opts); this.player = null;
     this.padGroup = new THREE.Group(); this.padVisual = new PadVisual(this.world.pads, this.padGroup); this.renderer.scene.add(this.padGroup);
     this.ballVisual.mesh.visible = true; this.acc = 0;
+    this.setNoiseLOD();
     return this.world;
   }
   randomCustom() { return { body: randi(0, CAR_DESIGNS.length - 1), primary: -1, secondary: randi(0, PALETTE.length - 1), finish: randi(0, FINISHES.length - 1), decal: randi(0, DECALS.length - 1), wheels: randi(0, WHEELS.length - 1), trail: Math.random() < 0.35 ? 6 : randi(0, 5), explosion: randi(0, EXPLOSIONS.length - 1) }; }
