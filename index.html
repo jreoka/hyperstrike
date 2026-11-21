@@ -2410,7 +2410,8 @@ class Renderer {
             vec3 pu = viewPos(vUv + vec2(0.0, uTexel.y)), pd = viewPos(vUv - vec2(0.0, uTexel.y));
             vec3 dx = abs(pr.z - P.z) < abs(P.z - pl.z) ? pr - P : P - pl;
             vec3 dy = abs(pu.z - P.z) < abs(P.z - pd.z) ? pu - P : P - pd;
-            vec3 N = normalize(cross(dx, dy));
+            vec3 _cn = cross(dx, dy);
+            vec3 N = dot(_cn, _cn) > 1e-12 ? normalize(_cn) : vec3(0.0, 0.0, 1.0);
             float rUV = min(uRadius * uProj[1][1] * 0.5 / max(-P.z, 0.05), 0.09);
             float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
             float ang = ign * 6.2831853, r2 = uRadius * uRadius, occ = 0.0;
@@ -2453,8 +2454,28 @@ class Renderer {
     this.dyn = 1; this._pAcc = 0; this._pN = 0; this._pGood = 0; this._pHold = 3; this._pSince = 0; this._pSkip = 0;
     this._pT = 0; this._tGood = 0; this._tHold = 8; this._tUpAt = -99; this._pend = null;
     this.refreshHz = 60; this.probeRefresh();
+    const gl = r.getContext && r.getContext();
+    this.hasSync = !!(this.halfFloat && gl && gl.fenceSync && gl.getSyncParameter && gl.deleteSync);
+    this._fences = [];
+    this._cw = 0; this._ch = 0; this._cdpr = 0;
     this.applyQuality();
     addEventListener('resize', () => this.resize());
+  }
+  pruneFences() {
+    if (!this.hasSync || !this._fences.length) return;
+    const gl = this.r.getContext(), now = performance.now();
+    while (this._fences.length) {
+      const f = this._fences[0];
+      const st = gl.getSyncParameter(f.sync, gl.SYNC_STATUS);
+      if (st === gl.SIGNALED || st === null || now - f.t > 250) {
+        gl.deleteSync(f.sync);
+        this._fences.shift();
+      } else break;
+    }
+  }
+  gpuBusy() {
+    this.pruneFences();
+    return this._fences.length >= 2;
   }
   applyQuality(dyn = 1) {
     const q = Settings.quality();
@@ -2473,12 +2494,19 @@ class Renderer {
     if (this.mats.ao.defines.AO_SAMPLES !== aoN) { this.mats.ao.defines.AO_SAMPLES = aoN; this.mats.ao.needsUpdate = true; }
     this.resize();
   }
-  resize() {
-    const dpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * (this.isAuto() ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale) * (this.isAuto() || Settings.data.dynRes ? this.dyn : 1);
+  resize(dynOnly = false) {
+    const baseDpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * (this.isAuto() ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale);
+    const dpr = baseDpr * (this.isAuto() || Settings.data.dynRes ? this.dyn : 1);
     const w = innerWidth, h = innerHeight;
-    this.r.setPixelRatio(dpr); this.r.setSize(w, h, false);
-    this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    // Keep the HTML canvas backing buffer at baseDpr so dynamic resolution changes only scale
+    // offscreen render targets and never clear the canvas or reallocate the GPU swapchain mid-match.
+    if (w !== this._cw || h !== this._ch || baseDpr !== this._cdpr) {
+      this._cw = w; this._ch = h; this._cdpr = baseDpr;
+      this.r.setPixelRatio(baseDpr); this.r.setSize(w, h, false);
+      this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    }
     const W = Math.max(2, Math.floor(w * dpr)), H = Math.max(2, Math.floor(h * dpr));
+    if (dynOnly && W === this.width && H === this.height && this.rt) return;
     this.width = W; this.height = H;
     const type = this.halfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType;
     if (this.rt) this.rt.dispose();
@@ -2591,18 +2619,19 @@ class Renderer {
     requestAnimationFrame(step);
   }
   targetFps() { const t = +Settings.data.targetFps || 0, r = this.refreshHz * 0.97; return t > 0 ? Math.min(t, r) : r; }
-  // Called once per frame. `safe` = not in live play, so a tier switch's shader-compile hitch won't be felt.
-  perfTick(dt, safe) {
+  // Called once per frame BEFORE rendering so any resize/tier change never clears a finished frame.
+  // `safe` = not in live play, so a tier switch's shader-compile hitch won't be felt.
+  perfTick(dt, safe, rendered = true, measure = true, canUpgrade = true) {
     const auto = this.isAuto();
     if (this._pend) {
       this._pend.age += dt;
       // Never switch tiers mid-play, unless a downgrade has waited a long time while the game struggles
       if (safe || (this._pend.down && this._pend.age > 10)) { const p = this._pend; this._pend = null; this.setTier(p.tier, p.dyn); return; }
     }
-    if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.resize(); } return; }
-    if (!(dt > 0) || dt >= 0.1 || document.hidden) return;
+    if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.resize(true); } return; }
+    if (!measure || !(dt > 0) || dt >= 0.1 || document.hidden) return;
     if (this._pSkip > 0) { this._pSkip -= dt; return; }
-    this._pAcc += dt; this._pN++; this._pSince += dt;
+    this._pAcc += dt; if (rendered) this._pN++; this._pSince += dt;
     if (this._pAcc < 1) return;
     const fps = this._pN / this._pAcc; this._pAcc = 0; this._pN = 0; this._pT++;
     if (fps > this.refreshHz * 1.08) this.refreshHz = fps;
@@ -2613,7 +2642,7 @@ class Renderer {
       if (this.dyn > minD + 1e-3) {
         // Dropping right after a raise means that step was too far: wait longer before trying again
         if (this._pSince < 6) this._pHold = Math.min(this._pHold * 2, 60);
-        this.dyn = Math.max(minD, this.dyn - (fps < target * 0.6 ? 0.15 : 0.08)); this._pSince = 99; this.resize();
+        this.dyn = Math.max(minD, this.dyn - (fps < target * 0.6 ? 0.15 : 0.08)); this._pSince = 99; this.resize(true);
       } else if (auto && tier > 0 && !this._pend) {
         // Falling back right after a tier upgrade: that tier is too heavy, be slower to retry it
         if (this._pT - this._tUpAt < 25) this._tHold = Math.min(this._tHold * 2, 240);
@@ -2621,8 +2650,8 @@ class Renderer {
       }
     } else if (fps >= hi) {
       if (this.dyn < 1 - 1e-3) {
-        if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.resize(); }
-      } else if (auto && tier < QUALITY_TIERS.length - 1 && !this._pend && ++this._tGood >= this._tHold) {
+        if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.resize(true); }
+      } else if (auto && canUpgrade && tier < QUALITY_TIERS.length - 1 && !this._pend && ++this._tGood >= this._tHold) {
         this._tGood = 0; this._tUpAt = this._pT;
         this._pend = { tier: QUALITY_TIERS[tier + 1], dyn: 0.8, down: false, age: 0 };
       }
@@ -2669,6 +2698,11 @@ class Renderer {
     c.uTint.value.copy(fx.tint); c.uLift.value.copy(fx.lift); c.uVignette.value = fx.vignette; c.uAberr.value = Settings.data.motionFx ? fx.aberr : 0; c.uRadial.value = Settings.data.motionFx ? fx.radial : 0;
     c.uTime.value = time; c.uFlash.value = fx.flash; c.uGrain.value = fx.grain;
     this.pass(this.mats.comp, null);
+    if (this.hasSync) {
+      const gl = this.r.getContext();
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (sync) { gl.flush(); this._fences.push({ sync, t: performance.now() }); }
+    }
   }
   blackTex() { if (!this._black) { this._black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); this._black.needsUpdate = true; } return this._black; }
 }
@@ -10338,7 +10372,7 @@ class GameEngine {
     addEventListener('pointerdown', e => { if (this.showroom && e.target === canvas) dragX = e.clientX; });
     addEventListener('pointermove', e => { if (dragX !== null && this.showroom) { this.showroomDrag += (e.clientX - dragX) * 0.008; dragX = e.clientX; } });
     addEventListener('pointerup', () => { dragX = null; });
-    Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); if (k === 'quality' || k === 'resScale' || k === 'autoTier') { this.applyLightBudget(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
+    Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(true); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); if (k === 'quality' || k === 'resScale' || k === 'autoTier') { this.applyLightBudget(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
     this.last = performance.now();
     requestAnimationFrame((t) => this.frame(t));
     this.ui.loadingDone(async () => {
@@ -10867,9 +10901,12 @@ class GameEngine {
   frame(now) {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
-    try { this.update(dt); } catch (err) { console.error(err); }
     const st = this.mode && this.mode.state;
-    this.renderer.perfTick(dt, !this.inGame || this.paused || !this.mode || (st !== 'play' && st !== 'countdown'));
+    const safe = !this.inGame || this.paused || !this.mode || (st !== 'play' && st !== 'countdown');
+    const measure = !this.paused && !this.showroom;
+    const canUpgrade = this.inGame && !this.paused && !this.showroom && st === 'play';
+    this.renderer.perfTick(dt, safe, this._lastRendered !== false, measure, canUpgrade);
+    try { this._lastRendered = this.update(dt); } catch (err) { console.error(err); this._lastRendered = true; }
     this.input.endFrame();
   }
   isMobilePortrait() {
@@ -10898,7 +10935,7 @@ class GameEngine {
     this.syncCursor();
     // Apply the newest network snapshot (coalesced) once per frame, paused or not
     if (this.mode && this.mode.flushSnap) this.mode.flushSnap();
-    if (this.portraitLocked) { this.renderFrame(0); return; }
+    if (this.portraitLocked) { this.renderFrame(0); return true; }
     this.input.poll();
     this.handleInput(dt);
     const m = this.mode;
@@ -10921,7 +10958,12 @@ class GameEngine {
       }
     }
     this.updateBoostRumble();
-    this.renderFrame(this.paused ? 0 : dt * ts);
+    this._vdtAcc = (this._vdtAcc || 0) + (this.paused ? 0 : dt * ts);
+    if (!this.paused && this._renderedOnce && this.renderer.gpuBusy()) return false;
+    const vdt = this._vdtAcc; this._vdtAcc = 0;
+    this.renderFrame(vdt);
+    this._renderedOnce = true;
+    return true;
   }
   renderFrame(vdt) {
     const w = this.world, R = this.renderer, cam = this.camera;
