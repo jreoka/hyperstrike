@@ -866,7 +866,7 @@ const DEFAULT_SETTINGS = {
   mouseSens: 1.0, camSens: 1.0, invertY: false, deadzone: 0.14, vibration: true,
   fullscreen: false,
   quality: 'high', resScale: 1.0, bloom: true, bloomAmt: 1.0, reflections: true, showFps: false, motionFx: true,
-  master: 0.8, music: 0.45, sfx: 0.9, ambience: 0.6, muted: false,
+  master: 0.8, music: 0.45, sfx: 0.9, muted: false,
   showNames: true, replays: true, showRadar: true,
   playerName: 'PLAYER',
   car: { body: 0, primary: -1, secondary: 3, finish: 0, decal: 1, wheels: 0, trail: 0, explosion: 0 },
@@ -5863,7 +5863,6 @@ class AudioSystem {
     this.master.connect(this.comp).connect(ctx.destination);
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
     this.music = ctx.createGain(); this.music.connect(this.master);
-    this.amb = ctx.createGain(); this.amb.connect(this.master);
     this.verb = ctx.createConvolver(); this.verbGain = ctx.createGain(); this.verbGain.gain.value = 0.35; this.verb.connect(this.verbGain).connect(this.master);
     this.verbSend = ctx.createGain(); this.verbSend.connect(this.verb);
     this.setReverb(2.2);
@@ -5881,7 +5880,7 @@ class AudioSystem {
     if (!this.ctx) return; const s = Settings.data, t = this.ctx.currentTime;
     const m = s.muted ? 0 : s.master;
     this.master.gain.setTargetAtTime(m, t, 0.04); this.sfx.gain.setTargetAtTime(s.sfx, t, 0.05);
-    this.music.gain.setTargetAtTime(s.music * (this.musicMode === 'game' ? 0.45 : 1) * 0.55, t, 0.3); this.amb.gain.setTargetAtTime(s.ambience, t, 0.1);
+    this.music.gain.setTargetAtTime(s.music * (this.musicMode === 'game' ? 0.45 : 1) * 0.55, t, 0.3);
   }
   setReverb(seconds) {
     if (!this.ctx) return; const ctx = this.ctx; const len = Math.floor(ctx.sampleRate * seconds); const b = ctx.createBuffer(2, len, ctx.sampleRate);
@@ -6069,14 +6068,14 @@ class AudioSystem {
   }
   buildCrowd() {
     const ctx = this.ctx;
-    this.humG = ctx.createGain(); this.humG.gain.value = 0; this.humG.connect(this.amb);
+    this.humG = ctx.createGain(); this.humG.gain.value = 0; this.humG.connect(this.master);
     const hum = ctx.createOscillator(); hum.type = 'sine'; hum.frequency.value = 55; const hum2 = ctx.createOscillator(); hum2.type = 'sine'; hum2.frequency.value = 82.5;
     const hl = ctx.createGain(); hl.gain.value = 0.5; hum.connect(this.humG); hum2.connect(hl).connect(this.humG); hum.start(); hum2.start();
   }
   setArena(def) {
     if (!this.ready) return; this.setReverb(def.reverb);
     const indoor = def.indoor;
-    this.humBase = indoor ? 0.03 : 0.0;
+    this.humBase = indoor ? 0.018 : 0.0;
     this.humG.gain.setTargetAtTime(this.humBase, this.ctx.currentTime, 0.5);
   }
   startMusic(mode) {
@@ -9103,7 +9102,7 @@ class UIManager {
     if (this.settingsTab === 'camera') h += slider('fov', 'Field of view', 70, 115, 1, v => v + '°') + slider('camDist', 'Distance', 2.0, 4.5, 0.05, v => (+v).toFixed(2)) + slider('camHeight', 'Height', 0.6, 2.2, 0.05, v => (+v).toFixed(2)) + slider('camAngle', 'Angle', -12, 4, 1, v => v + '°') + slider('camStiffness', 'Stiffness', 0, 1, 0.05, v => (+v).toFixed(2)) + slider('swivelSpeed', 'Swivel speed', 1, 10, 0.5) + tog('ballCamDefault', 'Ball cam on by default') + tog('camShake', 'Camera shake');
     if (this.settingsTab === 'controls') h += slider('mouseSens', 'Mouse sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('camSens', 'Camera (stick) sensitivity', 0.2, 3, 0.1, v => (+v).toFixed(1)) + slider('deadzone', 'Controller deadzone', 0.02, 0.4, 0.01, v => (+v).toFixed(2)) + tog('invertY', 'Invert aerial pitch') + tog('vibration', 'Controller vibration');
     if (this.settingsTab === 'video') h += `<div class="set"><label>Graphics quality</label><div class="seg" style="width:300px">${['low', 'medium', 'high', 'ultra'].map(q => `<button class="${S.quality === q ? 'on' : ''}" data-q="${q}"><span>${q}</span></button>`).join('')}</div></div>` + slider('resScale', 'Resolution scale', 0.5, 1.5, 0.05, v => Math.round(v * 100) + '%') + tog('reflections', 'Floor reflections (High / Ultra)') + tog('bloom', 'Bloom') + slider('bloomAmt', 'Bloom strength', 0, 2, 0.05, v => Math.round(v * 100) + '%') + tog('motionFx', 'Speed effects') + tog('showNames', 'Player name tags') + tog('showRadar', 'Pitch radar') + tog('replays', 'Goal replays') + tog('showFps', 'Show FPS') + tog('fullscreen', 'Fullscreen (F11) — blocks browser shortcuts');
-    if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + slider('ambience', 'Crowd & ambience', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
+    if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
     if (this.settingsTab === 'account') {
       const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
       h += `<div class="mp-box" style="max-width:440px">
@@ -9133,7 +9132,7 @@ class UIManager {
   bindSettings(root = $('menuPanel')) {
     root.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.settingsTab = b.dataset.stab; const sel = `[data-stab="${b.dataset.stab}"]`; if (root.id === 'menuPanel') this.renderPanel(sel); else this.showPauseSettings(sel); });
     const fill = r => r.style.setProperty('--p', (clamp((r.value - r.min) / (r.max - r.min), 0, 1) * 100).toFixed(1) + '%');
-    root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { fill(r); const k = r.dataset.sl; const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music', 'ambience'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
+    root.querySelectorAll('[data-sl]').forEach(r => r.oninput = () => { fill(r); const k = r.dataset.sl; const v = parseFloat(r.value); Settings.data[k] = v; Settings.save(); Events.emit('settings', k); const lab = $('v_' + k); if (lab) lab.textContent = (k === 'resScale' || k === 'bloomAmt' ? Math.round(v * 100) + '%' : ['master', 'sfx', 'music'].includes(k) ? Math.round(v * 100) : (k === 'fov' || k === 'camAngle') ? v + '°' : v.toFixed(2)); });
     root.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const k = b.dataset.tg; Settings.set(k, !Settings.data[k]); b.classList.toggle('on', Settings.data[k]); });
     root.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       this.g.audio.ui('click');
