@@ -3091,15 +3091,22 @@ class ArenaVisual {
       uBlue: { value: this.blue }, uOrange: { value: this.orange }, uLine: { value: new THREE.Color(d.c.wallTint) },
       uGlassA: { value: d.glassA !== undefined ? d.glassA : [0.18, 0.1, 0.32, 0.16, 0.12][d.wall] }, uPadH: { value: s.Rf + 1.3 }
     };
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.FrontSide });
-    injectStandard(mat, 'wall' + d.id, wallUniforms, {
+    const wallShader = {
       vertexDecl: 'attribute vec2 wuv; varying vec2 vWuv;', vertexMain: 'vWuv = wuv;', fragDecl: WALL_FRAG, mapFrag: WALL_MAP,
       roughFrag: 'float roughnessFactor = clamp(mix(fRough, 1.0, 0.25), 0.2, 0.98);', metalFrag: 'float metalnessFactor = fMetal;',
       normalFrag: 'normal = normalize(normal + vec3(wBevel, 0.0) * 0.35);',
       emisFrag: 'totalEmissiveRadiance += fEmis * (uType == 8 ? 0.7 : 0.38);'
-    });
+    };
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.FrontSide });
+    injectStandard(mat, 'wall' + d.id, wallUniforms, wallShader);
+    const matBackSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: false, depthWrite: true, side: THREE.BackSide });
+    injectStandard(matBackSolid, 'wallBackS' + d.id, wallUniforms, Object.assign({}, wallShader, { mapFrag: WALL_MAP + '\nif(vWPos.y > uPadH) discard; diffuseColor.a = 1.0;' }));
+    const matBackGlass = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.BackSide });
+    injectStandard(matBackGlass, 'wallBackG' + d.id, wallUniforms, Object.assign({}, wallShader, { mapFrag: WALL_MAP + '\nif(vWPos.y <= uPadH) discard;' }));
     const mergedWall = mergeGeoms(geos.map(g => fixWinding(g)));
     const wm = new THREE.Mesh(mergedWall, mat); wm.renderOrder = 2; this.add(wm);
+    const wmBackSolid = new THREE.Mesh(mergedWall, matBackSolid); this.add(wmBackSolid);
+    const wmBackGlass = new THREE.Mesh(mergedWall, matBackGlass); wmBackGlass.renderOrder = 2.5; this.add(wmBackGlass);
     const cs = new THREE.Shape(); const cp = s.path(1.5, -s.Rf).pts;
     cs.moveTo(cp[0].x, cp[0].z); for (let i = 1; i < cp.length - 1; i++) cs.lineTo(cp[i].x, cp[i].z);
     const cg = new THREE.ShapeGeometry(cs); cg.rotateX(PI / 2); cg.translate(0, s.H, 0);
