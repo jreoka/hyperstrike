@@ -1,6 +1,5 @@
-node_modules
 .git
 .gitignore
 data
 *.log
-README.md
+rust/*/target
