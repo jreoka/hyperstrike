@@ -8316,7 +8316,7 @@ class OnlineMatchMode extends MatchMode {
     this.mid = Number.isInteger(cfg.mid) ? cfg.mid : null; // server match id, tags our inputs
     this.inputsClosed = false; this.pendingSnap = null;
     this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT(); this._tmpQ3 = new QT();
-    this._ctlSave = makeControls();
+    this._ctlSave = makeControls(); this._liveCtl = makeControls();
     this._old = [];
     w.isOnlineClient = true;
     if (cfg.boostMode === 'unlimited') w.unlimitedBoost = true;
@@ -8338,14 +8338,20 @@ class OnlineMatchMode extends MatchMode {
     PHYS.ballMax = 60;
     super.end();
   }
-  // Every 2 physics ticks: capture controls, send them, and use exactly the sent
+  // Every 2 physics ticks: capture live controls, send them, and use exactly the sent
   // (quantized) values for both ticks so local prediction matches the server.
   beforeTick() {
     const g = this.game, p = g.player;
     this.liveSeq = 0;
     if (!p || !g.online || this.inputsClosed) return;
     if (this.inTick++ % NET_TICKS_PER_INPUT === 0) {
-      const packed = packControls(p.controls);
+      // Sample fresh live input into a separate buffer — NEVER pack from p.controls, because on
+      // frames starting with an odd inTick the previous tick unpacked this.curInput into p.controls,
+      // which would overwrite the player's new input and lock curInput forever on even-tick frames!
+      const live = this._liveCtl;
+      if (this.state === 'ended' || this.state === 'replay' || (g.ui.overlayOpen && !g.ui._sb)) Object.assign(live, makeControls());
+      else g.input.controls(live);
+      const packed = packControls(live);
       const seq = ++this.inSeq;
       this.curInput = packed; this.liveSeq = seq;
       this.inHist.push({ seq, c: packed, t: performance.now() });
