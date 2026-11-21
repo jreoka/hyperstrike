@@ -5859,7 +5859,7 @@ class PowerVisuals {
 
 // ===== 08_audio.js =====
 class AudioSystem {
-  constructor() { this.ctx = null; this.ready = false; this.engines = new Map(); this.musicOn = false; this.musicMode = 'menu'; this.crowdBase = 0.06; }
+  constructor() { this.ctx = null; this.ready = false; this.engines = new Map(); this.musicOn = false; this.musicMode = 'menu'; }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
@@ -6080,10 +6080,9 @@ class AudioSystem {
   setArena(def) {
     if (!this.ready) return; this.setReverb(def.reverb);
     const indoor = def.indoor;
-    this.crowdBase = def.crowdBase; this.humBase = indoor ? 0.03 : 0.0;
+    this.humBase = indoor ? 0.03 : 0.0;
     this.humG.gain.setTargetAtTime(this.humBase, this.ctx.currentTime, 0.5);
   }
-  updateAmbience(dt, intensity) { }
   startMusic(mode) {
     if (!this.ready) return; this.musicMode = mode; this.applyVolumes();
     if (this.musicOn) return; this.musicOn = true;
@@ -7622,7 +7621,6 @@ class MatchMode extends ModeBase {
       if (this.overtime) this.matchOver = true;
       if (g.player) g.camera.mode = 'car';
     }
-    g.arenaExcite = 1.0;
   }
   startReplay() {
     const g = this.game; this.setState('replay'); g.ui.replayTag(true); this.world.recorder.tail = null;
@@ -7894,7 +7892,6 @@ class OnlineMatchMode extends MatchMode {
     g.ui.goalBanner(scoringTeam, scorerName, meta);
     g.ui.feed(`${sName || (scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED${msg.own && !sName ? ' (OWN GOAL)' : ''}`, scoringTeam);
     if (g.player) g.camera.mode = 'car';
-    g.arenaExcite = 1.0;
   }
   deserializeEvent(e) {
     const w = this.world, out = {};
@@ -9697,7 +9694,7 @@ class ReplayPlayer {
 class GameEngine {
   constructor() {
     this.time = 0; this.inGame = false; this.paused = false; this.mode = null; this.world = null; this.player = null;
-    this.carVisuals = []; this.acc = 0; this.arenaExcite = 0; this.mouseSwivel = { x: 0, y: 0 }; this.lastCfg = null; this.showroom = null; this.nextId = 1;
+    this.carVisuals = []; this.acc = 0; this.mouseSwivel = { x: 0, y: 0 }; this.lastCfg = null; this.showroom = null; this.nextId = 1;
     this.carPosV = new V3(); this.ballPosV = new V3(); this.ballQuatV = new QT(); this.showroomDrag = 0;
   }
   async init() {
@@ -10319,9 +10316,8 @@ class GameEngine {
       s.car.isBoosting = !!s.boost; s.car.controls.throttle = 0;
       s.vis.update(1, vdt, this.time, s.boost ? this.fx : null, { pos: s.car.pos, quat: s.car.quat, boost: !!s.boost });
     }
-    this.arenaExcite = Math.max(0, this.arenaExcite - vdt * 0.25);
     const ballHeat = clamp(Math.abs(this.ballPosV.z) / w.shape.L, 0, 1);
-    this.arenaVisual.update(this.time, vdt, Math.max(this.arenaExcite, ballHeat * 0.3));
+    this.arenaVisual.update(this.time, vdt, ballHeat * 0.3);
     this.padVisual && this.padVisual.update(this.time, vdt);
     const U = this.arenaVisual.uniforms.uPulse.value; U.x = damp(U.x, 0, 1.5, vdt); U.y = damp(U.y, 0, 1.5, vdt);
     const goalPulse = (this.mode && this.mode.state === 'goal' && this.mode.stateT < 0.2) || (replaying && this.replay.boomT >= 0 && this.replay.boomT < 0.2);
@@ -10366,7 +10362,6 @@ class GameEngine {
       this._engMode = engMode;
       if (engMode === 1) this.audio.updateEngines(w.cars, p);
       else if (engMode === 2 && this.replay.audioCars) this.audio.updateEngines(this.replay.audioCars, null);
-      this.audio.updateAmbience(vdt, ballHeat);
     }
     const av = this.arenaVisual;
     if (av.refl) { const on = R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]); av.floor.material.envMapIntensity = on ? 0.25 : 0.52; }
