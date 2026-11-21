@@ -2492,20 +2492,83 @@ class Renderer {
   }
   applyQuality(dyn = 1) {
     const q = Settings.quality();
-    this.dyn = dyn; this._pHold = 3; this._pGood = 0; this._pAcc = 0; this._pN = 0; this._tGood = 0; this._pend = null;
-    this.quality = q;
+    this.dyn = dyn; this._pHold = 3; this._pGood = 0; this._pAcc = 0; this._pN = 0; this._tGood = 0; this._pend = null; this._warm = null;
+    const sm = this.r.shadowMap, st0 = sm.type, en0 = sm.enabled;
+    this.setTierShaderState(q);
+    if (sm.type !== st0 || sm.enabled !== en0) this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); });
     this.samples = this.halfFloat ? (q === 'high' || q === 'ultra' ? 4 : q === 'medium' ? 2 : 0) : 0;
-    this.r.shadowMap.enabled = q !== 'low';
-    const st = q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
-    if (this.r.shadowMap.type !== st) { this.r.shadowMap.type = st; this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
-    // Point lights are evaluated per pixel on every lit surface; only the top tiers get the dynamic FX lights
-    this.pointLights = q === 'high' || q === 'ultra' ? 2 : 0;
     this.shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
     this.reflScale = q === 'ultra' ? 0.75 : q === 'high' ? 0.5 : 0;
     this.aoOn = this.halfFloat && (q === 'high' || q === 'ultra');
+    this.resize();
+  }
+  // Everything about a tier that changes which shader programs get used (and nothing that allocates GPU memory),
+  // so it can be flipped to a tier and back to precompile that tier's shaders.
+  setTierShaderState(q) {
+    this.quality = q;
+    this.r.shadowMap.enabled = q !== 'low';
+    this.r.shadowMap.type = q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    // Point lights are evaluated per pixel on every lit surface; only the top tiers get the dynamic FX lights
+    this.pointLights = q === 'high' || q === 'ultra' ? 2 : 0;
     const aoN = q === 'ultra' ? 16 : q === 'high' ? 12 : 8;
     if (this.mats.ao.defines.AO_SAMPLES !== aoN) { this.mats.ao.defines.AO_SAMPLES = aoN; this.mats.ao.needsUpdate = true; }
-    this.resize();
+    if (this.onTierState) this.onTierState();
+  }
+  // Mid-play tier switches: compile the next tier's shaders a few ms per frame (the driver finishes them on
+  // background threads via KHR_parallel_shader_compile), then switch once they are all linked, without a hitch.
+  canWarm() {
+    if (this._canWarm === undefined) { try { this._canWarm = !!this.r.extensions.has('KHR_parallel_shader_compile'); } catch (e) { this._canWarm = false; } }
+    return this._canWarm;
+  }
+  stepWarm(dt, q) {
+    let w = this._warm;
+    if (!w || w.q !== q) {
+      w = this._warm = { q, list: this.compileTargets(q === 'high' || q === 'ultra'), i: 0, progs: [], t: 0, full: false };
+    }
+    w.t += dt;
+    if (!w.full) {
+      const old = this.quality, props = this.r.properties, touched = new Set(), t0 = performance.now();
+      this.setTierShaderState(q);
+      const grab = (mats) => mats && mats.forEach(m => { touched.add(m); const p = props.get(m).currentProgram; if (p) w.progs.push(p); });
+      try {
+        while (w.i < w.list.length && performance.now() - t0 < 3) {
+          const t = w.list[w.i++];
+          if (t.fsMat) { this.quad.material = t.fsMat; grab(this.r.compile(this.quad, this.fsCam, this.fsScene)); }
+          else grab(this.r.compile(t.obj, this.camera, this.scene));
+        }
+        // Last pass over the whole scene catches objects skipped above (ones carrying lights) and anything spawned since
+        if (w.i >= w.list.length) { grab(this.r.compile(this.scene, this.camera)); w.full = true; }
+      } catch (e) { w.full = true; }
+      this.quad.material = null;
+      this.setTierShaderState(old);
+      // compile() pointed these materials at the new tier's programs: make the next render pick the current ones again
+      touched.forEach(m => m.needsUpdate = true);
+      return false;
+    }
+    return w.progs.every(p => typeof p.isReady !== 'function' || p.isReady()) || w.t > 8;
+  }
+  compileTargets(withAO = true) {
+    const hasLight = (obj) => { let found = false; obj.traverse(c => { if (c.isLight) found = true; }); return found; };
+    const seen = new Set(), targets = [];
+    const visit = (obj) => {
+      const ch = obj.children;
+      for (let i = 0; i < ch.length; i++) visit(ch[i]);
+      // compile(obj, cam, scene) also counts lights inside obj, which would build the wrong light-count variant
+      if (!obj.material || hasLight(obj)) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      const kind = (obj.isInstancedMesh ? 'I' : '') + (obj.isSkinnedMesh ? 'S' : '') + (obj.isPoints ? 'P' : '') + (obj.isLine ? 'L' : '');
+      let fresh = false;
+      for (let i = 0; i < mats.length; i++) {
+        const m = mats[i];
+        if (!m) continue;
+        const key = m.id + ':' + kind;
+        if (!seen.has(key)) { seen.add(key); fresh = true; }
+      }
+      if (fresh) targets.push({ obj });
+    };
+    visit(this.scene);
+    for (const m of [this.mats.down, this.mats.up, this.mats.comp, ...(withAO ? [this.mats.ao, this.mats.aoBlur] : [])]) targets.push({ fsMat: m });
+    return targets;
   }
   resize(dynOnly = false) {
     const baseDpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * (this.isAuto() ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale);
@@ -2551,30 +2614,7 @@ class Renderer {
       requestAnimationFrame(() => setTimeout(fin, 0));
       setTimeout(fin, 50);
     });
-    const hasLight = (obj) => {
-      let found = false;
-      obj.traverse(c => { if (c.isLight) found = true; });
-      return found;
-    };
-    const seen = new Set();
-    const targets = [];
-    const visit = (obj) => {
-      const ch = obj.children;
-      for (let i = 0; i < ch.length; i++) visit(ch[i]);
-      if (!obj.material || hasLight(obj)) return;
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      const kind = (obj.isInstancedMesh ? 'I' : '') + (obj.isSkinnedMesh ? 'S' : '') + (obj.isPoints ? 'P' : '') + (obj.isLine ? 'L' : '');
-      let fresh = false;
-      for (let i = 0; i < mats.length; i++) {
-        const m = mats[i];
-        if (!m) continue;
-        const key = m.id + ':' + kind;
-        if (!seen.has(key)) { seen.add(key); fresh = true; }
-      }
-      if (fresh) targets.push({ obj });
-    };
-    visit(this.scene);
-    for (const m of [this.mats.down, this.mats.up, this.mats.comp, this.mats.ao, this.mats.aoBlur]) targets.push({ fsMat: m });
+    const targets = this.compileTargets();
     const total = targets.length || 1;
     let lastYield = performance.now();
     if (onProgress) onProgress(0);
@@ -2638,8 +2678,11 @@ class Renderer {
     const auto = this.isAuto();
     if (this._pend) {
       this._pend.age += dt;
-      // Never switch tiers mid-play, unless a downgrade has waited a long time while the game struggles
-      if (safe || (this._pend.down && this._pend.age > 10)) { const p = this._pend; this._pend = null; this.setTier(p.tier, p.dyn); return; }
+      // Outside live play switch right away. Mid-play, precompile the new tier's shaders in the background and switch
+      // once they're ready; without parallel shader compile that would hitch, so wait for a safe moment instead
+      // (unless a downgrade has waited a long time while the game struggles).
+      const ready = safe || (this.canWarm() ? this.stepWarm(dt, this._pend.tier) : this._pend.down && this._pend.age > 10);
+      if (ready) { const p = this._pend; this._pend = null; this.setTier(p.tier, p.dyn); return; }
     }
     if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.resize(true); } return; }
     if (!measure || !(dt > 0) || dt >= 0.1 || document.hidden) return;
@@ -10386,6 +10429,7 @@ class GameEngine {
     this.ui.progress(0.05, 'Starting renderer'); await tick();
     const canvas = document.createElement('canvas'); canvas.id = 'gl'; document.body.prepend(canvas); canvas.tabIndex = 0;
     this.renderer = new Renderer(canvas);
+    this.renderer.onTierState = () => this.applyLightBudget();
     this.input = new InputManager(); this.audio = new AudioSystem(); this.camera = new CameraSystem(this.renderer.camera);
     this.portraitLocked = false;
     this.syncOrientation();
