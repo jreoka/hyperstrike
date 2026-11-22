@@ -2628,10 +2628,11 @@ class Renderer {
     this.fx = { bloom: 1, thresh: 0.85, exposure: 1, contrast: 1.05, sat: 1.1, tint: new THREE.Vector3(1, 1, 1), aberr: 0, radial: 0, vignette: 0.26, flash: 0, grain: 0.012, lift: new THREE.Vector3(0, 0, 0) };
     this.mats = {
       down: new THREE.ShaderMaterial({
-        uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThresh: { value: 1 }, uPrefilter: { value: 0 } },
+        uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uUvScale: { value: new THREE.Vector2(1, 1) }, uUvMax: { value: new THREE.Vector2(1, 1) }, uThresh: { value: 1 }, uPrefilter: { value: 0 } },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
-        fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uThresh; uniform float uPrefilter; varying vec2 vUv;
+        fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel, uUvScale, uUvMax; uniform float uThresh; uniform float uPrefilter; varying vec2 vUv;
           float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+          vec3 tap(vec2 uv, vec2 d){ return texture2D(tSrc, clamp(uv + d * uTexel, vec2(0.0), uUvMax)).rgb; }
           vec3 pf(vec3 c){
             c = min(c, vec3(28.0));
             float br = max(c.r, max(c.g, c.b));
@@ -2646,20 +2647,20 @@ class Renderer {
             return (a*wa + b*wb + c*wc + d*wd) / (wa + wb + wc + wd);
           }
           void main(){
-            vec2 o = uTexel;
-            vec3 a = texture2D(tSrc, vUv + vec2(-2.0,  2.0)*o).rgb;
-            vec3 b = texture2D(tSrc, vUv + vec2( 0.0,  2.0)*o).rgb;
-            vec3 c = texture2D(tSrc, vUv + vec2( 2.0,  2.0)*o).rgb;
-            vec3 d = texture2D(tSrc, vUv + vec2(-2.0,  0.0)*o).rgb;
-            vec3 e = texture2D(tSrc, vUv).rgb;
-            vec3 f = texture2D(tSrc, vUv + vec2( 2.0,  0.0)*o).rgb;
-            vec3 g = texture2D(tSrc, vUv + vec2(-2.0, -2.0)*o).rgb;
-            vec3 h = texture2D(tSrc, vUv + vec2( 0.0, -2.0)*o).rgb;
-            vec3 i = texture2D(tSrc, vUv + vec2( 2.0, -2.0)*o).rgb;
-            vec3 j = texture2D(tSrc, vUv + vec2(-1.0,  1.0)*o).rgb;
-            vec3 k = texture2D(tSrc, vUv + vec2( 1.0,  1.0)*o).rgb;
-            vec3 l = texture2D(tSrc, vUv + vec2(-1.0, -1.0)*o).rgb;
-            vec3 m = texture2D(tSrc, vUv + vec2( 1.0, -1.0)*o).rgb;
+            vec2 uv0 = vUv * uUvScale;
+            vec3 a = tap(uv0, vec2(-2.0,  2.0));
+            vec3 b = tap(uv0, vec2( 0.0,  2.0));
+            vec3 c = tap(uv0, vec2( 2.0,  2.0));
+            vec3 d = tap(uv0, vec2(-2.0,  0.0));
+            vec3 e = tap(uv0, vec2( 0.0,  0.0));
+            vec3 f = tap(uv0, vec2( 2.0,  0.0));
+            vec3 g = tap(uv0, vec2(-2.0, -2.0));
+            vec3 h = tap(uv0, vec2( 0.0, -2.0));
+            vec3 i = tap(uv0, vec2( 2.0, -2.0));
+            vec3 j = tap(uv0, vec2(-1.0,  1.0));
+            vec3 k = tap(uv0, vec2( 1.0,  1.0));
+            vec3 l = tap(uv0, vec2(-1.0, -1.0));
+            vec3 m = tap(uv0, vec2( 1.0, -1.0));
             vec3 s;
             if(uPrefilter > 0.5){
               vec3 g0 = karis(pf(a), pf(b), pf(d), pf(e));
@@ -2690,11 +2691,14 @@ class Renderer {
         uniforms: {
           tScene: { value: null }, tBloom: { value: null }, tAO: { value: null }, uAO: { value: 0 }, uBloom: { value: 1 }, uExposure: { value: 1 }, uContrast: { value: 1 }, uSat: { value: 1 },
           uTint: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3() }, uVignette: { value: 0.3 }, uAberr: { value: 0 }, uRadial: { value: 0 },
-          uTime: { value: 0 }, uFlash: { value: 0 }, uGrain: { value: 0.03 }, uRes: { value: new THREE.Vector2(1, 1) }
+          uTime: { value: 0 }, uFlash: { value: 0 }, uGrain: { value: 0.03 }, uRes: { value: new THREE.Vector2(1, 1) },
+          uUvScale: { value: new THREE.Vector2(1, 1) }, uUvMax: { value: new THREE.Vector2(1, 1) },
+          uAoUvScale: { value: new THREE.Vector2(1, 1) }, uAoUvMax: { value: new THREE.Vector2(1, 1) }
         },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
         fragmentShader: `uniform sampler2D tScene, tBloom, tAO; uniform float uAO, uBloom, uExposure, uContrast, uSat, uVignette, uAberr, uRadial, uTime, uFlash, uGrain;
-          uniform vec3 uTint, uLift; uniform vec2 uRes; varying vec2 vUv;
+          uniform vec3 uTint, uLift; uniform vec2 uRes, uUvScale, uUvMax, uAoUvScale, uAoUvMax; varying vec2 vUv;
+          vec2 suv(vec2 p){ return clamp(p * uUvScale, vec2(0.0), uUvMax); }
           // Fitted ACES Filmic (Stephen Hill RRT + ODT) for richer highlight hue preservation
           vec3 acesFitted(vec3 color){
             mat3 ACESIn = mat3(
@@ -2718,12 +2722,12 @@ class Renderer {
             vec2 uv = vUv; vec2 d = uv - 0.5; float r2 = dot(d, d);
             vec3 col;
             if(uAberr > 0.0005){ float ca = uAberr * (0.3 + r2*2.0);
-              col.r = texture2D(tScene, uv - d*ca).r; col.g = texture2D(tScene, uv).g; col.b = texture2D(tScene, uv + d*ca).b; }
-            else col = texture2D(tScene, uv).rgb;
+              col.r = texture2D(tScene, suv(uv - d*ca)).r; col.g = texture2D(tScene, suv(uv)).g; col.b = texture2D(tScene, suv(uv + d*ca)).b; }
+            else col = texture2D(tScene, suv(uv)).rgb;
             if(uRadial > 0.001){ vec3 acc = col; float w = 1.0; for(int i=1;i<7;i++){ float s = float(i)/6.0 * uRadial * smoothstep(0.02, 0.3, r2);
-                acc += texture2D(tScene, uv - d*s).rgb * (1.0 - float(i)/8.0); w += 1.0 - float(i)/8.0; } col = acc / w; }
+                acc += texture2D(tScene, suv(uv - d*s)).rgb * (1.0 - float(i)/8.0); w += 1.0 - float(i)/8.0; } col = acc / w; }
             // Ambient occlusion: grounds cars/ball and darkens creases (weaker on very bright/emissive pixels)
-            if(uAO > 0.001){ float ao = texture2D(tAO, uv).r; float lum0 = dot(col, vec3(0.2126, 0.7152, 0.0722));
+            if(uAO > 0.001){ float ao = texture2D(tAO, clamp(uv * uAoUvScale, vec2(0.0), uAoUvMax)).r; float lum0 = dot(col, vec3(0.2126, 0.7152, 0.0722));
               col *= mix(1.0, ao, uAO * (1.0 - smoothstep(1.5, 6.0, lum0))); }
             // Multi-scale lens bloom + very faint horizontal glare
             vec3 bl = texture2D(tBloom, uv).rgb;
@@ -2752,14 +2756,14 @@ class Renderer {
       }),
       // Scalable ambient occlusion (SAO-style) reconstructed from the scene depth buffer
       ao: new THREE.ShaderMaterial({
-        defines: { AO_SAMPLES: 12 },
         uniforms: { tDepth: { value: null }, uProj: { value: new THREE.Matrix4() }, uProjInv: { value: new THREE.Matrix4() }, uTexel: { value: new THREE.Vector2() },
-          uRadius: { value: 0.9 }, uIntensity: { value: 2.6 }, uAspect: { value: 1 } },
+          uUvScale: { value: new THREE.Vector2(1, 1) }, uUvMax: { value: new THREE.Vector2(1, 1) },
+          uSamples: { value: 12 }, uRadius: { value: 0.9 }, uIntensity: { value: 2.6 }, uAspect: { value: 1 } },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
-        fragmentShader: `uniform sampler2D tDepth; uniform mat4 uProj, uProjInv; uniform vec2 uTexel; uniform float uRadius, uIntensity, uAspect; varying vec2 vUv;
-          vec3 viewPos(vec2 uv){ float d = texture2D(tDepth, uv).x; vec4 v = uProjInv * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); return v.xyz / v.w; }
+        fragmentShader: `uniform sampler2D tDepth; uniform mat4 uProj, uProjInv; uniform vec2 uTexel, uUvScale, uUvMax; uniform int uSamples; uniform float uRadius, uIntensity, uAspect; varying vec2 vUv;
+          vec3 viewPos(vec2 uv){ float d = texture2D(tDepth, clamp(uv * uUvScale, vec2(0.0), uUvMax)).x; vec4 v = uProjInv * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); return v.xyz / v.w; }
           void main(){
-            float d0 = texture2D(tDepth, vUv).x;
+            float d0 = texture2D(tDepth, clamp(vUv * uUvScale, vec2(0.0), uUvMax)).x;
             if(d0 >= 0.99999){ gl_FragColor = vec4(1.0); return; }
             vec3 P = viewPos(vUv);
             // Robust normal: pick the neighbour with the smallest depth step on each axis (avoids silhouette halos)
@@ -2772,8 +2776,10 @@ class Renderer {
             float rUV = min(uRadius * uProj[1][1] * 0.5 / max(-P.z, 0.05), 0.09);
             float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
             float ang = ign * 6.2831853, r2 = uRadius * uRadius, occ = 0.0;
-            for(int i = 0; i < AO_SAMPLES; i++){
-              float fi = (float(i) + 0.5) / float(AO_SAMPLES);
+            float fN = float(uSamples);
+            for(int i = 0; i < 16; i++){
+              if(i >= uSamples) break;
+              float fi = (float(i) + 0.5) / fN;
               float a = ang + float(i) * 2.3999632;
               vec2 off = vec2(cos(a) / uAspect, sin(a)) * rUV * sqrt(fi);
               vec3 v = viewPos(vUv + off) - P;
@@ -2781,25 +2787,27 @@ class Renderer {
               float f = max(1.0 - vv / r2, 0.0);
               occ += f * f * max(vn - 0.012 * -P.z, 0.0) / (vv + 0.02);
             }
-            float ao = clamp(1.0 - occ * uIntensity * uRadius / float(AO_SAMPLES), 0.0, 1.0);
+            float ao = clamp(1.0 - occ * uIntensity * uRadius / fN, 0.0, 1.0);
             ao = mix(ao, 1.0, smoothstep(70.0, 170.0, -P.z));
             ao = pow(ao, 1.25);
             gl_FragColor = vec4(ao, ao, ao, 1.0);
           }`
       }),
       aoBlur: new THREE.ShaderMaterial({
-        uniforms: { tSrc: { value: null }, tDepth: { value: null }, uDir: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 2500 } },
+        uniforms: { tSrc: { value: null }, tDepth: { value: null }, uDir: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 2500 },
+          uUvScale: { value: new THREE.Vector2(1, 1) }, uUvMax: { value: new THREE.Vector2(1, 1) },
+          uSrcScale: { value: new THREE.Vector2(1, 1) }, uSrcMax: { value: new THREE.Vector2(1, 1) } },
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
-        fragmentShader: `uniform sampler2D tSrc, tDepth; uniform vec2 uDir; uniform float uNear, uFar; varying vec2 vUv;
-          float lz(vec2 uv){ float d = texture2D(tDepth, uv).x; return (uNear * uFar) / ((uFar - uNear) * d - uFar); }
+        fragmentShader: `uniform sampler2D tSrc, tDepth; uniform vec2 uDir, uUvScale, uUvMax, uSrcScale, uSrcMax; uniform float uNear, uFar; varying vec2 vUv;
+          float lz(vec2 uv){ float d = texture2D(tDepth, clamp(uv * uUvScale, vec2(0.0), uUvMax)).x; return (uNear * uFar) / ((uFar - uNear) * d - uFar); }
           void main(){
             float z0 = lz(vUv), sum = 0.0, wsum = 0.0;
             for(int i = -3; i <= 3; i++){
               vec2 uv = vUv + uDir * float(i);
               float w = exp(-float(i * i) * 0.12) * max(0.0, 1.0 - abs(lz(uv) - z0) / (0.04 * abs(z0) + 0.05));
-              sum += texture2D(tSrc, uv).r * w; wsum += w;
+              sum += texture2D(tSrc, clamp(uv * uSrcScale, vec2(0.0), uSrcMax)).r * w; wsum += w;
             }
-            float a = wsum > 0.0 ? sum / wsum : texture2D(tSrc, vUv).r;
+            float a = wsum > 0.0 ? sum / wsum : texture2D(tSrc, clamp(vUv * uSrcScale, vec2(0.0), uSrcMax)).r;
             gl_FragColor = vec4(a, a, a, 1.0);
           }`
       })
@@ -2809,7 +2817,11 @@ class Renderer {
     if (!QUALITY_TIERS.includes(Settings.data.autoTier)) { Settings.data.autoTier = detectQuality(r.getContext()); Settings.save(); }
     // Framerate governor state (dynamic resolution + Auto tier switching)
     this.dyn = 1; this._pAcc = 0; this._pN = 0; this._pGood = 0; this._pHold = 3; this._pSince = 0; this._pSkip = 0;
-    this._pT = 0; this._tGood = 0; this._tHold = 8; this._tUpAt = -99; this._pend = null;
+    this._pT = 0; this._tGood = 0; this._tHold = 8; this._tUpAt = -99; this._dirtyPipeline = false;
+    this._wantClearShadow = false; this._clearCol = new THREE.Color();
+    this._rtW = 0; this._rtH = 0; this._aW = 0; this._aH = 0;
+    this._uvScale = new THREE.Vector2(1, 1); this._uvMax = new THREE.Vector2(1, 1);
+    this._aoUvScale = new THREE.Vector2(1, 1); this._aoUvMax = new THREE.Vector2(1, 1);
     this.refreshHz = 60; this.probeRefresh();
     const gl = r.getContext && r.getContext();
     this.hasSync = !!(this.halfFloat && gl && gl.fenceSync && gl.getSyncParameter && gl.deleteSync);
@@ -2848,62 +2860,63 @@ class Renderer {
     this.pruneFences();
     return this._fences.length >= 2;
   }
-  applyQuality(dyn = 1) {
+  applyQuality(dyn = 1, live = false) {
     const q = Settings.quality();
-    this.dyn = dyn; this._pHold = 3; this._pGood = 0; this._pAcc = 0; this._pN = 0; this._tGood = 0; this._pend = null; this._warm = null;
-    const sm = this.r.shadowMap, st0 = sm.type, en0 = sm.enabled;
-    this.setTierShaderState(q);
-    if (sm.type !== st0 || sm.enabled !== en0) this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); });
-    this.samples = this.halfFloat ? (q === 'high' || q === 'ultra' ? 4 : q === 'medium' ? 2 : 0) : 0;
-    this.shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
-    this.reflScale = q === 'ultra' ? 0.75 : q === 'high' ? 0.5 : 0;
-    this.aoOn = this.halfFloat && (q === 'high' || q === 'ultra');
-    this.resize();
-  }
-  // Everything about a tier that changes which shader programs get used (and nothing that allocates GPU memory),
-  // so it can be flipped to a tier and back to precompile that tier's shaders.
-  setTierShaderState(q) {
+    this.dyn = dyn; this._pHold = 3; this._pGood = 0; this._pAcc = 0; this._pN = 0; this._tGood = 0;
     this.quality = q;
-    this.r.shadowMap.enabled = q !== 'low';
-    this.r.shadowMap.type = q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     // Point lights are evaluated per pixel on every lit surface; only the top tiers get the dynamic FX lights
     this.pointLights = q === 'high' || q === 'ultra' ? 2 : 0;
-    const aoN = q === 'ultra' ? 16 : q === 'high' ? 12 : 8;
-    if (this.mats.ao.defines.AO_SAMPLES !== aoN) { this.mats.ao.defines.AO_SAMPLES = aoN; this.mats.ao.needsUpdate = true; }
+    this.aoOn = this.halfFloat && (q === 'high' || q === 'ultra');
+    this.mats.ao.uniforms.uSamples.value = q === 'ultra' ? 16 : q === 'high' ? 12 : 8;
+    this.reflScale = q === 'ultra' ? 0.75 : q === 'high' ? 0.5 : 0;
+    if (live) {
+      // Mid-match Auto tier switch: toggle resolution, reflections, AO, bloom, shadows, and point-light intensities
+      // with ZERO shader recompilations, ZERO MSAA/PSO rebuilds, and ZERO render-target or swapchain allocations.
+      this.setShadowsActive(q !== 'low');
+      this._dirtyPipeline = true;
+      this.updateRenderScale();
+      return;
+    }
+    this._dirtyPipeline = false;
+    const auto = this.isAuto();
+    const sm = this.r.shadowMap, st0 = sm.type, en0 = sm.enabled;
+    // In Auto mode keep shadowMap.enabled + PCFSoftShadowMap constant across all tiers so switching
+    // to/from Low mid-match never triggers scene-wide shader recompilation (Low pauses shadow updates instead).
+    sm.enabled = auto ? true : (q !== 'low');
+    sm.type = auto ? THREE.PCFSoftShadowMap : (q === 'medium' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap);
+    if (sm.type !== st0 || sm.enabled !== en0) this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); });
+    this.setShadowsActive(q !== 'low');
+    this.samples = this.halfFloat ? (q === 'high' || q === 'ultra' ? 4 : q === 'medium' ? 2 : 0) : 0;
+    this.shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
     if (this.onTierState) this.onTierState();
+    this.resize();
   }
-  // Mid-play tier switches: compile the next tier's shaders a few ms per frame (the driver finishes them on
-  // background threads via KHR_parallel_shader_compile), then switch once they are all linked, without a hitch.
-  canWarm() {
-    if (this._canWarm === undefined) { try { this._canWarm = !!this.r.extensions.has('KHR_parallel_shader_compile'); } catch (e) { this._canWarm = false; } }
-    return this._canWarm;
+  setShadowsActive(on) {
+    if (on) {
+      this.r.shadowMap.autoUpdate = true;
+      this.r.shadowMap.needsUpdate = true;
+      this._wantClearShadow = false;
+    } else {
+      this.r.shadowMap.autoUpdate = false;
+      this.r.shadowMap.needsUpdate = false;
+      this._wantClearShadow = true;
+      if (this.r.shadowMap.enabled && this.getSun) this.clearShadowMap(this.getSun());
+    }
   }
-  stepWarm(dt, q) {
-    let w = this._warm;
-    if (!w || w.q !== q) {
-      w = this._warm = { q, list: this.compileTargets(q === 'high' || q === 'ultra'), i: 0, progs: [], t: 0, full: false };
-    }
-    w.t += dt;
-    if (!w.full) {
-      const old = this.quality, props = this.r.properties, touched = new Set(), t0 = performance.now();
-      this.setTierShaderState(q);
-      const grab = (mats) => mats && mats.forEach(m => { touched.add(m); const p = props.get(m).currentProgram; if (p) w.progs.push(p); });
-      try {
-        while (w.i < w.list.length && performance.now() - t0 < 3) {
-          const t = w.list[w.i++];
-          if (t.fsMat) { this.quad.material = t.fsMat; grab(this.r.compile(this.quad, this.fsCam, this.fsScene)); }
-          else grab(this.r.compile(t.obj, this.camera, this.scene));
-        }
-        // Last pass over the whole scene catches objects skipped above (ones carrying lights) and anything spawned since
-        if (w.i >= w.list.length) { grab(this.r.compile(this.scene, this.camera)); w.full = true; }
-      } catch (e) { w.full = true; }
-      this.quad.material = null;
-      this.setTierShaderState(old);
-      // compile() pointed these materials at the new tier's programs: make the next render pick the current ones again
-      touched.forEach(m => m.needsUpdate = true);
-      return false;
-    }
-    return w.progs.every(p => typeof p.isReady !== 'function' || p.isReady()) || w.t > 8;
+  clearShadowMap(sun) {
+    const map = sun && sun.shadow && sun.shadow.map;
+    if (!map) return false;
+    const r = this.r, prevT = r.getRenderTarget(), prevA = r.getClearAlpha(), prevScissor = r.getScissorTest();
+    r.getClearColor(this._clearCol);
+    r.setScissorTest(false);
+    r.setRenderTarget(map);
+    r.setClearColor(0xffffff, 1);
+    r.clear(true, true, false);
+    r.setClearColor(this._clearCol, prevA);
+    r.setScissorTest(prevScissor);
+    r.setRenderTarget(prevT);
+    this._wantClearShadow = false;
+    return true;
   }
   compileTargets(withAO = true) {
     const hasLight = (obj) => { let found = false; obj.traverse(c => { if (c.isLight) found = true; }); return found; };
@@ -2929,36 +2942,68 @@ class Renderer {
     return targets;
   }
   resize(dynOnly = false) {
-    const baseDpr = Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * (this.isAuto() ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale);
-    const dpr = baseDpr * (this.isAuto() || Settings.data.dynRes ? this.dyn : 1);
+    if (dynOnly && this.rt) { this.updateRenderScale(); return; }
+    const auto = this.isAuto();
+    // In Auto mode keep the backing canvas & offscreen RTs at a fixed DPR cap so live tier/dyn switches
+    // only adjust sub-viewports and never reallocate textures, framebuffers, or the GPU swapchain mid-match.
+    const baseDpr = auto
+      ? Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : 1.5)
+      : Math.min(devicePixelRatio || 1, this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1) * Settings.data.resScale;
     const w = innerWidth, h = innerHeight;
-    // Keep the HTML canvas backing buffer at baseDpr so dynamic resolution changes only scale
-    // offscreen render targets and never clear the canvas or reallocate the GPU swapchain mid-match.
     if (w !== this._cw || h !== this._ch || baseDpr !== this._cdpr) {
       this._cw = w; this._ch = h; this._cdpr = baseDpr;
       this.r.setPixelRatio(baseDpr); this.r.setSize(w, h, false);
       this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     }
-    const W = Math.max(2, Math.floor(w * dpr)), H = Math.max(2, Math.floor(h * dpr));
-    if (dynOnly && W === this.width && H === this.height && this.rt) return;
-    this.width = W; this.height = H;
+    const W = Math.max(2, Math.floor(w * baseDpr)), H = Math.max(2, Math.floor(h * baseDpr));
+    this._rtW = W; this._rtH = H;
     const type = this.halfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType;
     if (this.rt) this.rt.dispose();
     this.rt = new THREE.WebGLRenderTarget(W, H, { type, samples: this.samples, depthBuffer: true });
     if (this.aoRT) { this.aoRT.dispose(); this.aoRT2.dispose(); this.aoRT = this.aoRT2 = null; }
-    if (this.aoOn) {
+    if (this.halfFloat && (auto || this.aoOn)) {
       this.rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
       const aw = Math.max(2, W >> 1), ah = Math.max(2, H >> 1), o = { type: THREE.UnsignedByteType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
       this.aoRT = new THREE.WebGLRenderTarget(aw, ah, o); this.aoRT2 = new THREE.WebGLRenderTarget(aw, ah, o);
     }
     this.mips.forEach(m => m.dispose()); this.ups.forEach(m => m.dispose()); this.mips = []; this.ups = [];
-    if (Settings.gfx('bloom')) this.allocBloomRTs(W, H, type);
-    this.mats.comp.uniforms.uRes.value.set(W, H);
+    if (auto || Settings.gfx('bloom')) this.allocBloomRTs(W, H, type);
     if (this.reflRT) { this.reflRT.dispose(); this.reflRT = null; }
-    if (this.reflScale > 0) {
-      this.reflRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(W * this.reflScale)), Math.max(2, Math.floor(H * this.reflScale)), { type, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
+    if (auto || this.reflScale > 0) {
+      const rs = this.reflScale > 0 ? this.reflScale : 0.5;
+      this.reflRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(W * rs)), Math.max(2, Math.floor(H * rs)), { type, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
     }
-    Events.emit('resize', W, H);
+    this.updateRenderScale();
+    Events.emit('resize', this.width, this.height);
+  }
+  updateRenderScale() {
+    if (!this.rt || !this._rtW || !this._rtH) return;
+    const auto = this.isAuto();
+    const dprCap = this.quality === 'ultra' ? 2 : this.quality === 'high' ? 1.5 : 1;
+    const targetDpr = Math.min(devicePixelRatio || 1, dprCap)
+      * (auto ? Math.min(QUALITY_RES_SCALE[this.quality], 1) : Settings.data.resScale)
+      * (auto || Settings.data.dynRes ? this.dyn : 1);
+    const rel = this._cdpr > 0 ? Math.min(1, targetDpr / this._cdpr) : 1;
+    const W = Math.max(2, Math.min(this._rtW, Math.floor(this._rtW * rel)));
+    const H = Math.max(2, Math.min(this._rtH, Math.floor(this._rtH * rel)));
+    this.width = W; this.height = H;
+    const sx = W / this._rtW, sy = H / this._rtH;
+    this._uvScale.set(sx, sy);
+    this._uvMax.set(Math.max(0, (W - 0.5) / this._rtW), Math.max(0, (H - 0.5) / this._rtH));
+    const sub = W < this._rtW || H < this._rtH;
+    this.rt.viewport.set(0, 0, W, H);
+    this.rt.scissor.set(0, 0, W, H);
+    this.rt.scissorTest = sub;
+    if (this.aoRT && this.aoRT2) {
+      const aW = Math.max(2, Math.min(this.aoRT.width, W >> 1)), aH = Math.max(2, Math.min(this.aoRT.height, H >> 1));
+      this._aW = aW; this._aH = aH;
+      const asub = aW < this.aoRT.width || aH < this.aoRT.height;
+      this.aoRT.viewport.set(0, 0, aW, aH); this.aoRT.scissor.set(0, 0, aW, aH); this.aoRT.scissorTest = asub;
+      this.aoRT2.viewport.set(0, 0, aW, aH); this.aoRT2.scissor.set(0, 0, aW, aH); this.aoRT2.scissorTest = asub;
+      this._aoUvScale.set(aW / this.aoRT.width, aH / this.aoRT.height);
+      this._aoUvMax.set(Math.max(0, (aW - 0.5) / this.aoRT.width), Math.max(0, (aH - 0.5) / this.aoRT.height));
+    }
+    this.mats.comp.uniforms.uRes.value.set(W, H);
   }
   allocBloomRTs(W, H, type = this.halfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType) {
     let mw = W, mh = H;
@@ -3035,18 +3080,15 @@ class Renderer {
   }
   targetFps() { const t = +Settings.data.targetFps || 0, r = this.refreshHz * 0.97; return t > 0 ? Math.min(t, r) : r; }
   // Called once per frame BEFORE rendering so any resize/tier change never clears a finished frame.
-  // `safe` = not in live play, so a tier switch's shader-compile hitch won't be felt.
+  // `safe` = outside live play, where heavy pipeline sync (MSAA/shadowMap size/light count/noise LOD) can run cleanly.
   perfTick(dt, safe, rendered = true, measure = true, canUpgrade = true) {
     const auto = this.isAuto();
-    if (this._pend) {
-      this._pend.age += dt;
-      // Outside live play switch right away. Mid-play, precompile the new tier's shaders in the background and switch
-      // once they're ready; without parallel shader compile that would hitch, so wait for a safe moment instead
-      // (unless a downgrade has waited a long time while the game struggles).
-      const ready = safe || (this.canWarm() ? this.stepWarm(dt, this._pend.tier) : this._pend.down && this._pend.age > 10);
-      if (ready) { const p = this._pend; this._pend = null; this.setTier(p.tier, p.dyn); return; }
+    if (this._dirtyPipeline && safe) {
+      this._dirtyPipeline = false;
+      this.applyQuality(this.dyn, false);
+      return;
     }
-    if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.resize(true); } return; }
+    if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.updateRenderScale(); } return; }
     if (!measure || !(dt > 0) || dt >= 0.1 || document.hidden) return;
     if (this._pSkip > 0) { this._pSkip -= dt; return; }
     this._pAcc += dt; if (rendered) this._pN++; this._pSince += dt;
@@ -3060,48 +3102,57 @@ class Renderer {
       if (this.dyn > minD + 1e-3) {
         // Dropping right after a raise means that step was too far: wait longer before trying again
         if (this._pSince < 6) this._pHold = Math.min(this._pHold * 2, 60);
-        this.dyn = Math.max(minD, this.dyn - (fps < target * 0.6 ? 0.15 : 0.08)); this._pSince = 99; this.resize(true);
-      } else if (auto && tier > 0 && !this._pend) {
+        this.dyn = Math.max(minD, this.dyn - (fps < target * 0.6 ? 0.15 : 0.08)); this._pSince = 99; this.updateRenderScale();
+      } else if (auto && tier > 0) {
         // Falling back right after a tier upgrade: that tier is too heavy, be slower to retry it
         if (this._pT - this._tUpAt < 25) this._tHold = Math.min(this._tHold * 2, 240);
-        this._pend = { tier: QUALITY_TIERS[tier - 1], dyn: 1, down: true, age: 0 };
+        this.setTier(QUALITY_TIERS[tier - 1], 1, !safe);
       }
     } else if (fps >= hi) {
       if (this.dyn < 1 - 1e-3) {
-        if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.resize(true); }
-      } else if (auto && canUpgrade && tier < QUALITY_TIERS.length - 1 && !this._pend && ++this._tGood >= this._tHold) {
+        if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.updateRenderScale(); }
+      } else if (auto && canUpgrade && tier < QUALITY_TIERS.length - 1 && ++this._tGood >= this._tHold) {
         this._tGood = 0; this._tUpAt = this._pT;
-        this._pend = { tier: QUALITY_TIERS[tier + 1], dyn: 0.8, down: false, age: 0 };
+        this.setTier(QUALITY_TIERS[tier + 1], 0.8, !safe);
       }
     } else { this._pGood = 0; this._tGood = 0; }
   }
-  setTier(tier, dyn) {
+  setTier(tier, dyn, live = false) {
     Settings.data.autoTier = tier; Settings.save();
-    this.applyQuality(dyn); this._pSkip = 2.5; this._pSince = 0;
+    this.applyQuality(dyn, live); this._pSkip = 2.5; this._pSince = 0;
     Events.emit('settings', 'autoTier');
   }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(time) {
     if (this.contextLost) return;
     const r = this.r, fx = this.fx;
+    if (this._wantClearShadow && r.shadowMap.enabled && this.getSun) {
+      if (!this.clearShadowMap(this.getSun())) r.shadowMap.needsUpdate = true;
+    }
     r.setRenderTarget(this.rt); r.render(this.scene, this.camera);
     const aoOn = this.aoOn && this.aoRT && this.rt.depthTexture;
     if (aoOn) {
       const cam = this.camera, a = this.mats.ao.uniforms, b = this.mats.aoBlur.uniforms, depth = this.rt.depthTexture;
       a.tDepth.value = depth; a.uProj.value.copy(cam.projectionMatrix); a.uProjInv.value.copy(cam.projectionMatrixInverse);
       a.uTexel.value.set(2 / this.width, 2 / this.height); a.uAspect.value = cam.aspect;
+      a.uUvScale.value.copy(this._uvScale); a.uUvMax.value.copy(this._uvMax);
       this.pass(this.mats.ao, this.aoRT);
       b.tDepth.value = depth; b.uNear.value = cam.near; b.uFar.value = cam.far;
-      b.tSrc.value = this.aoRT.texture; b.uDir.value.set(1 / this.aoRT.width, 0); this.pass(this.mats.aoBlur, this.aoRT2);
-      b.tSrc.value = this.aoRT2.texture; b.uDir.value.set(0, 1 / this.aoRT.height); this.pass(this.mats.aoBlur, this.aoRT);
+      b.uUvScale.value.copy(this._uvScale); b.uUvMax.value.copy(this._uvMax);
+      b.uSrcScale.value.copy(this._aoUvScale); b.uSrcMax.value.copy(this._aoUvMax);
+      const aW = this._aW || this.aoRT.width, aH = this._aH || this.aoRT.height;
+      b.tSrc.value = this.aoRT.texture; b.uDir.value.set(1 / aW, 0); this.pass(this.mats.aoBlur, this.aoRT2);
+      b.tSrc.value = this.aoRT2.texture; b.uDir.value.set(0, 1 / aH); this.pass(this.mats.aoBlur, this.aoRT);
     }
     const bloomOn = Settings.gfx('bloom') && fx.bloom > 0.01;
     const d = this.mats.down, u = this.mats.up;
     if (bloomOn) {
-      if (!this.mips.length && this.width && this.height) this.allocBloomRTs(this.width, this.height);
-      let src = this.rt.texture, sw = this.width, sh = this.height;
+      if (!this.mips.length && this._rtW && this._rtH) this.allocBloomRTs(this._rtW, this._rtH);
+      let src = this.rt.texture, sw = this._rtW || this.width, sh = this._rtH || this.height;
       for (let i = 0; i < this.mips.length; i++) {
         d.uniforms.tSrc.value = src; d.uniforms.uTexel.value.set(1 / sw, 1 / sh); d.uniforms.uPrefilter.value = i === 0 ? 1 : 0; d.uniforms.uThresh.value = fx.thresh * 1.3 + 0.1;
+        if (i === 0) { d.uniforms.uUvScale.value.copy(this._uvScale); d.uniforms.uUvMax.value.copy(this._uvMax); }
+        else { d.uniforms.uUvScale.value.set(1, 1); d.uniforms.uUvMax.value.set(1, 1); }
         this.pass(d, this.mips[i]); src = this.mips[i].texture; sw = this.mips[i].width; sh = this.mips[i].height;
       }
       let cur = this.mips[this.mips.length - 1];
@@ -3114,6 +3165,8 @@ class Renderer {
     const c = this.mats.comp.uniforms;
     c.tScene.value = this.rt.texture; c.tBloom.value = bloomOn ? this.bloomTex : this.blackTex();
     c.tAO.value = aoOn ? this.aoRT.texture : this.blackTex(); c.uAO.value = aoOn ? 0.85 : 0;
+    c.uUvScale.value.copy(this._uvScale); c.uUvMax.value.copy(this._uvMax);
+    c.uAoUvScale.value.copy(this._aoUvScale); c.uAoUvMax.value.copy(this._aoUvMax);
     c.uBloom.value = fx.bloom * 0.34 * (Settings.gfx('bloomAmt') === undefined ? 1 : Settings.gfx('bloomAmt')); c.uExposure.value = fx.exposure; c.uContrast.value = fx.contrast; c.uSat.value = fx.sat;
     c.uTint.value.copy(fx.tint); c.uLift.value.copy(fx.lift); c.uVignette.value = fx.vignette; c.uAberr.value = Settings.data.motionFx ? fx.aberr : 0; c.uRadial.value = Settings.data.motionFx ? fx.radial : 0;
     c.uTime.value = time; c.uFlash.value = fx.flash; c.uGrain.value = fx.grain;
@@ -5799,9 +5852,9 @@ class ArenaVisual {
   update(t, dt, excite) {
     this.uniforms.uTime.value = t; this.skyMat.uniforms.uTime.value = t;
     if (this.crowdMat) this.crowdMat.uniforms.uExcite.value = excite;
-    const p = this.uniforms.uPulse.value;
-    if (this.blueGoalLight) this.blueGoalLight.intensity = 22 + p.x * 110;
-    if (this.orangeGoalLight) this.orangeGoalLight.intensity = 22 + p.y * 110;
+    const p = this.uniforms.uPulse.value, glOn = this.renderer.pointLights >= 1 ? 1 : 0;
+    if (this.blueGoalLight) this.blueGoalLight.intensity = (22 + p.x * 110) * glOn;
+    if (this.orangeGoalLight) this.orangeGoalLight.intensity = (22 + p.y * 110) * glOn;
     for (const u of this.updaters) u(t, dt);
   }
   dispose() {
@@ -11479,7 +11532,17 @@ class GameEngine {
     this.ui.progress(0.05, 'Starting renderer'); await tick();
     const canvas = document.createElement('canvas'); canvas.id = 'gl'; document.body.prepend(canvas); canvas.tabIndex = 0;
     this.renderer = new Renderer(canvas);
-    this.renderer.onTierState = () => this.applyLightBudget();
+    this.renderer.onTierState = () => {
+      this.applyLightBudget();
+      const av = this.arenaVisual;
+      if (av && av.sun) {
+        if (av.sun.shadow.map && (av.sun.shadow.mapSize.x !== this.renderer.shadowSize || av.sun.shadow.mapSize.y !== this.renderer.shadowSize)) {
+          av.sun.shadow.map.dispose(); av.sun.shadow.map = null;
+        }
+        av.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize);
+      }
+    };
+    this.renderer.getSun = () => this.arenaVisual && this.arenaVisual.sun;
     this.input = new InputManager(); this.audio = new AudioSystem(); this.camera = new CameraSystem(this.renderer.camera);
     this.portraitLocked = false;
     this.syncOrientation();
@@ -11515,7 +11578,7 @@ class GameEngine {
     addEventListener('pointerdown', e => { if (this.showroom && e.target === canvas) dragX = e.clientX; });
     addEventListener('pointermove', e => { if (dragX !== null && this.showroom) { this.showroomDrag += (e.clientX - dragX) * 0.008; dragX = e.clientX; } });
     addEventListener('pointerup', () => { dragX = null; });
-    Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(true); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); if (k === 'quality' || k === 'resScale' || k === 'autoTier') { this.applyLightBudget(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
+    Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(true); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); });
     Events.on('contextrestored', () => { this.applyLightBudget(); this.ui.toast('GRAPHICS RESTORED'); });
     document.addEventListener('visibilitychange', () => {
       this.audio.setSuspended(document.hidden);
@@ -12319,8 +12382,8 @@ class GameEngine {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
     const st = this.mode && this.mode.state;
-    // Never fire an un-warmed synchronous tier switch on goal/replay frames; only outside active matches
-    const safe = !this.inGame || this.paused || !this.mode || st === 'ended' || st === 'done';
+    // Heavy pipeline sync (MSAA / shadow map size / light shader count / noise LOD) only runs outside live matches
+    const safe = !this.inGame || !this.mode || st === 'ended' || st === 'done';
     const measure = !this.paused && !this.showroom;
     const canUpgrade = this.inGame && !this.paused && !this.showroom && st === 'play';
     this.renderer.perfTick(dt, safe, this._lastRendered !== false, measure, canUpgrade);
@@ -12413,6 +12476,7 @@ class GameEngine {
     const ballTeam = replaying ? this.replay.ballTeam : (w.ball.lastTouch ? w.ball.lastTouch.team : -1);
     if (!this.showroom) this.ballVisual.update(this.ballPosV, this.ballQuatV, vdt, ballTeam, w.shape);
     else this.ballVisual.shadow.visible = false;
+    if (R.pointLights < 2) this.ballVisual.light.intensity = 0;
     if (!this.ballVisual.mesh.visible) this.ballVisual.shadow.visible = false;
     if (this.showroom) {
       const s = this.showroom; s.car.quat.setFromAxisAngle(V3Up, this.time * 0.35 + this.showroomDrag); s.car.savePrev();
@@ -12445,7 +12509,9 @@ class GameEngine {
     fxp.aberr = damp(fxp.aberr, sup ? 0.0035 : (p && p.isBoosting ? 0.0012 : 0), 4, vdt || 0.016);
     fxp.radial = damp(fxp.radial, sup && p.isBoosting ? 0.018 : 0, 4, vdt || 0.016);
     if (fxp.flash > 0.001) fxp.flash = damp(fxp.flash, 0, 5.5, vdt || 0.016); else fxp.flash = 0;
-    if (replaying && !this.showroom) {
+    if (R.pointLights < 2) {
+      this.fx.boostLights.forEach(l => l.intensity = 0);
+    } else if (replaying && !this.showroom) {
       const bl = this._blBasis || (this._blBasis = new Basis());
       const rBoost = this.replay.overrides.map((o, idx) => ({ o, v: this.carVisuals[idx] })).filter(x => x.o && x.v && x.o.boost && !x.o.dead).sort((a, b) => a.o.pos.distanceToSquared(R.camera.position) - b.o.pos.distanceToSquared(R.camera.position));
       this.fx.boostLights.forEach((l, i) => { const x = rBoost[i]; if (x) { const T = TRAILS[x.v.custom.trail]; bl.fromQuat(x.o.quat); l.position.copy(x.o.pos).addScaledVector(bl.f, -1.0); l.intensity = 5; l.color.setHex(x.o.nitro ? 0x4afff0 : T.outer < 0 ? TEAM_GLOW[x.v.car.team] : T.rainbow ? 0xffffff : T.outer); } else l.intensity = 0; });
@@ -12459,6 +12525,7 @@ class GameEngine {
     if (this.powerVis) this.powerVis.update(vdt, this.time, replaying);
     this.fx.ambientEmit(vdt, R.camera.position);
     this.fx.update(vdt, R.camera);
+    if (R.pointLights < 2) for (const L of this.fx.lights) L.l.intensity = 0;
     if (this.audio.ready) {
       this.audio.updateListener(R.camera);
       // Replays drive the engines from the recorded footage; silence pooled voices on live<->replay
