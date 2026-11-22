@@ -11384,11 +11384,17 @@ class UIManager {
         const r = e.getBoundingClientRect();
         if (sameRow && (r.bottom <= r0.top + 2 || r.top >= r0.bottom - 2)) continue;
         const dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
+        const vert = dir === 'up' || dir === 'down';
         const along = dir === 'up' ? -dy : dir === 'down' ? dy : dir === 'left' ? -dx : dx;
-        const perp = dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy);
         if (along <= 4) continue;
-        const perpWeight = (dir === 'up' || dir === 'down') && (inSetRow || e.closest('.set')) ? 0.35 : 2.2;
-        const sc = along + perp * perpWeight;
+        let sc;
+        if (vert) {
+          const hGap = r.right < r0.left ? r0.left - r.right : r.left > r0.right ? r.left - r0.right : 0;
+          const perpWeight = (inSetRow || e.closest('.set')) ? 0.35 : 2.2;
+          sc = along + hGap * perpWeight + Math.abs(dx) * 0.05;
+        } else {
+          sc = along + Math.abs(dy) * 2.2;
+        }
         if (sc < bs) { bs = sc; best = e; }
       }
       return best;
