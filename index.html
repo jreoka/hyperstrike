@@ -297,7 +297,7 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #scorebar .tname{display:flex;align-items:center;height:38px;padding:0 18px;font-size:13px;font-stretch:85%;letter-spacing:.2em;min-width:96px;background:rgba(6,10,22,.86);color:#fff}
 #scorebar .team.blue .tname{justify-content:flex-start;clip-path:polygon(14px 0,100% 0,100% 100%,0 100%);border-bottom:2px solid var(--blue)}
 #scorebar .team.orange .tname{justify-content:flex-end;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 100%,0 100%);border-bottom:2px solid var(--orange)}
-#scorebar .tscore{display:flex;align-items:center;justify-content:center;height:54px;font-size:40px;font-stretch:80%;min-width:62px;text-align:center;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.25);font-variant-numeric:tabular-nums}
+#scorebar .tscore{display:flex;align-items:center;justify-content:center;height:54px;font-size:40px;font-stretch:80%;min-width:62px;text-align:center;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.25);font-variant-numeric:tabular-nums;will-change:transform}
 #scorebar .team.blue .tscore{background:linear-gradient(180deg,#5aa8ff,var(--blue2))}
 #scorebar .team.orange .tscore{background:linear-gradient(180deg,#ffa54a,var(--orange2))}
 #scorebar .tscore.bump{animation:bump .9s cubic-bezier(.2,1.6,.4,1)}
@@ -333,14 +333,14 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #speedo.ss{border-color:var(--accent)}
 #speedo.ss b{color:var(--accent);text-shadow:0 0 14px var(--accent)}
 #countdown{position:absolute;top:38%;left:50%;transform:translate(-50%,-50%);font-size:min(24vw,210px);font-weight:900;font-style:italic;font-stretch:78%;color:#fff;
-  text-shadow:0 0 40px rgba(62,242,255,.8),0 10px 0 rgba(0,0,0,.35);-webkit-text-stroke:2px rgba(62,242,255,.6);opacity:0}
+  text-shadow:0 0 40px rgba(62,242,255,.8),0 10px 0 rgba(0,0,0,.35);-webkit-text-stroke:2px rgba(62,242,255,.6);opacity:0;will-change:transform,opacity}
 #countdown.go{color:var(--gold);-webkit-text-stroke:2px rgba(255,255,255,.6);text-shadow:0 0 60px rgba(255,210,63,.9),0 10px 0 rgba(0,0,0,.35)}
 #countdown.anim{animation:cd .95s cubic-bezier(.1,.9,.3,1) forwards}
 @keyframes cd{0%{opacity:0;transform:translate(-50%,-50%) scale(2.6) skewX(-8deg)}20%{opacity:1;transform:translate(-50%,-50%) scale(1)}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(.85)}}
-#goalBanner{position:absolute;top:26%;left:0;right:0;display:flex;flex-direction:column;align-items:center;opacity:0}
+#goalBanner{position:absolute;top:26%;left:0;right:0;display:flex;flex-direction:column;align-items:center;opacity:0;will-change:transform,opacity;contain:layout style}
 #goalBanner.show{animation:gb 3.2s cubic-bezier(.2,.9,.3,1) forwards}
 #goalBanner .big{font-size:min(17vw,180px);font-weight:900;font-style:italic;font-stretch:75%;letter-spacing:.02em;line-height:.9;padding:0 40px;
-  background:linear-gradient(180deg,#fff 30%,var(--tc,#9fd0ff) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 30px var(--tc,var(--blue))) drop-shadow(0 8px 0 rgba(0,0,0,.4))}
+  background:linear-gradient(180deg,#fff 30%,var(--tc,#9fd0ff) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 18px var(--tc,var(--blue))) drop-shadow(0 6px 0 rgba(0,0,0,.4))}
 #goalBanner .strip{position:relative;margin-top:16px;padding:10px 80px;font-size:22px;font-weight:800;letter-spacing:.22em;font-style:italic;font-stretch:85%;color:#fff;overflow:hidden;
   clip-path:polygon(24px 0,100% 0,calc(100% - 24px) 100%,0 100%)}
 #goalBanner .strip::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 35%,rgba(255,255,255,.5) 50%,transparent 65%);animation:ctaSweep 1.6s ease-in-out infinite}
@@ -358,7 +358,7 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #feed .f.out{animation:feedOut .5s forwards}
 @keyframes feedIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
 @keyframes feedOut{to{opacity:0;transform:translateX(30px)}}
-#popup{position:absolute;top:58%;left:50%;transform:translate(-50%,-50%);font-size:36px;font-weight:900;font-style:italic;font-stretch:80%;letter-spacing:.1em;opacity:0;text-shadow:0 0 24px rgba(62,242,255,.9),0 4px 0 rgba(0,0,0,.4);white-space:nowrap}
+#popup{position:absolute;top:58%;left:50%;transform:translate(-50%,-50%);font-size:36px;font-weight:900;font-style:italic;font-stretch:80%;letter-spacing:.1em;opacity:0;text-shadow:0 0 24px rgba(62,242,255,.9),0 4px 0 rgba(0,0,0,.4);white-space:nowrap;will-change:transform,opacity}
 #popup.show{animation:pop 1.4s ease-out forwards}
 @keyframes pop{0%{opacity:0;transform:translate(-50%,-30%) scale(.6)}15%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}70%{opacity:1}100%{opacity:0;transform:translate(-50%,-80%) scale(1)}}
 #ballArrow{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;left:50%;top:50%}
@@ -383,7 +383,7 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #afkWarn i{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 10px var(--gold);flex:none}
 #afkWarn b{color:var(--gold);font-family:var(--mono);font-style:normal;font-size:15px}
 @keyframes afkPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
-#flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:9;mix-blend-mode:screen}
+#flash{display:none}
 .ping{display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 9px;background:rgba(6,10,22,.66);border:1px solid var(--line);
   font:700 11px var(--mono);letter-spacing:.04em;color:var(--ink2);white-space:nowrap;pointer-events:none;user-select:none;--pc:var(--good)}
 .ping .bars{display:inline-flex;align-items:flex-end;gap:2px;height:12px}
@@ -6315,7 +6315,7 @@ const AURA_VERT = `varying vec3 vP; varying vec3 vN; varying vec3 vV; void main(
 class PowerVisuals {
   constructor(game) {
     this.g = game; this.scene = game.renderer.scene; this.group = new THREE.Group(); this.scene.add(this.group);
-    this.t = 0; this.tornadoMeshes = new Map(); this.carFx = new Map(); this.lines = []; this.projs = []; this.pillars = [];
+    this.t = 0; this.tornadoMeshes = new Map(); this.tornadoPool = []; this.carFx = new Map(); this.lines = []; this.projs = []; this.pillars = [];
     const add = (o) => { this.group.add(o); return o; };
     const tg = new THREE.LatheGeometry(Array.from({ length: 26 }, (_, i) => { const y = i / 25 * 17; return new THREE.Vector2(0.4 + Math.pow(y / 17, 1.7) * 6.5 + Math.sin(y * 0.9) * 0.22, y); }), 40);
     this.tornadoGeo = tg;
@@ -6327,6 +6327,12 @@ class PowerVisuals {
           float fade = smoothstep(0.0, 0.03, vUv.y) * smoothstep(1.0, 0.7, vUv.y) * smoothstep(0.8, 2.8, vDist);
           gl_FragColor = vec4(uCol * (0.05 + st * 0.6) * fade * uA, 1.0); }`
     });
+    for (let i = 0; i < 4; i++) {
+      const outer = add(new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)));
+      const inner = add(new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)));
+      inner.scale.set(0.6, 0.92, 0.6); outer.visible = inner.visible = false;
+      this.tornadoPool.push({ outer, inner });
+    }
     this.ice = add(new THREE.Mesh(new THREE.IcosahedronGeometry(PHYS.ballR * 1.32, 1), (() => {
       const m = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.62, flatShading: true, depthWrite: false, envMapIntensity: 2 });
       injectStandard(m, 'iceShell', {}, { emisFrag: `{ float fr = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.0); totalEmissiveRadiance += vec3(0.35, 0.75, 1.0) * (0.25 + fr * 1.6); }` });
@@ -6357,6 +6363,18 @@ class PowerVisuals {
         fragmentShader: `uniform float uA; uniform vec3 uCol; varying vec2 vUv; void main(){ gl_FragColor = vec4(uCol * pow(1.0 - vUv.y, 1.5) * (0.6 + 0.4 * sin(vUv.y * 40.0)) * uA * 2.5, 1.0); }` })));
       m.visible = false; this.pillars.push({ m, t: 1, dur: 0.8 });
     }
+    for (const v of game.carVisuals) this.carFxFor(v);
+  }
+  setWarmup(on) {
+    this.group.visible = on;
+    this.ice.visible = on; this.ballAura.visible = on;
+    if (this.ballRings[0]) this.ballRings[0].visible = on;
+    if (this.lines[0]) this.lines[0].line.visible = this.lines[0].head.visible = on;
+    if (this.projs[0]) this.projs[0].fist.visible = this.projs[0].boot.visible = on;
+    if (this.pillars[0]) { this.pillars[0].m.visible = on; if (on) this.pillars[0].m.material.uniforms.uA.value = 1; }
+    if (this.tornadoPool[0]) { this.tornadoPool[0].outer.visible = this.tornadoPool[0].inner.visible = on; }
+    const firstCarFx = this.carFx.values().next().value;
+    if (firstCarFx) firstCarFx.spikes.visible = firstCarFx.aura.visible = firstCarFx.ring.visible = on;
   }
   auraMat(hex, mode) {
     return new THREE.ShaderMaterial({
@@ -6421,7 +6439,7 @@ class PowerVisuals {
     }
   }
   resetTransient() {
-    for (const [, m] of this.tornadoMeshes) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); }
+    for (const [, m] of this.tornadoMeshes) { m.outer.visible = m.inner.visible = false; this.tornadoPool.push(m); }
     this.tornadoMeshes.clear();
     this.ice.visible = false; this.ballAura.visible = false;
     for (const r of this.ballRings) r.visible = false;
@@ -6480,7 +6498,16 @@ class PowerVisuals {
     const tornados = show ? (R ? R.tornados : P.tornados) : [];
     for (const T of tornados) {
       const key = T.id;
-      let m = this.tornadoMeshes.get(key); if (!m) { m = { outer: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)), inner: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)) }; m.inner.scale.set(0.6, 0.92, 0.6); this.group.add(m.outer); this.group.add(m.inner); this.tornadoMeshes.set(key, m); }
+      let m = this.tornadoMeshes.get(key);
+      if (!m) {
+        m = this.tornadoPool.pop();
+        if (!m) {
+          m = { outer: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(false)), inner: new THREE.Mesh(this.tornadoGeo, this.tornadoMat(true)) };
+          m.inner.scale.set(0.6, 0.92, 0.6); this.group.add(m.outer); this.group.add(m.inner);
+        }
+        m.outer.visible = m.inner.visible = true;
+        this.tornadoMeshes.set(key, m);
+      }
       seen.add(key); const a = Math.min(1, T.t * 2.5) * Math.min(1, (T.life - T.t) * 1.5);
       const tp = (!R && T.owner) ? tmpV.copy(this.g.visualPos(T.owner)).add(tmpV2.set(0, T.owner.half.y, 0)) : T.pos;
       for (const mm of [m.outer, m.inner]) { mm.position.copy(tp); mm.material.uniforms.uTime.value = t; mm.material.uniforms.uA.value = a; }
@@ -6490,7 +6517,7 @@ class PowerVisuals {
         fx.alpha.spawn(tp.x + Math.cos(ang) * r, tp.y + y, tp.z + Math.sin(ang) * r, -Math.sin(ang) * 14, 3, Math.cos(ang) * 14, 0.5, 0.3, 0.6, fx.c2, fx.c3, 0.35 * a, 0.5, 0, 0); }
       if (dt > 0 && Math.random() < 0.3) fx.dust(tp, 2, 0xb8c8d8, 2.5, 1.5);
     }
-    for (const [key, m] of this.tornadoMeshes) if (!seen.has(key)) { this.group.remove(m.outer); this.group.remove(m.inner); m.outer.material.dispose(); m.inner.material.dispose(); this.tornadoMeshes.delete(key); }
+    for (const [key, m] of this.tornadoMeshes) if (!seen.has(key)) { m.outer.visible = m.inner.visible = false; this.tornadoPool.push(m); this.tornadoMeshes.delete(key); }
     const ball = w && w.ball; const bp = this.g.ballPosV;
     const iceT = R ? R.ballIceT : (ball ? ball.iceT : 0);
     const antiT = R ? R.ballAntiT : (ball ? ball.antiT : 0);
@@ -6609,7 +6636,13 @@ class AudioSystem {
     const p = this.ctx.createPanner(); p.panningModel = 'equalpower'; p.distanceModel = 'inverse'; p.refDistance = 6; p.maxDistance = 200; p.rolloffFactor = 1.1;
     if (pos) this.setPos(p, pos); return p;
   }
-  setPos(p, pos) { if (p.positionX) { const t = this.ctx.currentTime; p.positionX.setTargetAtTime(pos.x, t, 0.02); p.positionY.setTargetAtTime(pos.y, t, 0.02); p.positionZ.setTargetAtTime(pos.z, t, 0.02); } else p.setPosition(pos.x, pos.y, pos.z); }
+  setPos(p, pos, snap = false) {
+    if (p.positionX) {
+      const t = this.ctx.currentTime;
+      if (snap) { p.positionX.setValueAtTime(pos.x, t); p.positionY.setValueAtTime(pos.y, t); p.positionZ.setValueAtTime(pos.z, t); }
+      else { p.positionX.setTargetAtTime(pos.x, t, 0.02); p.positionY.setTargetAtTime(pos.y, t, 0.02); p.positionZ.setTargetAtTime(pos.z, t, 0.02); }
+    } else p.setPosition(pos.x, pos.y, pos.z);
+  }
   out(node, pos, verb = 0.3) {
     let n = node; if (pos) { const p = this.panner(pos); node.connect(p); n = p; }
     n.connect(this.sfx); if (verb > 0) { const g = this.ctx.createGain(); g.gain.value = verb; n.connect(g).connect(this.verbSend); }
@@ -6624,12 +6657,10 @@ class AudioSystem {
     } else { L.setPosition(cam.position.x, cam.position.y, cam.position.z); L.setOrientation(f.x, f.y, f.z, u.x, u.y, u.z); }
     this.camPos = cam.position;
   }
-  engineFor(car, isPlayer) {
-    if (!this.ready) return null;
-    let e = this.engines.get(car); if (e) return e;
-    const ctx = this.ctx; e = { car, isPlayer };
+  makeEngineVoice(isPlayer, initPos) {
+    const ctx = this.ctx, e = { car: null, isPlayer };
     e.out = ctx.createGain(); e.out.gain.value = 0;
-    e.pan = isPlayer ? null : this.panner(car.pos);
+    e.pan = isPlayer ? null : this.panner(initPos);
     const dest = e.pan || this.sfx; e.out.connect(dest); if (e.pan) e.pan.connect(this.sfx);
     e.o1 = ctx.createOscillator(); e.o1.type = 'sawtooth'; e.o2 = ctx.createOscillator(); e.o2.type = 'triangle'; e.o3 = ctx.createOscillator(); e.o3.type = 'triangle';
     e.lp = ctx.createBiquadFilter(); e.lp.type = 'lowpass'; e.lp.Q.value = 2.2;
@@ -6655,24 +6686,40 @@ class AudioSystem {
     if (isPlayer) { e.wn = this.noiseSrc(false, true); e.wn.loop = true; e.wlp = ctx.createBiquadFilter(); e.wlp.type = 'lowpass'; e.wlp.frequency.value = 600; e.wg = ctx.createGain(); e.wg.gain.value = 0; e.wn.connect(e.wlp).connect(e.wg).connect(this.sfx); e.wn.start(); }
     for (const o of [e.o1, e.o2, e.o3, e.lfo, e.bn, e.blfo, e.rum, e.bt, e.bt2, e.tn]) o.start();
     e.wasBoost = false;
-    this.engines.set(car, e); return e;
+    return e;
+  }
+  muteVoice(e, t, tc = 0.05) {
+    e.out.gain.setTargetAtTime(0, t, tc); e.bg.gain.setTargetAtTime(0, t, tc); e.rg.gain.setTargetAtTime(0, t, tc);
+    e.btg.gain.setTargetAtTime(0, t, tc); e.tg.gain.setTargetAtTime(0, t, tc); if (e.wg) e.wg.gain.setTargetAtTime(0, t, tc);
+  }
+  silenceEngines() {
+    if (!this.ready || !this.engines.size) return;
+    const t = this.ctx.currentTime;
+    for (const [, e] of this.engines) { this.muteVoice(e, t, 0.02); e.car = null; e.wasBoost = false; }
+  }
+  engineSlot(slot, isPlayer, initPos) {
+    if (!this.ready) return null;
+    let e = this.engines.get(slot);
+    if (!e) { e = this.makeEngineVoice(isPlayer, initPos); this.engines.set(slot, e); }
+    return e;
   }
   updateEngines(cars, player) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const cam = this.camPos || (player && player.pos) || tmpV;
     const sorted = cars.filter(c => c !== player && !c.demolished).sort((a, b) => a.pos.distanceToSquared(cam) - b.pos.distanceToSquared(cam)).slice(0, 3);
-    const want = new Set(sorted); if (player) want.add(player);
-    for (const [car, e] of this.engines) if (!want.has(car) || car.demolished) { e.out.gain.setTargetAtTime(0, t, 0.05); e.bg.gain.setTargetAtTime(0, t, 0.05); e.rg.gain.setTargetAtTime(0, t, 0.05); e.btg.gain.setTargetAtTime(0, t, 0.05); e.tg.gain.setTargetAtTime(0, t, 0.05); if (e.wg) e.wg.gain.setTargetAtTime(0, t, 0.05); }
-    for (const car of want) {
-      if (car.demolished) continue;
-      const e = this.engineFor(car, car === player); if (!e) continue;
+    const activeSlots = new Set();
+    const drive = (slot, car, isPlayer) => {
+      const e = this.engineSlot(slot, isPlayer, car.pos); if (!e) return;
+      activeSlots.add(slot);
+      const switched = e.car !== car;
+      e.car = car;
       const blasted = (car.blastT || 0) > 0;
       const sp = blasted ? 0 : Math.min(car.vel.length(), PHYS.carMax);
       const thr = blasted ? 0 : Math.abs(car.controls.throttle);
       let dop = 1;
       if (e.pan && cam) {
-        this.setPos(e.pan, car.pos);
+        this.setPos(e.pan, car.pos, switched);
         const rel = tmpV.copy(car.pos).sub(cam); const dist = rel.length() || 1; const vr = car.vel.dot(rel) / dist; dop = clamp(343 / (343 + vr * 2.5), 0.75, 1.35);
       }
       const rpm = (36 + sp * 6.2 + thr * 16 + (car.onGround || blasted ? 0 : 18)) * dop;
@@ -6680,26 +6727,41 @@ class AudioSystem {
       e.o1.frequency.setTargetAtTime(rpm * (1 + gear * 0.35), t, 0.04); e.o2.frequency.setTargetAtTime(rpm * 0.5 * (1 + gear * 0.35), t, 0.04); e.o3.frequency.setTargetAtTime(rpm * 2.01, t, 0.04);
       e.lfo.frequency.setTargetAtTime(rpm * 0.25, t, 0.04);
       e.lp.frequency.setTargetAtTime(280 + sp * 65 + thr * 550, t, 0.05);
-      const vol = (car === player ? 0.12 : 0.16) * (0.35 + thr * 0.5 + sp / 46);
+      const vol = (isPlayer ? 0.12 : 0.16) * (0.35 + thr * 0.5 + sp / 46);
       e.out.gain.setTargetAtTime(vol, t, 0.05);
       const b = car.isBoosting ? 1 : 0;
       const bRamp = clamp((car.boostT || 0) / 0.6, 0, 1);
-      e.bg.gain.setTargetAtTime(b * (car === player ? 0.14 : 0.22), t, b ? 0.025 : 0.09);
+      e.bg.gain.setTargetAtTime(b * (isPlayer ? 0.14 : 0.22), t, b ? 0.025 : 0.09);
       e.bbp.frequency.setTargetAtTime((480 + sp * 18 + bRamp * 180) * dop, t, 0.05);
       e.rum.frequency.setTargetAtTime((78 + sp * 2.1 + bRamp * 18) * dop, t, 0.05);
       e.rlp.frequency.setTargetAtTime(240 + sp * 9 + bRamp * 120, t, 0.05);
-      e.rg.gain.setTargetAtTime(b * (car === player ? 0.16 : 0.22), t, b ? 0.03 : 0.08);
+      e.rg.gain.setTargetAtTime(b * (isPlayer ? 0.16 : 0.22), t, b ? 0.03 : 0.08);
       const bf = (185 + sp * 5.8 + bRamp * 55) * dop;
       e.bt.frequency.setTargetAtTime(bf, t, 0.05);
       e.bt2.frequency.setTargetAtTime(bf * 1.498, t, 0.05);
       e.btf.frequency.setTargetAtTime(700 + sp * 28 + bRamp * 350, t, 0.06);
-      e.btg.gain.setTargetAtTime(b * (car === player ? 0.095 : 0.13), t, b ? 0.035 : 0.09);
-      if (b && !e.wasBoost) this.boostStart(car === player ? null : car.pos);
+      e.btg.gain.setTargetAtTime(b * (isPlayer ? 0.095 : 0.13), t, b ? 0.035 : 0.09);
+      if (switched) e.wasBoost = !!b;
+      else if (b && !e.wasBoost) this.boostStart(isPlayer ? null : car.pos);
       e.wasBoost = !!b;
       const slip = car.onGround ? clamp(((car.slipSpeed || 0) - 2.5) / 8, 0, 1) : 0;
       e.tg.gain.setTargetAtTime(slip * 0.12, t, 0.05); e.tbp.frequency.setTargetAtTime(1800 + sp * 40, t, 0.05);
       if (e.wg) { e.wg.gain.setTargetAtTime(clamp((sp - 8) / 15, 0, 1) * 0.08 + (!blasted && car.supersonic ? 0.05 : 0), t, 0.1); e.wlp.frequency.setTargetAtTime(400 + sp * 60, t, 0.1); }
+    };
+    if (player && !player.demolished) drive('p', player, true);
+    // Keep existing opponent cars on their current pooled voice slot when possible so audio stays smooth
+    const assigned = new Map();
+    const freeSlots = [];
+    for (let i = 0; i < 3; i++) {
+      const s = 'o' + i, e = this.engines.get(s);
+      if (e && e.car && sorted.includes(e.car)) assigned.set(e.car, s);
+      else freeSlots.push(s);
     }
+    for (const car of sorted) {
+      const s = assigned.get(car) || freeSlots.shift();
+      if (s) drive(s, car, false);
+    }
+    for (const [slot, e] of this.engines) if (!activeSlots.has(slot)) { this.muteVoice(e, t); e.car = null; e.wasBoost = false; }
   }
   stopEngines() {
     if (!this.ready) return;
@@ -10130,21 +10192,57 @@ class UIManager {
       if (b && b.textContent !== txt) b.textContent = txt;
     }
   }
+  restartAnim(el, cls) {
+    if (!el) return;
+    if (el.classList.contains(cls)) {
+      const anims = el.getAnimations ? el.getAnimations() : null;
+      if (anims && anims.length) { for (const a of anims) { a.currentTime = 0; a.play(); } return; }
+      el.classList.remove(cls);
+      requestAnimationFrame(() => el.classList.add(cls));
+      return;
+    }
+    el.classList.add(cls);
+  }
+  async warmHud() {
+    // Rasterize large display glyphs (180px GOAL!/countdown) & promote HUD layers behind #loading
+    try {
+      if (document.fonts && document.fonts.ready) {
+        await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 400))]);
+      }
+    } catch (e) { }
+    const hud = $('hud'), gb = $('goalBanner'), cd = $('countdown'), pop = $('popup'), rt = $('replayTag');
+    if (!hud) return;
+    hud.classList.remove('hidden');
+    if (gb) { gb.className = 'blue'; $('gbBig').textContent = 'GOAL!'; $('gbStrip').textContent = 'BLUE SCORES'; $('gbMeta').textContent = '100 KM/H'; gb.style.opacity = '0.01'; }
+    if (cd) { cd.textContent = '3'; cd.style.opacity = '0.01'; }
+    if (pop) { pop.textContent = 'SAVE!'; pop.style.opacity = '0.01'; }
+    if (rt) rt.classList.remove('hidden');
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (gb) gb.style.opacity = '';
+    if (cd) cd.style.opacity = '';
+    if (pop) pop.style.opacity = '';
+    if (rt) rt.classList.add('hidden');
+    this.showHud(false);
+  }
   showHud(v) { $('hud').classList.toggle('hidden', !v); if (!v) { this.clearTags(); this.clearHudFX(); } }
   updateScore(score, bumpTeam) {
     $('scoreBlue').textContent = score[0]; $('scoreOrange').textContent = score[1];
-    if (bumpTeam !== undefined) { const el = bumpTeam === 0 ? $('scoreBlue') : $('scoreOrange'); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+    if (bumpTeam !== undefined) this.restartAnim(bumpTeam === 0 ? $('scoreBlue') : $('scoreOrange'), 'bump');
   }
-  countdown(txt) { const el = $('countdown'); el.textContent = txt; el.classList.toggle('go', txt === 'GO!'); el.classList.remove('anim'); void el.offsetWidth; el.classList.add('anim'); }
+  countdown(txt) { const el = $('countdown'); el.textContent = txt; el.classList.toggle('go', txt === 'GO!'); this.restartAnim(el, 'anim'); }
   goalBanner(team, name, meta) {
-    const el = $('goalBanner'); el.className = team === 0 ? 'blue' : 'orange';
+    const el = $('goalBanner');
+    el.classList.toggle('blue', team === 0); el.classList.toggle('orange', team !== 0);
     $('gbBig').textContent = 'GOAL!'; $('gbStrip').textContent = name ? name.toUpperCase() : (team === 0 ? 'BLUE SCORES' : 'ORANGE SCORES'); $('gbMeta').textContent = meta || '';
-    void el.offsetWidth; el.classList.add('show');
+    this.restartAnim(el, 'show');
   }
   banner(big, strip, team) {
-    const el = $('goalBanner'); el.className = team === 1 ? 'orange' : 'blue'; $('gbBig').textContent = big; $('gbStrip').textContent = strip; $('gbMeta').textContent = ''; void el.offsetWidth; el.classList.add('show');
+    const el = $('goalBanner');
+    el.classList.toggle('blue', team !== 1); el.classList.toggle('orange', team === 1);
+    $('gbBig').textContent = big; $('gbStrip').textContent = strip; $('gbMeta').textContent = '';
+    this.restartAnim(el, 'show');
   }
-  popup(txt, color) { const el = $('popup'); el.textContent = txt; el.style.color = color || '#fff'; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); }
+  popup(txt, color) { const el = $('popup'); el.textContent = txt; el.style.color = color || '#fff'; this.restartAnim(el, 'show'); }
   feed(txt, team, icon) {
     const f = document.createElement('div'); f.className = 'f ' + (team === 0 ? 'blue' : team === 1 ? 'orange' : ''); f.textContent = txt;
     if (icon && POWER_BY_ID[icon]) { f.insertAdjacentHTML('afterbegin', powerIcon(icon)); f.firstChild.style.color = POWER_BY_ID[icon].color; }
@@ -10153,7 +10251,10 @@ class UIManager {
     while ($('feed').children.length > 5) $('feed').lastChild.remove();
   }
   toast(t, ms = 1800) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(this._tt); this._tt = setTimeout(() => el.classList.remove('show'), ms); }
-  flash(a) { const el = $('flash'); el.style.transition = 'none'; el.style.opacity = a; void el.offsetWidth; el.style.transition = 'opacity .6s'; el.style.opacity = 0; }
+  flash(a) {
+    // Route screen flash through the WebGL composite shader (uFlash) to avoid full-screen CSS mix-blend-mode stalls
+    if (this.g && this.g.renderer) this.g.renderer.fx.flash = Math.max(this.g.renderer.fx.flash, a * 0.62);
+  }
   replayTag(v) { $('replayTag').classList.toggle('hidden', !v); }
   setupHud(game) {
     this.clearHudFX();
@@ -10683,8 +10784,11 @@ class GameEngine {
     this.ui.progress(0.8, 'Compiling shaders 0%'); await tick();
     this.applyLightBudget();
     await this.renderer.compileShaders(p => {
-      this.ui.progress(0.8 + p * 0.18, `Compiling shaders ${Math.round(p * 100)}%`);
+      this.ui.progress(0.8 + p * 0.16, `Compiling shaders ${Math.round(p * 100)}%`);
     });
+    this.ui.progress(0.97, 'Warming GPU & HUD'); await tick();
+    this.warmSceneDraw(true);
+    await this.ui.warmHud();
     this.renderFrame(0.016);
     this.ui.progress(1, 'Ready'); await tick();
     canvas.addEventListener('click', () => {
@@ -10782,13 +10886,64 @@ class GameEngine {
   }
   botNames(n) { const a = BOT_NAMES.slice().sort(() => Math.random() - 0.5); return a.slice(0, n); }
   setMode(mode) { if (this.mode) this.mode.end(); this.mode = mode; mode.start(); this.ui.setupHud(this); }
+  // Force real draw calls into the offscreen targets (MSAA rt + reflection reflRT) for every mesh
+  // and hidden FX/power visual so GPU drivers finish PSO compilation & VBO upload before live play.
+  warmSceneDraw(full = false) {
+    const R = this.renderer;
+    if (!R || R.contextLost) return;
+    this.applyLightBudget();
+    const sc = R.scene, cam = R.camera, r = R.r;
+    if (full && this.fx) {
+      // Dry-run goal explosion particle/timer paths once to warm V8 JIT, then clear immediately
+      const p0 = new V3(0, 3, 0), n0 = new V3(0, 0, 1);
+      for (let t = 0; t < 5; t++) { this.fx.goalExplosion(p0, 0, t, n0); this.fx.clear(); }
+    }
+    try { r.compile(sc, cam); } catch (e) { }
+    const savedCull = [];
+    sc.traverse(o => { if (o.frustumCulled) { savedCull.push(o); o.frustumCulled = false; } });
+    const fx = this.fx;
+    const w0 = fx && fx.waves[0];
+    const prevW0 = w0 ? w0.m.visible : false;
+    const prevNova = fx ? fx.nova.visible : false;
+    const savedPos = cam.position.clone(), savedQuat = cam.quaternion.clone();
+    const moveCam = cam.position.y < 0.5;
+    try {
+      if (moveCam) { cam.position.set(0, 6, 18); cam.lookAt(0, 2, 0); }
+      if (fx) {
+        if (w0) { w0.m.visible = true; w0.m.position.set(0, 2, 0); w0.m.scale.set(1, 1, 1); w0.m.material.uniforms.uA.value = 0.5; }
+        fx.nova.visible = true; fx.nova.position.set(0, 2, 0); fx.nova.scale.setScalar(1); fx.nova.material.uniforms.uA.value = 0.5;
+        fx.c2.setHex(0xffffff); fx.c3.setHex(0x3ef2ff);
+        fx.add.spawn(0, 2, 0, 0, 0, 0, 1, 0.5, 0.5, fx.c2, fx.c3, 1, 0, 0, 0);
+        fx.alpha.spawn(0, 2, 0, 0, 0, 0, 1, 0.5, 0.5, fx.c2, fx.c3, 1, 0, 0, 2);
+        fx.add.update(0.001); fx.alpha.update(0.001);
+      }
+      if (this.powerVis) this.powerVis.setWarmup(true);
+      cam.updateMatrixWorld();
+      const av = this.arenaVisual;
+      if (av && av.refl) R.renderReflection(av.refl, [av.floor, this.ballVisual.shadow]);
+      r.setRenderTarget(R.rt); r.render(sc, cam); r.setRenderTarget(null);
+    } catch (e) { }
+    finally {
+      if (moveCam) { cam.position.copy(savedPos); cam.quaternion.copy(savedQuat); cam.updateMatrixWorld(); }
+      for (const o of savedCull) o.frustumCulled = true;
+      if (fx) {
+        if (w0) w0.m.visible = prevW0;
+        fx.nova.visible = prevNova;
+        fx.clear();
+      }
+      if (this.powerVis) this.powerVis.setWarmup(false);
+    }
+  }
   startExhibition() {
     this.inGame = false; this.paused = false;
     const a = this.ui.setup.arena;
     const def = ARENAS[a] || (a === -1 && this.arenaDef) || ARENAS[resolveArena(a)];
     this.newWorld(def, { layout: this.ui.setup.layout || 'default' });
     const names = this.botNames(6); const size = 3;
-    for (const team of [0, 1]) for (let i = 0; i < size; i++) this.addCar(team, { name: names[team * size + i], diff: 2 });
+    for (const team of [0, 1]) for (let i = 0; i < size; i++) {
+      const idx = team * size + i;
+      this.addCar(team, { name: names[idx], diff: 2, custom: Object.assign(this.randomCustom(), { finish: idx % FINISHES.length }) });
+    }
     this.teamNames = ['BLUE', 'ORANGE'];
     this.mode = new MatchMode(this, { teamSize: size, duration: 0, exhibition: true }); this.mode.start();
     this.camera.mode = 'orbit'; this.ui.showHud(false);
@@ -10841,8 +10996,8 @@ class GameEngine {
       mid: msg.mid
     }));
     this.audio.setMusicMode('game');
-    // Tell the server once the arena is built and its first frame has rendered (shader compile
-    // happens there); the server holds the kickoff countdown until every player is ready.
+    // Warm every mesh/FX/power PSO offscreen before telling the server we're ready for kickoff
+    this.warmSceneDraw(false);
     const mode = this.mode;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (this.mode === mode && this.online && Number.isInteger(msg.mid)) this.online.wsSend({ type: 'match_loaded', m: msg.mid });
@@ -10856,6 +11011,7 @@ class GameEngine {
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.setMode(new FreePlayMode(this, cfg)); this.audio.setMusicMode('game');
+    this.warmSceneDraw(false);
   }
   startTraining(cfg) {
     this.lastCfg = { type: 'train', cfg }; this.inGame = true; this.paused = false; this.tournament = null;
@@ -10865,6 +11021,7 @@ class GameEngine {
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.setMode(new TrainingMode(this, cfg)); this.audio.setMusicMode('game');
+    this.warmSceneDraw(false);
   }
   startTournament(cfg) {
     this.tournament = new Tournament(cfg);
@@ -11235,7 +11392,8 @@ class GameEngine {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
     const st = this.mode && this.mode.state;
-    const safe = !this.inGame || this.paused || !this.mode || (st !== 'play' && st !== 'countdown');
+    // Never fire an un-warmed synchronous tier switch on goal/replay frames; only outside active matches
+    const safe = !this.inGame || this.paused || !this.mode || st === 'ended' || st === 'done';
     const measure = !this.paused && !this.showroom;
     const canUpgrade = this.inGame && !this.paused && !this.showroom && st === 'play';
     this.renderer.perfTick(dt, safe, this._lastRendered !== false, measure, canUpgrade);
@@ -11359,6 +11517,7 @@ class GameEngine {
     const sup = p && p.supersonic && cam.mode === 'car';
     fxp.aberr = damp(fxp.aberr, sup ? 0.0035 : (p && p.isBoosting ? 0.0012 : 0), 4, vdt || 0.016);
     fxp.radial = damp(fxp.radial, sup && p.isBoosting ? 0.018 : 0, 4, vdt || 0.016);
+    if (fxp.flash > 0.001) fxp.flash = damp(fxp.flash, 0, 5.5, vdt || 0.016); else fxp.flash = 0;
     if (replaying && !this.showroom) {
       const bl = this._blBasis || (this._blBasis = new Basis());
       const rBoost = this.replay.overrides.map((o, idx) => ({ o, v: this.carVisuals[idx] })).filter(x => x.o && x.v && x.o.boost && !x.o.dead).sort((a, b) => a.o.pos.distanceToSquared(R.camera.position) - b.o.pos.distanceToSquared(R.camera.position));
@@ -11375,9 +11534,13 @@ class GameEngine {
     this.fx.update(vdt, R.camera);
     if (this.audio.ready) {
       this.audio.updateListener(R.camera);
-      // Replays drive the engines from the recorded footage (fresh voices, so live ones never carry over)
+      // Replays drive the engines from the recorded footage; silence pooled voices on live<->replay
+      // transitions instead of tearing down and recreating ~40 WebAudio nodes every goal replay.
       const engMode = !this.inGame || this.paused || concluded ? 0 : replaying ? 2 : 1;
-      if (engMode !== this._engMode && this.audio.engines.size) this.audio.stopEngines();
+      if (engMode !== this._engMode && this.audio.engines.size) {
+        if (engMode === 0) this.audio.stopEngines();
+        else this.audio.silenceEngines();
+      }
       this._engMode = engMode;
       if (engMode === 1) this.audio.updateEngines(w.cars, p);
       else if (engMode === 2 && this.replay.audioCars) this.audio.updateEngines(this.replay.audioCars, null);

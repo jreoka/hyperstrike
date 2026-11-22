@@ -7,6 +7,7 @@ pub mod ws;
 
 use axum::Router;
 use axum::body::Bytes;
+use axum::http::HeaderValue;
 use axum::routing::{any, get, post};
 use config::Config;
 use db::{Database, RateLimiter, atomic_write_async};
@@ -15,10 +16,16 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use ws::RuntimeState;
 
+#[derive(Clone)]
+pub struct CachedIndexHtml {
+    pub bytes: Bytes,
+    pub etag: HeaderValue,
+}
+
 pub struct AppState {
     pub config: Config,
     pub started_at: Instant,
-    pub cached_index_html: RwLock<Option<Bytes>>,
+    pub cached_index_html: RwLock<Option<CachedIndexHtml>>,
     pub db: Mutex<Database>,
     pub rate_limiter: Mutex<RateLimiter>,
     pub rt: Mutex<RuntimeState>,
@@ -255,6 +262,14 @@ mod tests {
             resp.headers().get(header::X_FRAME_OPTIONS).unwrap(),
             "SAMEORIGIN"
         );
+        let etag = resp
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(etag.starts_with('"') && etag.ends_with('"'));
         let set_cookie = resp
             .headers()
             .get(header::SET_COOKIE)
@@ -263,6 +278,23 @@ mod tests {
             .unwrap()
             .to_string();
         let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+
+        // 3b. Conditional GET / with matching If-None-Match -> 304 Not Modified
+        let resp304 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("host", "localhost:8080")
+                    .header(header::IF_NONE_MATCH, &etag)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp304.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(resp304.headers().get(header::ETAG).unwrap(), etag.as_str());
+        assert!(resp304.headers().get(header::SET_COOKIE).is_some());
 
         // 4. Malformed JSON on /api/register -> 400 Invalid JSON
         let resp = app

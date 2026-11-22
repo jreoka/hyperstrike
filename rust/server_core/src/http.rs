@@ -1,4 +1,4 @@
-use crate::AppState;
+use crate::{AppState, CachedIndexHtml};
 use crate::auth::{
     get_bearer_token, has_valid_client_cookie, hash_password, issue_client_cookie, now_ms,
     random_hex, verify_password,
@@ -11,6 +11,7 @@ use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -166,16 +167,29 @@ pub async fn index_html_get(State(state): State<Arc<AppState>>, headers: HeaderM
 
 const EMBEDDED_INDEX_HTML: &str = include_str!("../../../index.html");
 
+fn etag_matches(headers: &HeaderMap, etag: &HeaderValue) -> bool {
+    let Ok(expected) = etag.to_str() else {
+        return false;
+    };
+    let Some(raw) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    raw.split(',').any(|part| {
+        let t = part.trim();
+        t == "*" || t == expected || t.strip_prefix("W/") == Some(expected)
+    })
+}
+
 fn serve_index(state: &AppState, headers: &HeaderMap) -> Response {
     if let Err(resp) = check_origin(state, headers) {
         return *resp;
     }
-    let html_bytes = {
+    let cached_index = {
         let cached = state.cached_index_html.read().unwrap();
         cached.clone()
     };
-    let bytes = match html_bytes {
-        Some(b) => b,
+    let entry = match cached_index {
+        Some(c) => c,
         None => {
             let mut html = std::fs::read_to_string(&state.config.index_file)
                 .unwrap_or_else(|_| EMBEDDED_INDEX_HTML.to_string());
@@ -186,23 +200,33 @@ fn serve_index(state: &AppState, headers: &HeaderMap) -> Response {
                     format!("<script>window.__HYPERSTRIKE_URL__={origin_json};</script></head>");
                 html = html.replacen("</head>", &inject, 1);
             }
-            let b = Bytes::from(html.into_bytes());
+            let bytes = Bytes::from(html.into_bytes());
+            let digest = Sha256::digest(&bytes);
+            let tag = format!("\"{}\"", hex::encode(&digest[..16]));
+            let etag = HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("\"0\""));
+            let c = CachedIndexHtml { bytes, etag };
             let mut cache = state.cached_index_html.write().unwrap();
-            *cache = Some(b.clone());
-            b
+            *cache = Some(c.clone());
+            c
         }
     };
 
     let expected = state.config.expected_origin(headers, false);
     let cookie = issue_client_cookie(&state.config.client_secret, &expected);
 
-    let mut resp = (StatusCode::OK, bytes).into_response();
+    let mut resp = if etag_matches(headers, &entry.etag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        let mut r = (StatusCode::OK, entry.bytes).into_response();
+        r.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        r
+    };
     let h = resp.headers_mut();
-    h.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
-    );
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    h.insert(header::ETAG, entry.etag);
     if let Ok(val) = HeaderValue::from_str(&cookie) {
         h.insert(header::SET_COOKIE, val);
     }
