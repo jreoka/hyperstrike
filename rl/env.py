@@ -160,7 +160,7 @@ class HyperstrikeVecEnv:
     ):
         self.lib = load_rl_env_lib(auto_build=True)
         self.num_envs = num_envs
-        threads = num_threads if num_threads is not None else min(os.cpu_count() or 8, 16)
+        threads = num_threads if num_threads is not None else min(os.cpu_count() or 8, 32)
         self.cfg = EnvConfig(
             num_envs=num_envs,
             min_team_size=min_team_size,

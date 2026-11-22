@@ -5,7 +5,7 @@ import re
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -15,6 +15,7 @@ from prodigyopt import Prodigy
 from tqdm import tqdm
 
 from env import (
+    ACTION_BIN_VALUES,
     ACTION_DIM,
     BALL_DIM,
     MAX_CARS,
@@ -25,15 +26,27 @@ from env import (
     SELF_DIM,
     HyperstrikeVecEnv,
     controls_to_discrete,
-    discrete_to_controls,
 )
 from model import RoPEHyperstrikePolicy
 
 CKPT_PATTERN = re.compile(r"^ckpt_upd_(\d+)\.pt$")
 
 
+class ActionDecoder:
+    """Fast GPU lookup table to convert [..., 8] discrete bin indices -> [..., 8] float32 controls."""
+
+    def __init__(self, device: torch.device):
+        self.tables: List[torch.Tensor] = [
+            torch.from_numpy(vals).to(device) for vals in ACTION_BIN_VALUES
+        ]
+
+    def decode_to_cpu_numpy(self, acts: torch.Tensor) -> np.ndarray:
+        cols = [self.tables[k][acts[..., k]] for k in range(ACTION_DIM)]
+        return torch.stack(cols, dim=-1).cpu().numpy()
+
+
 class HistoryBuffer:
-    """Maintains a sliding window of the last T frame embeddings per (env, car)."""
+    """Maintains a sliding window of the last T frame embeddings per (env, car) on GPU."""
 
     def __init__(self, num_envs: int, max_cars: int, seq_len: int, d_model: int, device: torch.device):
         self.num_envs = num_envs
@@ -52,12 +65,12 @@ class HistoryBuffer:
         self.buf.zero_()
 
     def push(self, frame_emb: torch.Tensor) -> torch.Tensor:
+        # Pure GPU op (no .any() CPU sync!)
         is_fresh = self.buf[:, :, -1, :].abs().sum(dim=-1) == 0.0
         self.buf = torch.roll(self.buf, shifts=-1, dims=2)
         self.buf[:, :, -1, :] = frame_emb
-        if is_fresh.any():
-            expanded = frame_emb.unsqueeze(2).expand(-1, -1, self.seq_len, -1)
-            self.buf = torch.where(is_fresh[:, :, None, None], expanded, self.buf)
+        expanded = frame_emb.unsqueeze(2).expand(-1, -1, self.seq_len, -1)
+        self.buf = torch.where(is_fresh[:, :, None, None], expanded, self.buf)
         return self.buf
 
 
@@ -69,6 +82,7 @@ def obs_to_tensors(obs: Dict[str, np.ndarray], device: torch.device) -> Dict[str
         "other_mask": torch.from_numpy(obs["other_mask"]).to(device, non_blocking=True),
         "pads": torch.from_numpy(obs["pads"]).to(device, non_blocking=True),
         "active_mask": torch.from_numpy(obs["active_mask"]).to(device, non_blocking=True),
+        "team_ids": torch.from_numpy(obs["team_ids"]).to(device, non_blocking=True),
     }
 
 
@@ -117,6 +131,8 @@ def prodigy_effective_lr(optimizer: Prodigy) -> float:
 
 def run_bc_warmstart(
     policy: RoPEHyperstrikePolicy,
+    encode_fn,
+    temporal_fn,
     env: HyperstrikeVecEnv,
     optimizer: Prodigy,
     device: torch.device,
@@ -144,7 +160,7 @@ def run_bc_warmstart(
             t_obs = obs_to_tensors(obs, device)
 
             with torch.no_grad(), torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                e = policy.encode_frame(
+                e = encode_fn(
                     t_obs["self"].reshape(N * C, SELF_DIM),
                     t_obs["ball"].reshape(N * C, BALL_DIM),
                     t_obs["other"].reshape(N * C, OTHER_CARS, OTHER_DIM),
@@ -153,27 +169,32 @@ def run_bc_warmstart(
                 ).view(N, C, policy.d_model)
 
             win = hist.push(e.float())
-            active = obs["active_mask"] > 0.5
+            active = t_obs["active_mask"] > 0.5
             if active.any():
-                seq_embs_list.append(win[active].detach().cpu())
-                target_acts_list.append(torch.from_numpy(expert_disc[active]))
+                seq_embs_list.append(win[active].detach())
+                target_acts_list.append(
+                    torch.from_numpy(expert_disc).to(device, non_blocking=True)[active]
+                )
 
             obs, _, dones, _ = env.step(expert_raw)
             hist.reset_envs(dones)
 
         X = torch.cat(seq_embs_list, dim=0)
         Y = torch.cat(target_acts_list, dim=0)
-        perm = torch.randperm(X.shape[0])
-        bs = 1024
+        n_samp = X.shape[0]
+        perm = torch.randperm(n_samp, device=device)
+        bs = 2048
+        # Drop irregular tail batch so CUDA Graphs only ever see one fixed batch shape
+        end_lim = (n_samp // bs) * bs if n_samp >= bs else n_samp
         losses = []
-        for start in range(0, X.shape[0], bs):
+        for start in range(0, end_lim, bs):
             idx = perm[start : start + bs]
-            xb = X[idx].to(device, non_blocking=True)
-            yb = Y[idx].to(device, non_blocking=True)
+            xb = X[idx]
+            yb = Y[idx]
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                logits, _ = policy.forward_temporal(xb)
-                loss = sum(F.cross_entropy(lg, yb[:, k]) for k, lg in enumerate(logits)) / ACTION_DIM
+                logits, _ = temporal_fn(xb)  # [B, 8, 5]
+                loss = F.cross_entropy(logits.reshape(-1, 5), yb.reshape(-1))
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
             optimizer.step()
@@ -214,13 +235,20 @@ def train(args: argparse.Namespace) -> None:
     policy = RoPEHyperstrikePolicy(
         d_model=args.d_model,
         n_heads=args.n_heads,
-        n_entity_layers=args.entity_layers,
-        n_temporal_layers=args.temporal_layers,
+        mlp_ratio=args.mlp_ratio,
+        entity_steps=args.entity_steps,
+        temporal_steps=args.temporal_steps,
         seq_len=args.seq_len,
+        dt=args.energy_dt,
+        symmetric_k=args.symmetric_k,
     ).to(device)
 
     n_params = sum(p.numel() for p in policy.parameters())
-    print(f"[Model] RoPEHyperstrikePolicy: {n_params / 1e6:.2f}M params (d={args.d_model}, h={args.n_heads}, T={args.seq_len})")
+    print(
+        f"[Model] UnifiedEnergyRoPEPolicy: {n_params / 1e6:.3f}M params "
+        f"(d={args.d_model}, h={args.n_heads}, mlp={args.mlp_ratio}x, "
+        f"ent_steps={args.entity_steps}, tmp_steps={args.temporal_steps}, T={args.seq_len})"
+    )
 
     optimizer = Prodigy(
         policy.parameters(),
@@ -241,7 +269,6 @@ def train(args: argparse.Namespace) -> None:
     best_winrate = -1.0
     resumed = False
 
-    # Auto-resume unless --fresh is explicitly passed
     resume_path: Optional[Path] = None
     if args.resume:
         resume_path = Path(args.resume)
@@ -269,33 +296,43 @@ def train(args: argparse.Namespace) -> None:
         env.close()
         return
 
-    # Optional Behavior Cloning warmstart (only when starting fresh)
-    if args.bc_updates > 0 and not resumed:
-        run_bc_warmstart(policy, env, optimizer, device, args.bc_updates, rollout_steps=16, use_bf16=use_bf16)
+    if args.compile:
+        print(f"[Compile] Enabling torch.compile(mode={args.compile_mode!r})...")
+        if hasattr(torch, "_inductor") and hasattr(torch._inductor, "config"):
+            torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
+        encode_fn = torch.compile(policy.encode_frame, mode=args.compile_mode)
+        temporal_fn = torch.compile(policy.forward_temporal, mode=args.compile_mode)
+    else:
+        encode_fn = policy.encode_frame
+        temporal_fn = policy.forward_temporal
 
-    # Restore PPO bot sparring curriculum
+    if args.bc_updates > 0 and not resumed:
+        run_bc_warmstart(policy, encode_fn, temporal_fn, env, optimizer, device, args.bc_updates, rollout_steps=16, use_bf16=use_bf16)
+
     env.set_bot_curriculum(args.bot_prob, args.bot_diff)
     obs = env.reset()
 
     N, C, T = args.num_envs, MAX_CARS, args.seq_len
     R = args.rollout_steps
     hist = HistoryBuffer(N, C, T, args.d_model, device)
+    decoder = ActionDecoder(device)
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float32
 
     opponent_pool: deque[RoPEHyperstrikePolicy] = deque(maxlen=6)
 
-    buf_self = torch.zeros((R, N, C, SELF_DIM), dtype=torch.float32)
-    buf_ball = torch.zeros((R, N, C, BALL_DIM), dtype=torch.float32)
-    buf_other = torch.zeros((R, N, C, OTHER_CARS, OTHER_DIM), dtype=torch.float32)
-    buf_omask = torch.zeros((R, N, C, OTHER_CARS), dtype=torch.float32)
-    buf_pads = torch.zeros((R, N, C, NUM_PADS_OBS, PAD_DIM), dtype=torch.float32)
-    buf_hist = torch.zeros((R, N, C, T, args.d_model), dtype=torch.float16)
-    buf_actions = torch.zeros((R, N, C, ACTION_DIM), dtype=torch.int64)
-    buf_logp = torch.zeros((R, N, C), dtype=torch.float32)
-    buf_values = torch.zeros((R, N, C), dtype=torch.float32)
-    buf_rewards = torch.zeros((R, N, C), dtype=torch.float32)
-    buf_dones = torch.zeros((R, N), dtype=torch.float32)
-    buf_active = torch.zeros((R, N, C), dtype=torch.float32)
+    # Keep rollout buffers directly on GPU to eliminate CPU<->GPU ping-pong!
+    buf_self = torch.zeros((R, N, C, SELF_DIM), device=device, dtype=torch.float32)
+    buf_ball = torch.zeros((R, N, C, BALL_DIM), device=device, dtype=torch.float32)
+    buf_other = torch.zeros((R, N, C, OTHER_CARS, OTHER_DIM), device=device, dtype=torch.float32)
+    buf_omask = torch.zeros((R, N, C, OTHER_CARS), device=device, dtype=torch.float32)
+    buf_pads = torch.zeros((R, N, C, NUM_PADS_OBS, PAD_DIM), device=device, dtype=torch.float32)
+    buf_hist = torch.zeros((R, N, C, T, args.d_model), device=device, dtype=amp_dtype)
+    buf_actions = torch.zeros((R, N, C, ACTION_DIM), device=device, dtype=torch.int64)
+    buf_logp = torch.zeros((R, N, C), device=device, dtype=torch.float32)
+    buf_values = torch.zeros((R, N, C), device=device, dtype=torch.float32)
+    buf_rewards = torch.zeros((R, N, C), device=device, dtype=torch.float32)
+    buf_dones = torch.zeros((R, N), device=device, dtype=torch.float32)
+    buf_active = torch.zeros((R, N, C), device=device, dtype=torch.float32)
 
     def save_checkpoint(upd: int, is_best: bool = False) -> None:
         ckpt_data = {
@@ -350,16 +387,16 @@ def train(args: argparse.Namespace) -> None:
             t_roll = time.perf_counter()
             with torch.no_grad():
                 for step in range(R):
-                    buf_self[step].copy_(torch.from_numpy(obs["self"]))
-                    buf_ball[step].copy_(torch.from_numpy(obs["ball"]))
-                    buf_other[step].copy_(torch.from_numpy(obs["other"]))
-                    buf_omask[step].copy_(torch.from_numpy(obs["other_mask"]))
-                    buf_pads[step].copy_(torch.from_numpy(obs["pads"]))
-                    buf_active[step].copy_(torch.from_numpy(obs["active_mask"]))
-
                     t_obs = obs_to_tensors(obs, device)
+                    buf_self[step].copy_(t_obs["self"])
+                    buf_ball[step].copy_(t_obs["ball"])
+                    buf_other[step].copy_(t_obs["other"])
+                    buf_omask[step].copy_(t_obs["other_mask"])
+                    buf_pads[step].copy_(t_obs["pads"])
+                    buf_active[step].copy_(t_obs["active_mask"])
+
                     with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                        e = policy.encode_frame(
+                        e = encode_fn(
                             t_obs["self"].reshape(N * C, SELF_DIM),
                             t_obs["ball"].reshape(N * C, BALL_DIM),
                             t_obs["other"].reshape(N * C, OTHER_CARS, OTHER_DIM),
@@ -367,17 +404,16 @@ def train(args: argparse.Namespace) -> None:
                             t_obs["pads"].reshape(N * C, NUM_PADS_OBS, PAD_DIM),
                         ).view(N, C, args.d_model)
                         win = hist.push(e.float())
-                        logits, vals = policy.forward_temporal(win.reshape(N * C, T, args.d_model))
+                        logits, vals = temporal_fn(win.reshape(N * C, T, args.d_model))
 
                     acts, logp, _ = policy.sample_actions(logits)
                     acts_nc = acts.view(N, C, ACTION_DIM)
-                    buf_hist[step].copy_(win.to(torch.float16).cpu())
-                    buf_actions[step].copy_(acts_nc.cpu())
-                    buf_logp[step].copy_(logp.view(N, C).cpu())
-                    buf_values[step].copy_(vals.view(N, C).float().cpu())
+                    buf_hist[step].copy_(win.to(amp_dtype))
+                    buf_actions[step].copy_(acts_nc)
+                    buf_logp[step].copy_(logp.view(N, C))
+                    buf_values[step].copy_(vals.view(N, C).float())
 
-                    exec_acts = acts_nc.cpu().numpy()
-
+                    exec_acts = acts_nc
                     if past_opp is not None and opp_hist is not None:
                         with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
                             oe = past_opp.encode_frame(
@@ -390,19 +426,19 @@ def train(args: argparse.Namespace) -> None:
                             owin = opp_hist.push(oe.float())
                             ologits, _ = past_opp.forward_temporal(owin.reshape(N * C, T, args.d_model))
                         oacts, _, _ = past_opp.sample_actions(ologits)
-                        oacts_np = oacts.view(N, C, ACTION_DIM).cpu().numpy()
-                        team1_mask = (obs["team_ids"] == 1) & (obs["active_mask"] > 0.5)
-                        exec_acts[team1_mask] = oacts_np[team1_mask]
-                        buf_active[step][torch.from_numpy(team1_mask)] = 0.0
+                        oacts_nc = oacts.view(N, C, ACTION_DIM)
+                        team1_mask = (t_obs["team_ids"] == 1) & (t_obs["active_mask"] > 0.5)
+                        exec_acts = torch.where(team1_mask.unsqueeze(-1), oacts_nc, acts_nc)
+                        buf_active[step][team1_mask] = 0.0
 
-                    raw_ctrl = discrete_to_controls(exec_acts)
+                    raw_ctrl = decoder.decode_to_cpu_numpy(exec_acts)
                     obs, rews, dones, stats = env.step(raw_ctrl)
                     hist.reset_envs(dones)
                     if opp_hist is not None:
                         opp_hist.reset_envs(dones)
 
-                    buf_rewards[step].copy_(torch.from_numpy(rews))
-                    buf_dones[step].copy_(torch.from_numpy(dones.astype(np.float32)))
+                    buf_rewards[step].copy_(torch.from_numpy(rews), non_blocking=True)
+                    buf_dones[step].copy_(torch.from_numpy(dones.astype(np.float32)), non_blocking=True)
 
                     ep_goals_b += stats.goals_blue
                     ep_goals_o += stats.goals_orange
@@ -413,7 +449,7 @@ def train(args: argparse.Namespace) -> None:
 
                 t_obs = obs_to_tensors(obs, device)
                 with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                    e_last = policy.encode_frame(
+                    e_last = encode_fn(
                         t_obs["self"].reshape(N * C, SELF_DIM),
                         t_obs["ball"].reshape(N * C, BALL_DIM),
                         t_obs["other"].reshape(N * C, OTHER_CARS, OTHER_DIM),
@@ -422,16 +458,16 @@ def train(args: argparse.Namespace) -> None:
                     ).view(N, C, args.d_model)
                     win_last = torch.roll(hist.buf, shifts=-1, dims=2)
                     win_last[:, :, -1, :] = e_last.float()
-                    _, next_vals = policy.forward_temporal(win_last.reshape(N * C, T, args.d_model))
-                next_vals = next_vals.view(N, C).float().cpu()
+                    _, next_vals = temporal_fn(win_last.reshape(N * C, T, args.d_model))
+                next_vals = next_vals.view(N, C).float()
 
             roll_sec = time.perf_counter() - t_roll
             total_env_steps += R * N
             total_episodes += ep_done_count
 
-            # GAE advantage computation
+            # GAE advantage computation directly on GPU
             advantages = torch.zeros_like(buf_rewards)
-            last_gae = torch.zeros((N, C), dtype=torch.float32)
+            last_gae = torch.zeros((N, C), device=device, dtype=torch.float32)
             for t in reversed(range(R)):
                 next_nonterminal = (1.0 - buf_dones[t]).unsqueeze(-1)
                 next_v = next_vals if t == R - 1 else buf_values[t + 1]
@@ -458,30 +494,35 @@ def train(args: argparse.Namespace) -> None:
 
             policy.train()
             t_opt = time.perf_counter()
-            pg_losses, v_losses, ent_list = [], [], []
+            pg_sum = 0.0
+            vf_sum = 0.0
+            ent_sum = 0.0
+            n_mb = 0
+            mb_bs = args.minibatch_size
+            end_lim = (M // mb_bs) * mb_bs if M >= mb_bs else M
             for _ in range(args.ppo_epochs):
-                perm = torch.randperm(M)
-                for start in range(0, M, args.minibatch_size):
-                    idx = perm[start : start + args.minibatch_size]
-                    if len(idx) < 32:
+                perm = torch.randperm(M, device=device)
+                for start in range(0, end_lim, mb_bs):
+                    idx = perm[start : start + mb_bs]
+                    if idx.numel() < 32:
                         continue
-                    mb_self = b_self[idx].to(device, non_blocking=True)
-                    mb_ball = b_ball[idx].to(device, non_blocking=True)
-                    mb_other = b_other[idx].to(device, non_blocking=True)
-                    mb_omask = b_omask[idx].to(device, non_blocking=True)
-                    mb_pads = b_pads[idx].to(device, non_blocking=True)
-                    mb_hist = b_hist[idx].to(device, non_blocking=True, dtype=torch.float32)
-                    mb_act = b_act[idx].to(device, non_blocking=True)
-                    mb_old_logp = b_old_logp[idx].to(device, non_blocking=True)
-                    mb_old_val = b_old_val[idx].to(device, non_blocking=True)
-                    mb_adv = b_adv[idx].to(device, non_blocking=True)
-                    mb_ret = b_ret[idx].to(device, non_blocking=True)
+                    mb_self = b_self[idx]
+                    mb_ball = b_ball[idx]
+                    mb_other = b_other[idx]
+                    mb_omask = b_omask[idx]
+                    mb_pads = b_pads[idx]
+                    mb_hist = b_hist[idx].float()
+                    mb_act = b_act[idx]
+                    mb_old_logp = b_old_logp[idx]
+                    mb_old_val = b_old_val[idx]
+                    mb_adv = b_adv[idx]
+                    mb_ret = b_ret[idx]
 
                     optimizer.zero_grad(set_to_none=True)
                     with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                        e_cur = policy.encode_frame(mb_self, mb_ball, mb_other, mb_omask, mb_pads)
+                        e_cur = encode_fn(mb_self, mb_ball, mb_other, mb_omask, mb_pads)
                         seq_in = torch.cat([mb_hist[:, :-1, :], e_cur.unsqueeze(1).float()], dim=1)
-                        logits, new_val = policy.forward_temporal(seq_in)
+                        logits, new_val = temporal_fn(seq_in)
 
                     new_logp, entropy = policy.eval_actions(logits, mb_act)
                     log_ratio = new_logp - mb_old_logp
@@ -500,9 +541,10 @@ def train(args: argparse.Namespace) -> None:
                     nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                     optimizer.step()
 
-                    pg_losses.append(pg_loss.item())
-                    v_losses.append(v_loss.item())
-                    ent_list.append(ent_loss.item())
+                    pg_sum += pg_loss.detach()
+                    vf_sum += v_loss.detach()
+                    ent_sum += ent_loss.detach()
+                    n_mb += 1
 
             opt_sec = time.perf_counter() - t_opt
             agent_sps = M / max(1e-6, roll_sec + opt_sec)
@@ -510,6 +552,8 @@ def train(args: argparse.Namespace) -> None:
             bot_wr = (ep_bot_w / bot_total) if bot_total > 0 else float("nan")
             last_completed_update = update
 
+            vf_val = float(vf_sum / max(1, n_mb))
+            ent_val = float(ent_sum / max(1, n_mb))
             pbar.set_postfix(
                 eps=f"{total_episodes:,}",
                 asps=f"{agent_sps:.0f}",
@@ -517,8 +561,8 @@ def train(args: argparse.Namespace) -> None:
                 t=ep_touches,
                 vsBot=f"{bot_wr * 100:.0f}%" if bot_total > 0 else "n/a",
                 d=f"{prodigy_effective_lr(optimizer):.1e}",
-                vf=f"{np.mean(v_losses):.2f}",
-                ent=f"{np.mean(ent_list):.2f}",
+                vf=f"{vf_val:.2f}",
+                ent=f"{ent_val:.2f}",
             )
 
             if update % args.pool_interval == 0:
@@ -551,8 +595,8 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train a RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + Prodigy.")
-    p.add_argument("--num-envs", type=int, default=128, help="Parallel Rust environments")
+    p = argparse.ArgumentParser(description="Train a Unified Energy RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + Prodigy.")
+    p.add_argument("--num-envs", type=int, default=16, help="Parallel Rust environments")
     p.add_argument("--min-team-size", type=int, default=1, help="Minimum team size (1..5)")
     p.add_argument("--max-team-size", type=int, default=5, help="Maximum team size (1..5)")
     p.add_argument("--ticks-per-step", type=int, default=8, help="120Hz physics ticks per action (8 = 15Hz)")
@@ -562,10 +606,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bc-updates", type=int, default=60, help="CHAMP-bot Behavior Cloning warmstart updates (set 0 to skip)")
     p.add_argument("--bot-prob", type=float, default=0.25, help="Fraction of envs sparring against built-in bots")
     p.add_argument("--bot-diff", type=int, default=4, help="Sparring bot difficulty (0=Rookie..4=Champ)")
-    p.add_argument("--d-model", type=int, default=64, help="Transformer hidden dimension (64 = fast Fly.io CPU)")
+    p.add_argument("--d-model", type=int, default=64, help="Energy Transformer hidden dimension (64 = fast Fly.io CPU)")
     p.add_argument("--n-heads", type=int, default=4, help="Attention heads")
-    p.add_argument("--entity-layers", type=int, default=1, help="Entity Transformer layers")
-    p.add_argument("--temporal-layers", type=int, default=2, help="Causal Temporal RoPE Transformer layers")
+    p.add_argument("--mlp-ratio", type=int, default=3, help="FFN expansion ratio for w_m")
+    p.add_argument("--entity-steps", type=int, default=2, help="Energy refinement steps in entity block")
+    p.add_argument("--temporal-steps", type=int, default=3, help="Energy refinement steps in causal RoPE temporal block")
+    p.add_argument("--energy-dt", type=float, default=0.25, help="Initial energy gradient step size dt")
+    p.add_argument("--symmetric-k", action="store_true", help="Enable symmetric K attention gradient in entity block")
     p.add_argument("--seq-len", type=int, default=12, help="Temporal context window in frames")
     p.add_argument("--lr", type=float, default=1.0, help="Prodigy base LR multiplier (keep 1.0)")
     p.add_argument("--d-coef", type=float, default=1.0, help="Prodigy d_coef scaling factor")
@@ -577,8 +624,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ent-coef-start", type=float, default=0.015, help="Initial entropy bonus")
     p.add_argument("--ent-coef-end", type=float, default=0.002, help="Final entropy bonus")
     p.add_argument("--ppo-epochs", type=int, default=3, help="PPO epochs per update")
-    p.add_argument("--minibatch-size", type=int, default=2048, help="Minibatch size on GPU")
-    p.add_argument("--threads", type=int, default=None, help="Rust worker threads (default: auto)")
+    p.add_argument("--minibatch-size", type=int, default=4096, help="Minibatch size on GPU")
+    p.add_argument("--threads", type=int, default=None, help="Rust worker threads (default: auto up to 32)")
     p.add_argument("--pool-interval", type=int, default=100, help="Updates between adding snapshot to self-play pool")
     p.add_argument("--save-interval", type=int, default=100, help="Updates between periodic checkpoint saves")
     p.add_argument("--keep-checkpoints", type=int, default=5, help="Number of periodic ckpt_upd_*.pt files to keep")
@@ -586,6 +633,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", type=str, default=None, help="Explicit checkpoint path to resume from")
     p.add_argument("--fresh", action="store_true", help="Ignore existing checkpoints in checkpoint-dir and start fresh")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
+    p.add_argument("--compile", action="store_true", help="Enable torch.compile on the policy forward passes")
+    p.add_argument(
+        "--compile-mode",
+        type=str,
+        default="default",
+        choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
+        help="torch.compile mode when --compile is enabled",
+    )
     p.add_argument("--cpu", action="store_true", help="Force CPU execution")
     return p.parse_args()
 

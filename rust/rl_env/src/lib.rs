@@ -593,10 +593,38 @@ pub unsafe extern "C" fn rl_env_step(
     let rew_s = unsafe { slice::from_raw_parts_mut(rewards_out, n * MAX_CARS) };
     let done_s = unsafe { slice::from_raw_parts_mut(dones_out, n) };
 
-    let threads = (cfg.num_threads as usize).clamp(1, 32).min(n);
+    let threads = if n <= 16 {
+        1
+    } else {
+        (cfg.num_threads as usize).clamp(1, 32).min(n / 4).max(1)
+    };
     let chunk = n.div_ceil(threads);
     let mut partial_stats = vec![StepStats::default(); threads];
 
+    if threads == 1 {
+        let ps = &mut partial_stats[0];
+        for i in 0..n {
+            ve.envs[i].step_env(
+                &cfg,
+                &act_s[i * MAX_CARS * ACTION_DIM..(i + 1) * MAX_CARS * ACTION_DIM],
+                &mut rew_s[i * MAX_CARS..(i + 1) * MAX_CARS],
+                &mut done_s[i],
+                ps,
+            );
+            ve.envs[i].write_obs(
+                cfg.max_episode_steps,
+                &mut self_s[i * MAX_CARS * SELF_DIM..(i + 1) * MAX_CARS * SELF_DIM],
+                &mut ball_s[i * MAX_CARS * BALL_DIM..(i + 1) * MAX_CARS * BALL_DIM],
+                &mut other_s[i * MAX_CARS * OTHER_CARS * OTHER_DIM
+                    ..(i + 1) * MAX_CARS * OTHER_CARS * OTHER_DIM],
+                &mut omask_s[i * MAX_CARS * OTHER_CARS..(i + 1) * MAX_CARS * OTHER_CARS],
+                &mut pads_s[i * MAX_CARS * NUM_PADS_OBS * PAD_DIM
+                    ..(i + 1) * MAX_CARS * NUM_PADS_OBS * PAD_DIM],
+                &mut amask_s[i * MAX_CARS..(i + 1) * MAX_CARS],
+                &mut tids_s[i * MAX_CARS..(i + 1) * MAX_CARS],
+            );
+        }
+    } else {
     thread::scope(|sc| {
         let mut env_chunks = ve.envs.chunks_mut(chunk);
         let mut act_chunks = act_s.chunks(chunk * MAX_CARS * ACTION_DIM);
@@ -648,6 +676,7 @@ pub unsafe extern "C" fn rl_env_step(
             });
         }
     });
+    }
 
     if !stats_out.is_null() {
         let mut total = StepStats::default();
