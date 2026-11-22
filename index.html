@@ -1156,10 +1156,10 @@ const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
 // Graphics options a preset sets; editing any of them on a preset switches quality to 'custom'
 const GFX_KEYS = ['resScale', 'dynRes', 'reflections', 'bloom', 'bloomAmt'];
 const QUALITY_PRESETS = {
-  low: { resScale: 0.75, dynRes: true, reflections: false, bloom: false, bloomAmt: 1 },
-  medium: { resScale: 0.85, dynRes: true, reflections: false, bloom: true, bloomAmt: 1 },
-  high: { resScale: 1.0, dynRes: true, reflections: true, bloom: true, bloomAmt: 1 },
-  ultra: { resScale: 1.25, dynRes: true, reflections: true, bloom: true, bloomAmt: 1 }
+  low: { resScale: 0.75, dynRes: false, reflections: false, bloom: false, bloomAmt: 1 },
+  medium: { resScale: 0.85, dynRes: false, reflections: false, bloom: true, bloomAmt: 1 },
+  high: { resScale: 1.0, dynRes: false, reflections: true, bloom: true, bloomAmt: 1 },
+  ultra: { resScale: 1.25, dynRes: false, reflections: true, bloom: true, bloomAmt: 1 }
 };
 const DEFAULT_SETTINGS = {
   fov: 100, camDist: 2.9, camHeight: 1.1, camAngle: -4, camStiffness: 0.45, swivelSpeed: 5, ballCamDefault: false, camShake: true,
@@ -1186,6 +1186,7 @@ const Settings = {
       if (d.quality === 'high' && (d.resScale === undefined || d.resScale === 1)) { this.data.quality = 'auto'; this.data.resScale = 1; }
       this.data.autoMigrated = true; this.save();
     }
+    if (QUALITY_PRESETS[this.data.quality]) Object.assign(this.data, QUALITY_PRESETS[this.data.quality]);
   },
   save() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.data)); } catch (e) { } },
   get(k) { return this.data[k]; },
