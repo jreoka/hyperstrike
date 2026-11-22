@@ -113,7 +113,8 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Response {
             "online": online,
             "lobbies": lobbies,
             "workers": sim.ready_workers,
-            "activeMatches": sim.active_matches
+            "activeMatches": sim.active_matches,
+            "neuralBot": crate::protocol::neural_bot_available()
         }),
     )
 }
@@ -749,7 +750,8 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             "server": {
                 "region": state.config.region,
                 "online": online,
-                "lobbies": lobbies
+                "lobbies": lobbies,
+                "neuralBot": crate::protocol::neural_bot_available()
             }
         }),
     )

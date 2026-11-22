@@ -2,11 +2,13 @@ pub mod ai;
 pub mod arena;
 pub mod math_ext;
 pub mod netcode;
+pub mod neural;
 pub mod physics;
 pub mod powers;
 pub mod world;
 
 pub use ai::{BOT_NAMES, BotAi, BotMode, DIFFICULTY, Difficulty, PERSONALITIES, Personality, Role, SupportSlot, TeamBrain};
+pub use neural::is_available as neural_bot_available;
 pub use arena::{
     ARENAS, ArenaDef, ArenaOpts, ArenaShape, BoostPad, GoalMode, KICKOFF_SETS, KICKOFF_SPOTS,
     LAYOUTS, LayoutDef, Pad, ShapeSpec, ShapeType, kickoff_sets_for, make_boost_pads, sd_box,

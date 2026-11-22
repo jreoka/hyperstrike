@@ -7245,7 +7245,8 @@ const DIFFICULTY = [
   { name: 'PRO', react: 0.2, aim: 0.15, speed: 0.94, boost: 0.8, aerial: 0.4, aerialH: 7.5, flip: 0.6, jumpShot: 0.75, rot: 0.75, kick: 0.8, err: 0.5 },
   { name: 'ALL-STAR', react: 0.11, aim: 0.07, speed: 1, boost: 1, aerial: 0.8, aerialH: 13, flip: 0.9, jumpShot: 0.95, rot: 0.9, kick: 0.95, err: 0.25 },
   { name: 'LEGEND', react: 0.05, aim: 0.025, speed: 1, boost: 1, aerial: 1, aerialH: 18, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.1 },
-  { name: 'CHAMP', react: 0.02, aim: 0.005, speed: 1, boost: 1, aerial: 1, aerialH: 22, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.02 }
+  { name: 'CHAMP', react: 0.02, aim: 0.005, speed: 1, boost: 1, aerial: 1, aerialH: 22, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.02 },
+  { name: 'NEURAL', neural: true, react: 0.02, aim: 0.005, speed: 1, boost: 1, aerial: 1, aerialH: 22, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.02 }
 ];
 const PERSONALITIES = [
   { name: 'BALANCED', aggro: 0.5, defend: 0.5, air: 0.5, pass: 0.4 },
@@ -9524,7 +9525,7 @@ class Tournament {
   }
   get roundNames() { return ['QUARTERFINAL', 'SEMIFINAL', 'GRAND FINAL']; }
   currentOpponent() { const r = this.rounds[this.round]; const i = r.findIndex(t => t.me); return r[i % 2 ? i - 1 : i + 1]; }
-  opponentDifficulty() { return clamp(this.cfg.difficulty + this.round - 1 + (this.currentOpponent().rating > 4 ? 1 : 0), 0, DIFFICULTY.length - 1); }
+  opponentDifficulty() { return clamp(this.cfg.difficulty + this.round - 1 + (this.currentOpponent().rating > 4 ? 1 : 0), 0, 4); }
   recordPlayerResult(myScore, oppScore) {
     const r = this.rounds[this.round]; const res = [];
     for (let i = 0; i < r.length; i += 2) {
@@ -9651,7 +9652,11 @@ class OnlineManager {
     try {
       const data = await this.api('/api/me');
       this._onAuthed(this.token, data.user);
-      if (data.server) { this.region = data.server.region || ''; this.onlineCount = data.server.online || 0; }
+      if (data.server) {
+        this.region = data.server.region || '';
+        this.onlineCount = data.server.online || 0;
+        this.neuralBotAvailable = !!data.server.neuralBot;
+      }
       return data.user;
     } catch (_) {
       this.token = '';
@@ -9755,7 +9760,9 @@ class OnlineManager {
         if (msg.user) this.user = msg.user;
         this.region = msg.region || '';
         this.onlineCount = msg.online || 1;
+        this.neuralBotAvailable = !!msg.neuralBot;
         ui.updateProfileCard();
+        if (!g.inGame && (ui.menuScreen === 'play' || ui.menuScreen === 'multiplayer')) ui.renderPanel();
         if (g.inGame && g.mode instanceof OnlineMatchMode && !g.mode.endedByServer) {
           g.mode.endedByServer = true;
           ui.toast('MATCH DISCONNECTED');
@@ -10618,7 +10625,7 @@ class UIManager {
           <div class="desc">${s.arena < 0 ? 'A random arena is picked each time the match starts.' : ARENAS[s.arena].desc}</div>
           <div class="sect">Layout</div>${this.layoutSeg()}
           <div class="desc">${s.layout === 'default' ? 'Plays on the shape this arena was built with.' : LAYOUTS.find(l => l.id === s.layout).desc + ' The arena theme is rebuilt around this layout.'}</div>
-          <div class="sect">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
+          <div class="sect">Bot difficulty</div>${(() => { const diffs = DIFFICULTY.map((d, i) => [i, d.name, d.neural]).filter(([, , n]) => !n || (this.g.online && this.g.online.neuralBotAvailable)); if (s.difficulty >= diffs.length) s.difficulty = diffs.length - 1; return this.seg('difficulty', diffs.map(([i, name]) => [i, name])); })()}
           <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
           <div class="dock"><button class="cta ${s.mode === 'mayhem' ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${s.mode === 'mayhem' ? 'Mayhem' : 'Match'}</span></button></div>`; break;
       case 'tournament':
@@ -10795,7 +10802,7 @@ class UIManager {
       <div class="sect">Bot Fill & Difficulty</div>
       <div class="mp-row" style="gap:10px">
         <div style="flex:1">${lseg('botFill', [[true, 'Bots On'], [false, 'Humans Only']])}</div>
-        <div style="flex:1">${lseg('botDiff', DIFFICULTY.map((d, i) => [i, d.name]))}</div>
+        <div style="flex:1">${lseg('botDiff', DIFFICULTY.map((d, i) => [i, d.name, d.neural]).filter(([, , n]) => !n || (this.g.online && this.g.online.neuralBotAvailable)).map(([i, name]) => [i, name]))}</div>
       </div>
       ${!S.ranked ? `<div class="sect">Boost & Mutators (Casual)</div>
       <div class="mp-row" style="gap:10px">

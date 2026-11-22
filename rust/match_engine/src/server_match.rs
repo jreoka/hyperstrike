@@ -571,7 +571,8 @@ impl ServerMatch {
             return;
         };
         self.replay_done.remove(user_id);
-        let diff_idx = usize::try_from(self.settings.bot_diff.clamp(0, 4)).unwrap_or(1);
+        let max_d = if sim::neural_bot_available() { 5 } else { 4 };
+        let diff_idx = usize::try_from(self.settings.bot_diff.clamp(0, max_d)).unwrap_or(1);
         let pers_idx = self.world.rng.gen_range(0..PERSONALITIES.len());
         let mut bot = BotAi::new_with_rng(diff_idx, pers_idx, &mut self.world.rng);
         bot.reset();

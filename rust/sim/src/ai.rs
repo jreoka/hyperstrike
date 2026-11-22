@@ -8,6 +8,7 @@ use crate::arena::GoalMode;
 use crate::math_ext::{
     PhysConfig, THROTTLE_CURVE, ThreeVec3Ext, clamp, curve, lerp, math_sign, sign,
 };
+use crate::neural::{self, NeuralBotState};
 use crate::physics::{Ball, Car, PredSlice};
 use crate::powers::PowerTarget;
 use crate::world::World;
@@ -28,7 +29,7 @@ pub struct Difficulty {
     pub err: f64,
 }
 
-pub const DIFFICULTY: [Difficulty; 5] = [
+pub const DIFFICULTY: [Difficulty; 6] = [
     Difficulty {
         name: "ROOKIE",
         react: 0.34,
@@ -87,6 +88,20 @@ pub const DIFFICULTY: [Difficulty; 5] = [
     },
     Difficulty {
         name: "CHAMP",
+        react: 0.02,
+        aim: 0.005,
+        speed: 1.0,
+        boost: 1.0,
+        aerial: 1.0,
+        aerial_h: 22.0,
+        flip: 1.0,
+        jump_shot: 1.0,
+        rot: 1.0,
+        kick: 1.0,
+        err: 0.02,
+    },
+    Difficulty {
+        name: "NEURAL",
         react: 0.02,
         aim: 0.005,
         speed: 1.0,
@@ -335,6 +350,7 @@ pub struct BotAi {
     pub unstuck: f64,
     pub unstuck_steer: f64,
     pub item_hold: f64,
+    neural_state: Option<NeuralBotState>,
 }
 
 impl BotAi {
@@ -346,6 +362,11 @@ impl BotAi {
     pub fn new_with_rng<R: Rng + ?Sized>(diff: usize, pers: usize, rng: &mut R) -> Self {
         let di = diff.min(DIFFICULTY.len() - 1);
         let pi = pers % PERSONALITIES.len();
+        let neural_state = if di == 5 {
+            neural::global_policy().map(|p| NeuralBotState::new(&p))
+        } else {
+            None
+        };
         Self {
             diff_index: di,
             d: DIFFICULTY[di],
@@ -370,6 +391,7 @@ impl BotAi {
             unstuck: 0.0,
             unstuck_steer: 1.0,
             item_hold: 0.0,
+            neural_state,
         }
     }
 
@@ -392,6 +414,9 @@ impl BotAi {
         self.pad_target = None;
         self.stuck_t = 0.0;
         self.unstuck = 0.0;
+        if let Some(ref mut ns) = self.neural_state {
+            ns.reset();
+        }
     }
 
     pub fn estimate(&self, car: &Car, target: DVec3, use_boost: bool) -> f64 {
@@ -618,6 +643,12 @@ impl BotAi {
             c.item = false;
         }
         if w.cars[car_idx].demolished {
+            return;
+        }
+        if let Some(ref mut ns) = self.neural_state
+            && let Some(policy) = neural::global_policy()
+        {
+            w.cars[car_idx].controls = ns.step(&policy, car_idx, w);
             return;
         }
         self.decide_t -= dt;
