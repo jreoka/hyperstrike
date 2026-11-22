@@ -308,14 +308,21 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #clock.ot{border-color:var(--gold)}
 #clock.ot .t,#clock.ot .s{color:var(--gold)}
 #clock.low .t{color:#ff5b5b;animation:blink 1s infinite}
+#clock.tick .t{animation:clkTick .35s cubic-bezier(.2,1.5,.4,1)}
+@keyframes clkTick{0%{transform:scale(1.28);color:#fff}100%{transform:scale(1)}}
 #clock.live{border-color:var(--accent)}
 #clock.live .t{color:var(--accent);animation:blink .7s infinite}
 #clock.live .s{color:var(--accent)}
 @keyframes blink{50%{opacity:.45}}
 #radar{position:absolute;left:20px;top:16px;width:110px;height:142px;background:rgba(6,10,22,.7);border:1px solid var(--line);overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.4);
   clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
-#boostGauge{position:absolute;right:2.5vw;bottom:3.5vh;width:164px;height:164px}
-#boostGauge::before{content:"";position:absolute;inset:4px;border-radius:50%;border:1px dashed rgba(255,255,255,.12);animation:spin 30s linear infinite}
+#boostGauge{position:absolute;right:2.5vw;bottom:3.5vh;width:164px;height:164px;transition:transform .15s ease}
+#boostGauge::before{content:"";position:absolute;inset:4px;border-radius:50%;border:1px dashed rgba(255,255,255,.12);animation:spin 30s linear infinite;transition:border-color .2s}
+#boostGauge.boosting{transform:scale(1.045)}
+#boostGauge.boosting::before{border-color:rgba(255,194,58,.55);animation-duration:4s}
+#boostGauge.full::before{border-color:rgba(62,242,255,.45)}
+#boostGauge.full .num b{color:#fff7d6;text-shadow:0 0 22px rgba(255,210,63,.85)}
+#boostGauge.low .num b{color:#ff7b61;text-shadow:0 0 14px rgba(255,80,60,.55)}
 #boostGauge svg{width:100%;height:100%;overflow:visible;position:relative}
 #boostGauge .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-style:italic}
 #boostGauge .num b{font-size:54px;line-height:.9;font-stretch:78%;text-shadow:0 0 18px rgba(255,180,60,.6);font-variant-numeric:tabular-nums}
@@ -1010,7 +1017,16 @@ class InputManager {
       if (['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) && Game && Game.inGame && !Game.paused) e.preventDefault();
     });
     addEventListener('keyup', e => this.keys.delete(e.code));
-    addEventListener('blur', () => { this.keys.clear(); this.mouse.l = this.mouse.r = this.mouse.drag = false; });
+    const releaseAll = () => {
+      this.keys.clear();
+      this.mouse.l = this.mouse.r = this.mouse.m = this.mouse.drag = false;
+      const t = this.touch;
+      t.thr = t.steer = 0; t.jump = t.boost = t.slide = t.item = false;
+      const knob = $('tKnob'); if (knob) knob.style.transform = 'translate(0,0)';
+      document.querySelectorAll('#touchUI .t-btn.on').forEach(b => b.classList.remove('on'));
+    };
+    addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
     addEventListener('mousedown', e => {
       if (!Game || !Game.inGame || Game.paused) return;
       if (e.target && e.target.closest && e.target.closest('button,.overlay')) return;
@@ -2470,11 +2486,24 @@ class Renderer {
     const gl = r.getContext && r.getContext();
     this.hasSync = !!(this.halfFloat && gl && gl.fenceSync && gl.getSyncParameter && gl.deleteSync);
     this._fences = [];
+    this.contextLost = false;
     this._cw = 0; this._ch = 0; this._cdpr = 0;
     this.applyQuality();
     addEventListener('resize', () => this.resize());
+    canvas.addEventListener('webglcontextlost', e => {
+      e.preventDefault();
+      this.contextLost = true;
+      this._fences.length = 0;
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this._cw = 0; this._ch = 0; this._cdpr = 0;
+      this.applyQuality(this.dyn);
+      Events.emit('contextrestored');
+    });
   }
   pruneFences() {
+    if (this.contextLost) { this._fences.length = 0; return; }
     if (!this.hasSync || !this._fences.length) return;
     const gl = this.r.getContext(), now = performance.now();
     while (this._fences.length) {
@@ -2487,6 +2516,7 @@ class Renderer {
     }
   }
   gpuBusy() {
+    if (this.contextLost) return true;
     this.pruneFences();
     return this._fences.length >= 2;
   }
@@ -2594,18 +2624,21 @@ class Renderer {
       this.aoRT = new THREE.WebGLRenderTarget(aw, ah, o); this.aoRT2 = new THREE.WebGLRenderTarget(aw, ah, o);
     }
     this.mips.forEach(m => m.dispose()); this.ups.forEach(m => m.dispose()); this.mips = []; this.ups = [];
-    let mw = W, mh = H;
-    for (let i = 0; i < 6; i++) {
-      mw = Math.max(1, mw >> 1); mh = Math.max(1, mh >> 1);
-      this.mips.push(new THREE.WebGLRenderTarget(mw, mh, { type, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }));
-      this.ups.push(new THREE.WebGLRenderTarget(mw, mh, { type, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }));
-    }
+    if (Settings.gfx('bloom')) this.allocBloomRTs(W, H, type);
     this.mats.comp.uniforms.uRes.value.set(W, H);
     if (this.reflRT) { this.reflRT.dispose(); this.reflRT = null; }
     if (this.reflScale > 0) {
       this.reflRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(W * this.reflScale)), Math.max(2, Math.floor(H * this.reflScale)), { type, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
     }
     Events.emit('resize', W, H);
+  }
+  allocBloomRTs(W, H, type = this.halfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType) {
+    let mw = W, mh = H;
+    for (let i = 0; i < 6; i++) {
+      mw = Math.max(1, mw >> 1); mh = Math.max(1, mh >> 1);
+      this.mips.push(new THREE.WebGLRenderTarget(mw, mh, { type, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }));
+      this.ups.push(new THREE.WebGLRenderTarget(mw, mh, { type, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }));
+    }
   }
   async compileShaders(onProgress) {
     const paintTick = () => new Promise(res => {
@@ -2642,6 +2675,7 @@ class Renderer {
   }
   // Planar mirror for glossy floors (y = 0). Fills `refl.tex` + `refl.mat` uniforms; returns false when unavailable.
   renderReflection(refl, hide) {
+    if (this.contextLost) return false;
     const cam = this.camera;
     if (!this.reflRT || !Settings.gfx('reflections') || refl.strength.value <= 0 || cam.position.y < 0.05) { refl.on.value = 0; return false; }
     const vc = this.mirrorCam || (this.mirrorCam = new THREE.PerspectiveCamera());
@@ -2720,6 +2754,7 @@ class Renderer {
   }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(time) {
+    if (this.contextLost) return;
     const r = this.r, fx = this.fx;
     r.setRenderTarget(this.rt); r.render(this.scene, this.camera);
     const aoOn = this.aoOn && this.aoRT && this.rt.depthTexture;
@@ -2735,6 +2770,7 @@ class Renderer {
     const bloomOn = Settings.gfx('bloom') && fx.bloom > 0.01;
     const d = this.mats.down, u = this.mats.up;
     if (bloomOn) {
+      if (!this.mips.length && this.width && this.height) this.allocBloomRTs(this.width, this.height);
       let src = this.rt.texture, sw = this.width, sh = this.height;
       for (let i = 0; i < this.mips.length; i++) {
         d.uniforms.tSrc.value = src; d.uniforms.uTexel.value.set(1 / sw, 1 / sh); d.uniforms.uPrefilter.value = i === 0 ? 1 : 0; d.uniforms.uThresh.value = fx.thresh * 1.3 + 0.1;
@@ -6682,6 +6718,17 @@ class AudioSystem {
   }
   horn(delay) { if (!this.ready) return; [233, 294, 349].forEach(f => this.tone('sawtooth', f, f, 1.8, 0.07, null, 0.5, delay)); }
   countdown(go) { if (go) { this.tone('square', 880, 880, 0.5, 0.12, null, 0.3); this.tone('sine', 1760, 1760, 0.5, 0.08, null, 0.3); } else this.tone('square', 440, 440, 0.18, 0.1, null, 0.3); }
+  clockTick(sec) {
+    if (!this.ready) return;
+    const urgent = sec <= 5;
+    this.tone('triangle', urgent ? 880 : 660, urgent ? 620 : 520, urgent ? 0.09 : 0.06, urgent ? 0.075 : 0.045, null, 0.15);
+    if (urgent) this.tone('sine', 1320, 1320, 0.05, 0.03, null, 0.1);
+  }
+  setSuspended(hidden) {
+    if (!this.ctx) return;
+    if (hidden) { if (this.ctx.state === 'running') this.ctx.suspend().catch(() => {}); }
+    else { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); this.nextT = this.ctx.currentTime + 0.05; }
+  }
   ui(kind) {
     if (!this.ready) return;
     if (kind === 'hover') this.tone('sine', 1500, 1700, 0.04, 0.025, null, 0);
@@ -6711,7 +6758,9 @@ class AudioSystem {
   }
   setMusicMode(mode) { this.musicMode = mode; this.applyVolumes(); }
   schedule() {
-    const ctx = this.ctx; const spb = 60 / this.tempo / 4;
+    const ctx = this.ctx;
+    if (!ctx || document.hidden || ctx.state !== 'running') return;
+    const spb = 60 / this.tempo / 4;
     if (ctx.currentTime - this.nextT > 0.35) this.nextT = ctx.currentTime;
     const prog = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
     while (this.nextT < ctx.currentTime + 0.12) {
@@ -7996,16 +8045,21 @@ class CameraSystem {
       const d = shape.dist(desired.x, desired.y, desired.z); if (d >= M) break;
       shape.normal(desired.x, desired.y, desired.z, n); desired.addScaledVector(n, Math.min(M - d, 6));
     }
-    // 2) Only if the view is still blocked (e.g. goal mouth corners) shorten the arm, and never close to the car.
-    if (shape.dist(pivot.x, pivot.y, pivot.z) > 0.25) {
+    // 2) Only if the sightline is actually obstructed (e.g. goal mouth corners) shorten the arm, never close to the car.
+    if (shape.dist(pivot.x, pivot.y, pivot.z) > 0.2) {
       const fx = desired.x - pivot.x, fy = desired.y - pivot.y, fz = desired.z - pivot.z;
-      const ok = (u) => shape.dist(pivot.x + fx * u, pivot.y + fy * u, pivot.z + fz * u) >= 0.15;
-      let clear = true; for (let k = 1; k <= 6 && clear; k++) clear = ok(k / 6);
-      if (!clear) { let lo = 0, hi = 1; for (let i = 0; i < 10; i++) { const m = (lo + hi) / 2; let c = true; for (let k = 1; k <= 4 && c; k++) c = ok(m * k / 4); if (c) lo = m; else hi = m; } t = Math.max(0.6, lo); }
+      const ok = (u) => shape.dist(pivot.x + fx * u, pivot.y + fy * u, pivot.z + fz * u) >= 0.08;
+      let clear = true; for (let k = 1; k <= 8 && clear; k++) clear = ok(k / 8);
+      if (!clear) { let lo = 0, hi = 1; for (let i = 0; i < 10; i++) { const m = (lo + hi) / 2; let c = true; for (let k = 1; k <= 5 && c; k++) c = ok(m * k / 5); if (c) lo = m; else hi = m; } t = Math.max(0.6, lo); }
     }
     const cur = this.armT === undefined || this.snapNext ? t : this.armT;
-    this.armT = t < cur ? damp(cur, t, 30, dt) : damp(cur, t, 4, dt);
+    this.armT = t < cur ? damp(cur, t, 14, dt) : damp(cur, t, 4, dt);
     desired.sub(pivot).multiplyScalar(this.armT).add(pivot);
+    // Keep the shortened arm point outside the wall margin too so it doesn't fight the post-lerp clamp.
+    for (let i = 0; i < 2; i++) {
+      const d = shape.dist(desired.x, desired.y, desired.z); if (d >= M) break;
+      shape.normal(desired.x, desired.y, desired.z, n); desired.addScaledVector(n, Math.min(M - d, 6));
+    }
   }
   hfovToV(h) { return 2 * Math.atan(Math.tan(h * PI / 360) / this.cam.aspect) * 180 / PI; }
   update(dt, ctx) {
@@ -8014,7 +8068,7 @@ class CameraSystem {
     if (this.rearView !== this._prevRear) { this._prevRear = this.rearView; if (this.mode === 'car') this.snapNext = true; }
     this._rel = null;
     let fovH = S.fov;
-    const desired = tmpV3; let look = tmpV2.set(0, 0, 0); let up = this.up.set(0, 1, 0); let stiff = 10;
+    const desired = tmpV3; let look = tmpV2.set(0, 0, 0); let up = V3Up; let stiff = 10;
     switch (this.mode) {
       case 'orbit': {
         this.orbitAngle += dt * 0.06;
@@ -8034,9 +8088,11 @@ class CameraSystem {
         this.swivel.x = Math.abs(sw.x) > 0.05 ? damp(this.swivel.x, sw.x * PI * 0.9, 10, dt) : damp(this.swivel.x, 0, 5, dt);
         this.swivel.y = Math.abs(sw.y) > 0.05 ? damp(this.swivel.y, sw.y * 0.6, 10, dt) : damp(this.swivel.y, 0, 5, dt);
         if (car.demolished) { desired.copy(this.pos); look.copy(this.lookS); stiff = 2; break; }
-        const b = ctx.carBasis ? ctx.carBasis(car) : car.basis; const onG = car.onGround;
-        const camUp = tmpV.copy(onG ? car.groundNormal : V3Up).lerp(V3Up, onG ? 0.55 : 1).normalize();
-        this.up.lerp(camUp, 1 - Math.exp(-3.5 * dt)).normalize(); up = this.up;
+        const b = ctx.carBasis ? ctx.carBasis(car) : car.basis; const onG = car.onGround; const onSurf = car.contacts >= 2;
+        const camUp = tmpV.copy(onSurf ? car.groundNormal : V3Up).lerp(V3Up, onSurf ? 0.65 : 1).normalize();
+        if (this.snapNext) this.up.copy(camUp);
+        else this.up.lerp(camUp, 1 - Math.exp(-5 * dt)).normalize();
+        up = this.up;
         let dir;
         if (this.rearView) {
           dir = tmpV.copy(b.f).negate();
@@ -8111,8 +8167,13 @@ class CameraSystem {
     }
     this.snapNext = false;
     if (this.mode === 'car' || this.mode === 'replay' || this.mode === 'free' || this.mode === 'goal' || this.mode === 'broadcast') {
+      const minD = 0.35;
       const d = shape.dist(this.pos.x, this.pos.y, this.pos.z);
-      if (d < 0.2) { const n = shape.normal(this.pos.x, this.pos.y, this.pos.z, tmpV); this.pos.addScaledVector(n, Math.min(0.35 - d, 3)); }
+      if (d < minD) {
+        const n = shape.normal(this.pos.x, this.pos.y, this.pos.z, tmpV);
+        this.pos.addScaledVector(n, Math.min(minD - d, 3));
+        if (this._rel && this.offS) this.offS.copy(this.pos).sub(this._rel);
+      }
     }
     this.cam.position.copy(this.pos);
     this.cam.up.copy(this.mode === 'car' ? this.up : V3Up);
@@ -8378,9 +8439,17 @@ class OnlineMatchMode extends MatchMode {
       // Predicted FREEZE lands on the first tick of the input that pressed it, exactly as on the server
       const sq = live ? this.liveSeq : this.replaySeq;
       if (sq && sq === this.predFreezeSeq && !ball.frozen) { ball.stuckTo = null; ball.iceT = 3.2; ball.vel.set(0, 0, 0); }
-      for (const c of w.cars) {
+      for (let ci = 0; ci < w.cars.length; ci++) {
+        const c = w.cars[ci];
         if (c.demolished) continue; // respawns come from the server
         if (c !== me) Object.assign(c.controls, c.netCtl);
+        // Match server-side Mayhem SCRAMBLE transform during prediction/rollback to avoid rubber-banding
+        if (c.scrT > 0) {
+          c.scrT = Math.max(0, c.scrT - dt);
+          const k = c.controls;
+          k.steer = -k.steer; k.yaw = -k.yaw; k.roll = -k.roll; k.boost = false;
+          k.throttle = clamp(k.throttle * 0.5 + Math.sin(w.time * 2.3 + ci) * 0.6, -1, 1);
+        }
         c.unlimitedBoost = w.unlimitedBoost || c.unlimitedBoost === 'always';
         if (w.boostRecharge && !c.isBoosting && c.boost < 100) c.boost = Math.min(100, c.boost + 14 * dt);
         c.step(dt, w);
@@ -9976,27 +10045,48 @@ class UIManager {
   updateHud(game, dt) {
     const p = game.player, m = game.mode, S = Settings.data;
     if (p) {
-      const b = Math.round(p.boost); $('boostVal').textContent = p.unlimitedBoost ? '∞' : b; $('boostArc').setAttribute('stroke-dasharray', `${(292 * p.boost / 100).toFixed(1)} 400`);
+      const b = Math.round(p.boost), bg = $('boostGauge');
+      $('boostVal').textContent = p.unlimitedBoost ? '∞' : b; $('boostArc').setAttribute('stroke-dasharray', `${(292 * p.boost / 100).toFixed(1)} 400`);
+      bg.classList.toggle('low', !p.unlimitedBoost && p.boost < 20);
+      bg.classList.toggle('full', p.unlimitedBoost || p.boost >= 99);
+      bg.classList.toggle('boosting', !!p.isBoosting && !p.demolished);
       const kmh = Math.round(p.vel.length() * 3.6); $('speedVal').textContent = kmh; $('speedo').classList.toggle('ss', p.supersonic);
     }
     $('camTag').textContent = game.player ? (game.camera.rearView ? 'REAR VIEW' : (game.camera.ballCam ? 'BALL CAM' : 'CAR CAM')) : ({ broadcast: 'BROADCAST CAM', car: 'FOLLOW: ' + (game.camera.target ? game.camera.target.name : ''), free: 'FREE CAM', orbit: 'ORBIT CAM' }[game.camera.mode] || '');
     $('camTag').classList.toggle('on', game.camera.ballCam && !game.camera.rearView && !!game.player);
     if (m instanceof MatchMode) {
       const zeroLive = !m.overtime && !m.unlimited && m.timeLeft <= 0 && m.state === 'play';
+      const clkEl = $('clock');
       $('clockT').textContent = m.clockText();
       $('clockS').textContent = m.overtime ? 'OVERTIME' : zeroLive ? 'BALL LIVE!' : m.cfg.mayhem ? 'MAYHEM' : m.unlimited ? 'UNLIMITED' : 'REGULATION';
-      $('clock').classList.toggle('ot', m.overtime);
-      $('clock').classList.toggle('low', !m.overtime && !m.unlimited && !zeroLive && m.timeLeft < 30 && m.timeLeft > 0);
-      $('clock').classList.toggle('live', zeroLive);
+      clkEl.classList.toggle('ot', m.overtime);
+      clkEl.classList.toggle('low', !m.overtime && !m.unlimited && !zeroLive && m.timeLeft < 30 && m.timeLeft > 0);
+      clkEl.classList.toggle('live', zeroLive);
+      // Final-10-second regulation countdown ticks for late-game tension
+      if (!m.exhibition && m.state === 'play' && !m.overtime && !m.unlimited && m.timeLeft > 0 && m.timeLeft <= 10) {
+        const sec = Math.ceil(m.timeLeft);
+        if (sec !== this._lastClkTick && sec >= 1 && sec <= 10) {
+          this._lastClkTick = sec;
+          game.audio.clockTick(sec);
+          clkEl.classList.remove('tick'); void clkEl.offsetWidth; clkEl.classList.add('tick');
+        }
+      } else this._lastClkTick = 0;
       if (S.showRadar) { $('radar').classList.remove('hidden'); this.drawRadar(game); } else $('radar').classList.add('hidden');
     } else {
+      this._lastClkTick = 0;
       const info = m && m.hudInfo && m.hudInfo();
       if (info) { const html = `<h4>${info.title}</h4><div class="l">${info.lines.join('<br>')}</div>`; if (html !== this._mi) { this._mi = html; $('modeInfo').innerHTML = html; } }
     }
     this.updateTags(game);
     this.updateBallArrow(game);
     this.updateItemHud(game);
-    if (S.showFps) { $('fps').classList.remove('hidden'); this._fa = (this._fa || 0) * 0.95 + dt * 0.05; const R = this.g.renderer; $('fps').textContent = (1 / this._fa).toFixed(0) + ' FPS' + (R && R.isAuto() ? ' · ' + R.quality.toUpperCase() + ' ' + Math.round(R.dyn * 100) + '%' : ''); } else $('fps').classList.add('hidden');
+    if (S.showFps) {
+      $('fps').classList.remove('hidden');
+      if (dt > 0 && !game.paused) this._fa = this._fa ? this._fa * 0.94 + dt * 0.06 : dt;
+      const R = this.g.renderer;
+      const fpsTxt = this._fa ? Math.round(1 / this._fa) + ' FPS' : '-- FPS';
+      $('fps').textContent = fpsTxt + (R && R.isAuto() ? ' · ' + R.quality.toUpperCase() + ' ' + Math.round(R.dyn * 100) + '%' : '');
+    } else { $('fps').classList.add('hidden'); this._fa = 0; }
   }
   drawRadar(game) {
     const cv = $('radar'); if (!cv || cv.classList.contains('hidden')) return;
@@ -10015,15 +10105,27 @@ class UIManager {
     // goals
     g.fillStyle = 'rgba(47,143,255,0.6)'; g.fillRect(W / 2 - s.gw * sx, mz(-s.L), s.gw * 2 * sx, 3);
     g.fillStyle = 'rgba(255,138,31,0.6)'; g.fillRect(W / 2 - s.gw * sx, mz(s.L) - 3, s.gw * 2 * sx, 3);
-    // cars
+    // cars (directional chevron for player so heading reads at a glance)
     for (const c of game.world.cars) {
       if (c.demolished) continue;
-      g.fillStyle = c === game.player ? '#3ef2ff' : (c.team === 0 ? '#2f8fff' : '#ff8a1f');
-      g.beginPath(); g.arc(mx(c.pos.x), mz(c.pos.z), c === game.player ? 4 : 3, 0, TAU); g.fill();
+      const cx = mx(c.pos.x), cz = mz(c.pos.z);
+      if (c === game.player) {
+        const ang = Math.atan2(-c.basis.f.z, -c.basis.f.x);
+        g.save(); g.translate(cx, cz); g.rotate(ang);
+        g.fillStyle = '#3ef2ff';
+        g.beginPath(); g.moveTo(6.2, 0); g.lineTo(-4.2, -3.8); g.lineTo(-2.2, 0); g.lineTo(-4.2, 3.8); g.closePath(); g.fill();
+        g.restore();
+      } else {
+        g.fillStyle = c.team === 0 ? '#2f8fff' : '#ff8a1f';
+        g.beginPath(); g.arc(cx, cz, 3, 0, TAU); g.fill();
+      }
     }
-    // ball
+    // ball with crisp halo
     if (game.ballVisual.mesh.visible) {
-      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(mx(game.ballPosV.x), mz(game.ballPosV.z), 3.8, 0, TAU); g.fill();
+      const bx = mx(game.ballPosV.x), bz = mz(game.ballPosV.z);
+      g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1.2;
+      g.beginPath(); g.arc(bx, bz, 5.4, 0, TAU); g.stroke();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(bx, bz, 3.5, 0, TAU); g.fill();
     }
   }
   itemGot() { const el = $('itemCard'); el.classList.remove('got'); void el.offsetWidth; el.classList.add('got'); }
@@ -10059,11 +10161,12 @@ class UIManager {
   updateTags(game) {
     const cam = game.renderer.camera, W = innerWidth, H = innerHeight; const show = Settings.data.showNames;
     const camFwd = tmpV2.set(0, 0, -1).applyQuaternion(cam.quaternion);
-    const seen = new Set();
+    const seen = this._seenTags || (this._seenTags = new Set());
+    seen.clear();
     for (const c of game.world.cars) {
       if (c === game.player || c.demolished || !show || (game.mode && game.mode.state === 'replay')) continue;
       let el = this.tags.get(c);
-      if (!el) { el = document.createElement('div'); el.className = 'tag ' + (c.team === 0 ? 'blue' : 'orange'); el.innerHTML = `<span></span><i></i>`; $('tags').appendChild(el); this.tags.set(c, el); el.firstChild.textContent = c.name; }
+      if (!el) { el = document.createElement('div'); el.className = 'tag ' + (c.team === 0 ? 'blue' : 'orange'); el.style.left = '0'; el.style.top = '0'; el.innerHTML = `<span></span><i></i>`; $('tags').appendChild(el); this.tags.set(c, el); el.firstChild.textContent = c.name; }
       const wp = tmpV.copy(game.visualPos(c)); wp.y += 0.9;
       const toCam = tmpV3.copy(wp).sub(cam.position);
       const dist = toCam.length();
@@ -10072,7 +10175,6 @@ class UIManager {
       el.style.display = ''; seen.add(c);
       el.style.transform = `translate(${((wp.x * 0.5 + 0.5) * W).toFixed(1)}px, ${((-wp.y * 0.5 + 0.5) * H).toFixed(1)}px) translate(-50%,-100%) scale(${clamp(14 / dist, 0.6, 1.1).toFixed(2)})`;
       el.lastChild.style.width = (game.player && c.team === game.player.team ? c.boost : 0) + '%';
-      el.style.left = '0'; el.style.top = '0';
     }
     for (const [c, el] of this.tags) if (!seen.has(c)) el.style.display = 'none';
   }
@@ -10086,8 +10188,10 @@ class UIManager {
     el.classList.remove('hidden');
     const a = Math.atan2(y, x); const r = Math.max(Math.abs(Math.cos(a)) / 0.9, Math.abs(Math.sin(a)) / 0.85) || 1;
     const ex = Math.cos(a) / r, ey = Math.sin(a) / r;
+    const bd = game.ballVisual.mesh.position.distanceTo(game.player.pos);
+    const sc = clamp(1.22 - bd * 0.008, 0.82, 1.22);
     el.style.left = ((ex * 0.5 + 0.5) * innerWidth) + 'px'; el.style.top = ((-ey * 0.5 + 0.5) * innerHeight) + 'px';
-    el.firstChild.style.transform = `rotate(${-a}rad)`;
+    el.firstChild.style.transform = `rotate(${-a}rad) scale(${sc.toFixed(2)})`;
   }
   focusEl(el, showRing = true) {
     if (!el) return;
@@ -10469,6 +10573,14 @@ class GameEngine {
     addEventListener('pointermove', e => { if (dragX !== null && this.showroom) { this.showroomDrag += (e.clientX - dragX) * 0.008; dragX = e.clientX; } });
     addEventListener('pointerup', () => { dragX = null; });
     Events.on('settings', (k) => { if (k === 'dynRes' || k === 'targetFps') { this.renderer.dyn = 1; this.renderer.resize(true); } if (k === 'quality' || k === 'resScale') this.renderer.applyQuality(); if (k === 'quality' || k === 'resScale' || k === 'autoTier') { this.applyLightBudget(); this.arenaVisual && this.arenaVisual.sun.shadow.map && (this.arenaVisual.sun.shadow.map.dispose(), this.arenaVisual.sun.shadow.map = null); this.arenaVisual && this.arenaVisual.sun.shadow.mapSize.set(this.renderer.shadowSize, this.renderer.shadowSize); } });
+    Events.on('contextrestored', () => { this.applyLightBudget(); this.ui.toast('GRAPHICS RESTORED'); });
+    document.addEventListener('visibilitychange', () => {
+      this.audio.setSuspended(document.hidden);
+      if (!document.hidden) this.last = performance.now();
+    });
+    const resumeAudio = () => { if (this.audio && this.audio.ctx && this.audio.ctx.state === 'suspended' && !document.hidden) this.audio.ctx.resume().catch(() => {}); };
+    addEventListener('pointerdown', resumeAudio, { passive: true });
+    addEventListener('keydown', resumeAudio, { passive: true });
     this.last = performance.now();
     requestAnimationFrame((t) => this.frame(t));
     this.ui.loadingDone(async () => {
