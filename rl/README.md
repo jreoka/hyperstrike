@@ -1,6 +1,6 @@
 # Hyperstrike RoPE Transformer RL Trainer
 
-GPU-accelerated Self-Play + Bot-Sparring PPO trainer backed by the **exact Rust `sim` physics engine** (`rust/rl_env`) across **1v1 through 5v5**, using **Prodigy** as the optimizer with `tqdm` progress bars, automatic resuming, and periodic checkpoint saving/pruning.
+GPU-accelerated Self-Play + Bot-Sparring PPO trainer backed by the **exact Rust `sim` physics engine** (`rust/rl_env`) across **1v1 through 5v5**, using **AdamW** with `tqdm` progress bars, automatic resuming, and periodic checkpoint saving/pruning.
 
 ## Architecture
 - **Simulator (`rust/rl_env`)**: Multi-threaded Rust `cdylib` stepping `N` parallel `sim::World` instances at 120Hz (default 8 ticks/action = 15Hz). Randomly samples 1v1..5v5 (with extended pitch for 4v4/5v5) and mirrors Orange team so the policy is team-symmetric.
@@ -8,7 +8,7 @@ GPU-accelerated Self-Play + Bot-Sparring PPO trainer backed by the **exact Rust 
   - **Entity `UnifiedEnergyBlock` (`d=64, h=4, mlp=3x, steps=2`)**: Permutation-invariant Hopfield energy refinement with tied weights (`w_q/w_q^T`, `w_k`, `w_m/w_m^T`) over `[SELF]`, `[BALL]`, up to 9 other cars (masked for 1v1..5v5), and 6 nearest boost pads.
   - **Temporal `UnifiedEnergyBlock` (`d=64, h=4, mlp=3x, steps=3, T=12`, causal RoPE + inverse-RoPE gradient flow)**: ~47K params (~190 KB `neural_policy.bin`) with exact per-step RoPE K-caching in Rust for ultra-fast Fly.io CPU inference.
   - **Raw Control Heads**: 8 factored raw-control heads (`throttle`, `steer`, `pitch`, `yaw`, `roll`, `jump`, `boost`, `handbrake`) directly driving `sim::Controls`.
-- **Optimizer**: `prodigyopt.Prodigy` (`lr=1.0`, `safeguard_warmup=True`, `decouple=True`).
+- **Optimizer**: `torch.optim.AdamW` (`lr=3e-3` cosine-decayed for BC warmstart; `lr=3e-4 -> 5e-5` with KL early-stopping for PPO).
 - **Checkpoints**: Periodically saves `ckpt_upd_XXXXXXX.pt` + `latest.pt` + portable `neural_policy.bin`/`neural_policy.json`, prunes old periodic checkpoints beyond `--keep-checkpoints`, and **auto-resumes** from `latest.pt` on restart (pass `--fresh` to start over).
 
 ## Quick Start

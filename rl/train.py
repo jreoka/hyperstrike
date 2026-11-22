@@ -11,7 +11,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from prodigyopt import Prodigy
 from tqdm import tqdm
 
 from env import (
@@ -124,23 +123,18 @@ def prune_old_checkpoints(ckpt_dir: Path, keep: int) -> None:
             pass
 
 
-def prodigy_effective_lr(optimizer: Prodigy) -> float:
-    pg = optimizer.param_groups[0]
-    return float(pg.get("d", 1.0) * pg.get("lr", 1.0))
-
-
 def run_bc_warmstart(
     policy: RoPEHyperstrikePolicy,
     encode_fn,
     temporal_fn,
     env: HyperstrikeVecEnv,
-    optimizer: Prodigy,
     device: torch.device,
     bc_updates: int,
+    bc_lr: float,
     rollout_steps: int,
     use_bf16: bool,
 ) -> None:
-    """Optional Behavior Cloning warmstart from built-in CHAMP bots across 1v1..5v5."""
+    """Behavior Cloning warmstart from built-in CHAMP bots across 1v1..5v5."""
     if bc_updates <= 0:
         return
     env.set_bot_curriculum(0.0, 4)
@@ -148,12 +142,19 @@ def run_bc_warmstart(
     N, C, T = env.num_envs, MAX_CARS, policy.seq_len
     hist = HistoryBuffer(N, C, T, policy.d_model, device)
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float32
+    bc_opt = torch.optim.AdamW(policy.parameters(), lr=bc_lr, weight_decay=1e-4)
 
     pbar = tqdm(range(1, bc_updates + 1), desc="BC Warmstart", dynamic_ncols=True)
-    for _ in pbar:
-        seq_embs_list = []
+    for upd in pbar:
+        self_list = []
+        ball_list = []
+        other_list = []
+        omask_list = []
+        pads_list = []
+        hist_list = []
         target_acts_list = []
 
+        policy.eval()
         for _ in range(rollout_steps):
             expert_raw = env.get_expert_actions()
             expert_disc = controls_to_discrete(expert_raw)
@@ -171,7 +172,12 @@ def run_bc_warmstart(
             win = hist.push(e.float())
             active = t_obs["active_mask"] > 0.5
             if active.any():
-                seq_embs_list.append(win[active].detach())
+                self_list.append(t_obs["self"][active])
+                ball_list.append(t_obs["ball"][active])
+                other_list.append(t_obs["other"][active])
+                omask_list.append(t_obs["other_mask"][active])
+                pads_list.append(t_obs["pads"][active])
+                hist_list.append(win[active].to(amp_dtype).detach())
                 target_acts_list.append(
                     torch.from_numpy(expert_disc).to(device, non_blocking=True)[active]
                 )
@@ -179,28 +185,50 @@ def run_bc_warmstart(
             obs, _, dones, _ = env.step(expert_raw)
             hist.reset_envs(dones)
 
-        X = torch.cat(seq_embs_list, dim=0)
+        b_self = torch.cat(self_list, dim=0)
+        b_ball = torch.cat(ball_list, dim=0)
+        b_other = torch.cat(other_list, dim=0)
+        b_omask = torch.cat(omask_list, dim=0)
+        b_pads = torch.cat(pads_list, dim=0)
+        b_hist = torch.cat(hist_list, dim=0)
         Y = torch.cat(target_acts_list, dim=0)
-        n_samp = X.shape[0]
+
+        n_samp = Y.shape[0]
         perm = torch.randperm(n_samp, device=device)
         bs = 2048
         # Drop irregular tail batch so CUDA Graphs only ever see one fixed batch shape
         end_lim = (n_samp // bs) * bs if n_samp >= bs else n_samp
+
+        # Cosine LR decay over BC warmstart
+        frac = 0.5 * (1.0 + np.cos(np.pi * (upd - 1) / max(1, bc_updates)))
+        cur_lr = bc_lr * (0.1 + 0.9 * frac)
+        for pg in bc_opt.param_groups:
+            pg["lr"] = cur_lr
+
+        policy.train()
         losses = []
+        accs = []
         for start in range(0, end_lim, bs):
             idx = perm[start : start + bs]
-            xb = X[idx]
             yb = Y[idx]
-            optimizer.zero_grad(set_to_none=True)
+            bc_opt.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
-                logits, _ = temporal_fn(xb)  # [B, 8, 5]
+                e_cur = encode_fn(b_self[idx], b_ball[idx], b_other[idx], b_omask[idx], b_pads[idx])
+                seq_in = torch.cat([b_hist[idx, :-1, :].float(), e_cur.unsqueeze(1).float()], dim=1)
+                logits, _ = temporal_fn(seq_in)  # [B, 8, 5]
                 loss = F.cross_entropy(logits.reshape(-1, 5), yb.reshape(-1))
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-            optimizer.step()
+            bc_opt.step()
             losses.append(loss.item())
+            with torch.no_grad():
+                accs.append((logits.argmax(dim=-1) == yb).float().mean().item())
 
-        pbar.set_postfix(loss=f"{np.mean(losses):.4f}", d_lr=f"{prodigy_effective_lr(optimizer):.2e}")
+        pbar.set_postfix(
+            loss=f"{np.mean(losses):.4f}",
+            acc=f"{np.mean(accs) * 100:.1f}%",
+            lr=f"{cur_lr:.1e}",
+        )
     pbar.close()
 
 
@@ -217,7 +245,7 @@ def train(args: argparse.Namespace) -> None:
         f"({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU'}) | "
         f"bf16={use_bf16} | envs={args.num_envs} | "
         f"team_sizes={args.min_team_size}v{args.min_team_size}..{args.max_team_size}v{args.max_team_size} | "
-        f"opt=Prodigy"
+        f"opt=AdamW(lr={args.lr:.1e}->{args.lr_end:.1e})"
     )
 
     env = HyperstrikeVecEnv(
@@ -250,14 +278,11 @@ def train(args: argparse.Namespace) -> None:
         f"ent_steps={args.entity_steps}, tmp_steps={args.temporal_steps}, T={args.seq_len})"
     )
 
-    optimizer = Prodigy(
+    optimizer = torch.optim.AdamW(
         policy.parameters(),
         lr=args.lr,
+        eps=1e-5,
         weight_decay=args.weight_decay,
-        d_coef=args.d_coef,
-        safeguard_warmup=True,
-        use_bias_correction=True,
-        decouple=True,
     )
 
     ckpt_dir = Path(args.checkpoint_dir)
@@ -307,7 +332,17 @@ def train(args: argparse.Namespace) -> None:
         temporal_fn = policy.forward_temporal
 
     if args.bc_updates > 0 and not resumed:
-        run_bc_warmstart(policy, encode_fn, temporal_fn, env, optimizer, device, args.bc_updates, rollout_steps=16, use_bf16=use_bf16)
+        run_bc_warmstart(
+            policy,
+            encode_fn,
+            temporal_fn,
+            env,
+            device,
+            args.bc_updates,
+            bc_lr=args.bc_lr,
+            rollout_steps=16,
+            use_bf16=use_bf16,
+        )
 
     env.set_bot_curriculum(args.bot_prob, args.bot_diff)
     obs = env.reset()
@@ -366,6 +401,9 @@ def train(args: argparse.Namespace) -> None:
         for update in pbar:
             frac = 1.0 - (update - 1) / max(1, args.total_updates)
             ent_coef = args.ent_coef_end + (args.ent_coef_start - args.ent_coef_end) * frac
+            cur_lr = args.lr_end + (args.lr - args.lr_end) * frac
+            for pg in optimizer.param_groups:
+                pg["lr"] = cur_lr
 
             ep_goals_b = 0
             ep_goals_o = 0
@@ -497,9 +535,12 @@ def train(args: argparse.Namespace) -> None:
             pg_sum = 0.0
             vf_sum = 0.0
             ent_sum = 0.0
+            kl_sum = 0.0
+            clip_sum = 0.0
             n_mb = 0
             mb_bs = args.minibatch_size
             end_lim = (M // mb_bs) * mb_bs if M >= mb_bs else M
+            kl_exceeded = False
             for _ in range(args.ppo_epochs):
                 perm = torch.randperm(M, device=device)
                 for start in range(0, end_lim, mb_bs):
@@ -528,6 +569,10 @@ def train(args: argparse.Namespace) -> None:
                     log_ratio = new_logp - mb_old_logp
                     ratio = log_ratio.exp()
 
+                    with torch.no_grad():
+                        approx_kl = ((ratio - 1.0) - log_ratio).mean()
+                        clipfrac = ((ratio - 1.0).abs() > args.clip_coef).float().mean()
+
                     pg1 = -mb_adv * ratio
                     pg2 = -mb_adv * torch.clamp(ratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef)
                     pg_loss = torch.max(pg1, pg2).mean()
@@ -544,7 +589,15 @@ def train(args: argparse.Namespace) -> None:
                     pg_sum += pg_loss.detach()
                     vf_sum += v_loss.detach()
                     ent_sum += ent_loss.detach()
+                    kl_sum += approx_kl
+                    clip_sum += clipfrac
                     n_mb += 1
+
+                    if args.target_kl > 0.0 and approx_kl.item() > args.target_kl * 1.5:
+                        kl_exceeded = True
+                        break
+                if kl_exceeded:
+                    break
 
             opt_sec = time.perf_counter() - t_opt
             agent_sps = M / max(1e-6, roll_sec + opt_sec)
@@ -554,13 +607,16 @@ def train(args: argparse.Namespace) -> None:
 
             vf_val = float(vf_sum / max(1, n_mb))
             ent_val = float(ent_sum / max(1, n_mb))
+            kl_val = float(kl_sum / max(1, n_mb))
+            clip_val = float(clip_sum / max(1, n_mb))
             pbar.set_postfix(
                 eps=f"{total_episodes:,}",
                 asps=f"{agent_sps:.0f}",
                 g=ep_goals_b + ep_goals_o,
                 t=ep_touches,
                 vsBot=f"{bot_wr * 100:.0f}%" if bot_total > 0 else "n/a",
-                d=f"{prodigy_effective_lr(optimizer):.1e}",
+                kl=f"{kl_val:.3f}",
+                clip=f"{clip_val:.2f}",
                 vf=f"{vf_val:.2f}",
                 ent=f"{ent_val:.2f}",
             )
@@ -572,7 +628,7 @@ def train(args: argparse.Namespace) -> None:
                 opponent_pool.append(snap)
 
             if update % args.save_interval == 0 or update == args.total_updates:
-                is_best = bot_total >= 10 and bot_wr >= best_winrate
+                is_best = bot_total >= 10 and bot_wr > 0.0 and bot_wr >= best_winrate
                 if is_best:
                     best_winrate = bot_wr
                 save_checkpoint(update, is_best=is_best)
@@ -595,15 +651,16 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train a Unified Energy RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + Prodigy.")
-    p.add_argument("--num-envs", type=int, default=8, help="Parallel Rust environments")
+    p = argparse.ArgumentParser(description="Train a Unified Energy RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + AdamW.")
+    p.add_argument("--num-envs", type=int, default=128, help="Parallel Rust environments")
     p.add_argument("--min-team-size", type=int, default=1, help="Minimum team size (1..5)")
     p.add_argument("--max-team-size", type=int, default=5, help="Maximum team size (1..5)")
     p.add_argument("--ticks-per-step", type=int, default=8, help="120Hz physics ticks per action (8 = 15Hz)")
     p.add_argument("--max-episode-steps", type=int, default=900, help="Max steps per episode (900 @ 15Hz = 60s)")
     p.add_argument("--rollout-steps", type=int, default=64, help="Steps per env per PPO update")
-    p.add_argument("--total-updates", type=int, default=5000000, help="Total PPO updates")
+    p.add_argument("--total-updates", type=int, default=50000, help="Total PPO updates")
     p.add_argument("--bc-updates", type=int, default=60, help="CHAMP-bot Behavior Cloning warmstart updates (set 0 to skip)")
+    p.add_argument("--bc-lr", type=float, default=3e-3, help="AdamW learning rate for BC warmstart")
     p.add_argument("--bot-prob", type=float, default=0.25, help="Fraction of envs sparring against built-in bots")
     p.add_argument("--bot-diff", type=int, default=4, help="Sparring bot difficulty (0=Rookie..4=Champ)")
     p.add_argument("--d-model", type=int, default=64, help="Energy Transformer hidden dimension (64 = fast Fly.io CPU)")
@@ -614,17 +671,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--energy-dt", type=float, default=0.25, help="Initial energy gradient step size dt")
     p.add_argument("--symmetric-k", action="store_true", help="Enable symmetric K attention gradient in entity block")
     p.add_argument("--seq-len", type=int, default=12, help="Temporal context window in frames")
-    p.add_argument("--lr", type=float, default=1.0, help="Prodigy base LR multiplier (keep 1.0)")
-    p.add_argument("--d-coef", type=float, default=1.0, help="Prodigy d_coef scaling factor")
-    p.add_argument("--weight-decay", type=float, default=1e-4, help="Prodigy decoupled weight decay")
+    p.add_argument("--lr", type=float, default=3e-4, help="PPO initial AdamW learning rate")
+    p.add_argument("--lr-end", type=float, default=5e-5, help="PPO final AdamW learning rate")
+    p.add_argument("--weight-decay", type=float, default=1e-4, help="AdamW weight decay")
     p.add_argument("--gamma", type=float, default=0.992, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
     p.add_argument("--clip-coef", type=float, default=0.2, help="PPO clip ratio")
+    p.add_argument("--target-kl", type=float, default=0.03, help="PPO KL early-stopping threshold (0 to disable)")
     p.add_argument("--vf-coef", type=float, default=0.5, help="Value loss weight")
-    p.add_argument("--ent-coef-start", type=float, default=0.015, help="Initial entropy bonus")
-    p.add_argument("--ent-coef-end", type=float, default=0.002, help="Final entropy bonus")
+    p.add_argument("--ent-coef-start", type=float, default=0.003, help="Initial entropy bonus")
+    p.add_argument("--ent-coef-end", type=float, default=0.0005, help="Final entropy bonus")
     p.add_argument("--ppo-epochs", type=int, default=3, help="PPO epochs per update")
-    p.add_argument("--minibatch-size", type=int, default=4096, help="Minibatch size on GPU")
+    p.add_argument("--minibatch-size", type=int, default=2048, help="Minibatch size on GPU")
     p.add_argument("--threads", type=int, default=None, help="Rust worker threads (default: auto up to 32)")
     p.add_argument("--pool-interval", type=int, default=100, help="Updates between adding snapshot to self-play pool")
     p.add_argument("--save-interval", type=int, default=100, help="Updates between periodic checkpoint saves")
