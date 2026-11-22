@@ -120,7 +120,7 @@ pub fn sanitize_lobby_settings(
         s.bot_fill = b;
     }
     if let Some(n) = json_strict_int(obj.get("botDiff"))
-        && (0..=i64::from(max_bot_diff())).contains(&n) {
+        && (0..=4).contains(&n) {
             s.bot_diff = n as i32;
         }
     if let Some(bm) = obj.get("boostMode").and_then(|v| v.as_str())
@@ -140,41 +140,6 @@ pub fn sanitize_lobby_settings(
         }
     }
     s
-}
-
-pub fn neural_bot_available() -> bool {
-    static AVAIL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *AVAIL.get_or_init(|| {
-        let mut pairs = Vec::new();
-        if let Ok(custom) = std::env::var("HYPERSTRIKE_NEURAL_POLICY") {
-            let p = std::path::PathBuf::from(custom);
-            if p.is_dir() {
-                pairs.push((p.join("neural_policy_best.bin"), p.join("neural_policy_best.json")));
-                pairs.push((p.join("neural_policy.bin"), p.join("neural_policy.json")));
-            } else {
-                let json = p.with_extension("json");
-                pairs.push((p, json));
-            }
-        }
-        for base in [
-            std::path::PathBuf::from("rl/checkpoints"),
-            std::path::PathBuf::from("../../rl/checkpoints"),
-        ] {
-            pairs.push((
-                base.join("neural_policy_best.bin"),
-                base.join("neural_policy_best.json"),
-            ));
-            pairs.push((
-                base.join("neural_policy.bin"),
-                base.join("neural_policy.json"),
-            ));
-        }
-        pairs.into_iter().any(|(b, j)| b.is_file() && j.is_file())
-    })
-}
-
-pub fn max_bot_diff() -> i32 {
-    if neural_bot_available() { 5 } else { 4 }
 }
 
 pub fn json_strict_int(v: Option<&serde_json::Value>) -> Option<i64> {

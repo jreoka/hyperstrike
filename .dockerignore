@@ -3,8 +3,3 @@
 data
 *.log
 rust/*/target
-rl/__pycache__
-rl/*.py
-rl/README.md
-rl/checkpoints/*.pt
-rl/checkpoints/*.tmp

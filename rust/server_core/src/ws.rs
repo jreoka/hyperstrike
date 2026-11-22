@@ -1285,8 +1285,7 @@ fn handle_ws_message(
                 "type": "auth_ok",
                 "user": pub_u,
                 "region": state.config.region,
-                "online": online,
-                "neuralBot": crate::protocol::neural_bot_available()
+                "online": online
             }),
         );
         return;
@@ -2055,7 +2054,7 @@ fn handle_ws_message(
                 .unwrap_or(2);
             let difficulty = raw
                 .and_then(|o| json_strict_int(o.get("difficulty")))
-                .filter(|&n| (0..=i64::from(crate::protocol::max_bot_diff())).contains(&n))
+                .filter(|&n| (0..=4).contains(&n))
                 .map(|n| n as i32)
                 .unwrap_or(1);
             let duration = if tournament {

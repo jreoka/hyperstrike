@@ -1,7 +1,3 @@
 data/
 *.log
 rust/*/target/
-__pycache__/
-*.pyc
-rl/checkpoints/*.pt
-rl/checkpoints/*.tmp
