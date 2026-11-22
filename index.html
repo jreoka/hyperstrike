@@ -9393,8 +9393,8 @@ const resolveArena = a => {
 
 class UIManager {
   constructor(game) {
-    this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: 0, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
-    if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = 0; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
+    this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: -1, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
+    if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = -1; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
     this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }

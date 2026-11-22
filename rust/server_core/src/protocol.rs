@@ -61,7 +61,7 @@ pub fn default_lobby_settings(host_name: &str) -> LobbySettings {
         team_size: 2,
         mode: "standard".to_string(),
         interval: 10,
-        arena: 0,
+        arena: -1,
         layout: "default".to_string(),
         duration: 300,
         bot_fill: true,
