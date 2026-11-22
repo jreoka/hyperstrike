@@ -6349,9 +6349,13 @@ class CarVisual {
     this.bodyTilt.z = damp(this.bodyTilt.z, pitch, 6, dt);
     m.body.rotation.set(this.bodyTilt.x, 0, this.bodyTilt.z);
     m.root.updateMatrixWorld(true);
+    const rideLen = PHYS.suspRest - 0.044;
     for (let i = 0; i < 4; i++) {
       const w = m.wheels[i], pw = car.wheels[i];
-      const targetY = -0.04 - pw.len;
+      // Keep full upward compression on landings, but limit visual droop when unloaded/airborne
+      // so wheels stay tucked nicely in the arches without changing suspension physics.
+      const visLen = pw.len > rideLen ? rideLen + (pw.len - rideLen) * 0.28 : pw.len;
+      const targetY = -0.04 - visLen;
       this.wheelY[i] = damp(this.wheelY[i] || targetY, targetY, 25, dt);
       w.pivot.position.y = this.wheelY[i];
       w.steer.rotation.y = pw.steer;
@@ -8961,7 +8965,9 @@ class OnlineMatchMode extends MatchMode {
   beginKickoff() {
     // The match start runs a local kickoff and the server's kickoff message confirms it a
     // moment later: keep the countdown already shown so "3" is not announced twice.
-    const cdKeep = this.state === 'countdown' ? this.cdLast : 4;
+    const wasCountdown = this.state === 'countdown';
+    const cdKeep = wasCountdown ? this.cdLast : 4;
+    if (!wasCountdown) this.unfreezeTick = -1;
     if (this.state === 'replay' || this.game.replay.active) { this.game.replay.stop(); this.game.ui.replayTag(false); }
     this.replayDecided = false; this.replayDoneSent = false; this.replayFrames = null;
     super.beginKickoff();
@@ -9936,10 +9942,21 @@ class UIManager {
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
     $('boostTicks').innerHTML = t;
-    // Automatically clear HUD animation classes when animations end so hiding/showing HUD never replays stale banners
-    const gb = $('goalBanner'); if (gb) gb.addEventListener('animationend', () => gb.classList.remove('show'));
-    const cd = $('countdown'); if (cd) cd.addEventListener('animationend', () => cd.classList.remove('anim'));
-    const pop = $('popup'); if (pop) pop.addEventListener('animationend', () => pop.classList.remove('show'));
+    // Automatically clear HUD animation classes when animations end so hiding/showing HUD never replays stale banners.
+    // Ignore stale animationend events that were already queued when restartAnim() rewound the animation.
+    const bindAnimEnd = (el, cls) => {
+      if (!el) return;
+      el.addEventListener('animationend', (e) => {
+        if (e.target !== el) return;
+        const anims = el.getAnimations ? el.getAnimations() : null;
+        if (anims && anims.some(a => a.playState === 'running')) return;
+        if (el._animAt && performance.now() - el._animAt < 100) return;
+        el.classList.remove(cls);
+      });
+    };
+    bindAnimEnd($('goalBanner'), 'show');
+    bindAnimEnd($('countdown'), 'anim');
+    bindAnimEnd($('popup'), 'show');
     this.initAuthGate();
     this.initPWA();
     document.addEventListener('mouseover', e => { const b = e.target.closest('button,.card,.sw'); if (b && b !== this._hov) { this._hov = b; this.g.audio.ui('hover'); } });
@@ -10101,9 +10118,9 @@ class UIManager {
     if (so) so.onclick = () => { this.g.audio.ui('click'); this.g.online.logout(); };
   }
   clearHudFX() {
-    const gb = $('goalBanner'); if (gb) { gb.className = ''; $('gbMeta').textContent = ''; }
-    const cd = $('countdown'); if (cd) { cd.className = ''; cd.textContent = ''; }
-    const pop = $('popup'); if (pop) { pop.className = ''; pop.textContent = ''; }
+    const gb = $('goalBanner'); if (gb) { gb._animGen = (gb._animGen || 0) + 1; gb.className = ''; $('gbMeta').textContent = ''; }
+    const cd = $('countdown'); if (cd) { cd._animGen = (cd._animGen || 0) + 1; cd.className = ''; cd.textContent = ''; }
+    const pop = $('popup'); if (pop) { pop._animGen = (pop._animGen || 0) + 1; pop.className = ''; pop.textContent = ''; }
     const fd = $('feed'); if (fd) fd.innerHTML = '';
     this.clearAfkWarn();
   }
@@ -10936,11 +10953,13 @@ class UIManager {
   }
   restartAnim(el, cls) {
     if (!el) return;
+    const gen = (el._animGen = (el._animGen || 0) + 1);
+    el._animAt = performance.now();
     if (el.classList.contains(cls)) {
       const anims = el.getAnimations ? el.getAnimations() : null;
       if (anims && anims.length) { for (const a of anims) { a.currentTime = 0; a.play(); } return; }
       el.classList.remove(cls);
-      requestAnimationFrame(() => el.classList.add(cls));
+      requestAnimationFrame(() => { if (el._animGen === gen) { el._animAt = performance.now(); el.classList.add(cls); } });
       return;
     }
     el.classList.add(cls);
