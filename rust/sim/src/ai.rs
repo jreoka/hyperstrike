@@ -101,7 +101,7 @@ pub const DIFFICULTY: [Difficulty; 6] = [
         err: 0.02,
     },
     Difficulty {
-        name: "NEURAL",
+        name: "RoFormer",
         react: 0.02,
         aim: 0.005,
         speed: 1.0,
