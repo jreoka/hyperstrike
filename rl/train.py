@@ -596,13 +596,13 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train a Unified Energy RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + Prodigy.")
-    p.add_argument("--num-envs", type=int, default=16, help="Parallel Rust environments")
+    p.add_argument("--num-envs", type=int, default=8, help="Parallel Rust environments")
     p.add_argument("--min-team-size", type=int, default=1, help="Minimum team size (1..5)")
     p.add_argument("--max-team-size", type=int, default=5, help="Maximum team size (1..5)")
     p.add_argument("--ticks-per-step", type=int, default=8, help="120Hz physics ticks per action (8 = 15Hz)")
     p.add_argument("--max-episode-steps", type=int, default=900, help="Max steps per episode (900 @ 15Hz = 60s)")
     p.add_argument("--rollout-steps", type=int, default=64, help="Steps per env per PPO update")
-    p.add_argument("--total-updates", type=int, default=50000, help="Total PPO updates")
+    p.add_argument("--total-updates", type=int, default=5000000, help="Total PPO updates")
     p.add_argument("--bc-updates", type=int, default=60, help="CHAMP-bot Behavior Cloning warmstart updates (set 0 to skip)")
     p.add_argument("--bot-prob", type=float, default=0.25, help="Fraction of envs sparring against built-in bots")
     p.add_argument("--bot-diff", type=int, default=4, help="Sparring bot difficulty (0=Rookie..4=Champ)")
