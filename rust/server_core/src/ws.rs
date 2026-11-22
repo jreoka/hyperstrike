@@ -2054,7 +2054,7 @@ fn handle_ws_message(
                 .unwrap_or(2);
             let difficulty = raw
                 .and_then(|o| json_strict_int(o.get("difficulty")))
-                .filter(|&n| (0..=3).contains(&n))
+                .filter(|&n| (0..=4).contains(&n))
                 .map(|n| n as i32)
                 .unwrap_or(1);
             let duration = if tournament {
@@ -2137,7 +2137,7 @@ fn handle_ws_message(
                 mutator: "normal".to_string(),
             };
             let teammate_diff = if tournament {
-                (difficulty + 1).min(3)
+                (difficulty + 1).min(4)
             } else {
                 difficulty
             };

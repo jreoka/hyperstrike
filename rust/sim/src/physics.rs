@@ -855,17 +855,29 @@ impl Car {
             self.events.push(CarEventKind::Jump);
         } else if jump_pressed
             && contacts == 0
-            && self.body_contact
+            && (self.body_contact || self.pos.y < 1.25)
             && u.y < 0.5
             && self.pos.y < 1.5
             && self.vel.y < 2.0
         {
-            self.vel.y += 3.5;
+            self.vel.y = self.vel.y.max(0.0) + 3.2;
             let mut axis = u.cross(DVec3::Y);
             if axis.length_squared() < 0.01 {
-                axis = f;
+                let dir = if c.roll.abs() > 0.1 {
+                    math_sign(c.roll)
+                } else if c.steer.abs() > 0.1 {
+                    math_sign(c.steer)
+                } else {
+                    1.0
+                };
+                axis = f * dir;
             }
-            self.ang_vel += axis.three_normalize() * 7.5;
+            let axis_n = axis.three_normalize();
+            let angle = u.y.clamp(-1.0, 1.0).acos();
+            let undamped_t = ((angle - 1.10) / phys.flip_rate).clamp(0.02, 0.40);
+            self.flipping = true;
+            self.flip_t = 1.05 - undamped_t;
+            self.ang_vel = axis_n * phys.flip_rate;
             self.events.push(CarEventKind::Jump);
         } else if jump_pressed
             && contacts == 0
@@ -1087,12 +1099,9 @@ impl Car {
         self.body_contact = touched;
         if touched && self.contacts == 0 {
             self.body_contact_t += phys.dt;
-            if self.body_contact_t > 0.35 {
-                let mut axis = self.basis.u.cross(DVec3::Y);
-                if axis.length_squared() < 0.001 {
-                    axis = self.basis.f;
-                }
-                self.ang_vel += axis.three_normalize() * (phys.dt * 18.0);
+            if self.controls.roll.abs() > 0.15 {
+                let dir = math_sign(self.controls.roll);
+                self.ang_vel += self.basis.f * (dir * phys.dt * 14.0);
             }
         } else {
             self.body_contact_t = 0.0;

@@ -470,7 +470,7 @@ mod tests {
         assert!(car.vel.length() < 0.05);
         assert!((car.pos.y - 0.35).abs() < 0.05);
 
-        // 2. Upside-down car on floor recovers when pressing jump
+        // 2. Upside-down car on floor recovers cleanly onto wheels when pressing jump, without crazy height
         let mut turtle = Car::new(1, 0, "T", 0);
         turtle.place(0.0, 0.25, 0.0, 0.0);
         turtle.quat = glam::DQuat::from_rotation_x(PI);
@@ -481,6 +481,38 @@ mod tests {
         turtle.step(phys.dt, &shape, &phys);
         assert!(turtle.vel.y > 2.5, "upside-down turtle should hop upward");
         assert!(turtle.ang_vel.length() > 3.0, "turtle should spin upright");
+        turtle.controls.jump = false;
+        let mut max_y = turtle.pos.y;
+        for _ in 0..160 {
+            turtle.step(phys.dt, &shape, &phys);
+            max_y = max_y.max(turtle.pos.y);
+        }
+        assert!(
+            max_y < 1.6,
+            "turtle jump recovery should stay modest in height, got max_y={max_y}"
+        );
+        assert!(
+            turtle.basis.u.y > 0.85 && turtle.contacts >= 3,
+            "turtle should land upright on wheels: u.y={} contacts={}",
+            turtle.basis.u.y,
+            turtle.contacts
+        );
+
+        // 2b. Intentionally upside-down car (no jump/roll) stays upside down and is not forced upright
+        let mut intentional_turtle = Car::new(4, 0, "IT", 0);
+        intentional_turtle.place(0.0, 0.25, 0.0, 0.0);
+        intentional_turtle.quat = glam::DQuat::from_rotation_x(PI);
+        intentional_turtle.basis = Basis::from_quat(intentional_turtle.quat);
+        intentional_turtle.contacts = 0;
+        intentional_turtle.on_ground = false;
+        for _ in 0..120 {
+            intentional_turtle.step(phys.dt, &shape, &phys);
+        }
+        assert!(
+            intentional_turtle.basis.u.y < -0.8,
+            "intentionally upside-down car should stay upside down without recovery input: u.y={}",
+            intentional_turtle.basis.u.y
+        );
 
         // 3. Upright car grazing a vertical wall mid-air must NOT register phantom wheel contacts
         //    or trigger infinite turtle climb; pressing jump with forward pitch should dodge cleanly.

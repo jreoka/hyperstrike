@@ -28,7 +28,7 @@ pub struct Difficulty {
     pub err: f64,
 }
 
-pub const DIFFICULTY: [Difficulty; 4] = [
+pub const DIFFICULTY: [Difficulty; 5] = [
     Difficulty {
         name: "ROOKIE",
         react: 0.34,
@@ -84,6 +84,20 @@ pub const DIFFICULTY: [Difficulty; 4] = [
         rot: 1.0,
         kick: 1.0,
         err: 0.1,
+    },
+    Difficulty {
+        name: "CHAMP",
+        react: 0.02,
+        aim: 0.005,
+        speed: 1.0,
+        boost: 1.0,
+        aerial: 1.0,
+        aerial_h: 22.0,
+        flip: 1.0,
+        jump_shot: 1.0,
+        rot: 1.0,
+        kick: 1.0,
+        err: 0.02,
     },
 ];
 
@@ -282,6 +296,7 @@ struct SeqStep {
 struct ActionSeq {
     t: f64,
     aim_ball: bool,
+    boost_flip: bool,
     steps: Vec<SeqStep>,
 }
 
@@ -292,6 +307,7 @@ struct AerialState {
     t: f64,
     dbl: bool,
     dodged: bool,
+    aim_dir: DVec3,
 }
 
 #[derive(Clone, Debug)]
@@ -313,6 +329,7 @@ pub struct BotAi {
     pub aim_err: f64,
     pub last_jump_t: f64,
     pub kick_done: bool,
+    pub kick_boost_flip: bool,
     pub pad_target: Option<usize>,
     pub stuck_t: f64,
     pub unstuck: f64,
@@ -347,12 +364,18 @@ impl BotAi {
             aim_err: 0.0,
             last_jump_t: -10.0,
             kick_done: false,
+            kick_boost_flip: false,
             pad_target: None,
             stuck_t: 0.0,
             unstuck: 0.0,
             unstuck_steer: 1.0,
             item_hold: 0.0,
         }
+    }
+
+    #[inline]
+    pub fn is_champ(&self) -> bool {
+        self.diff_index >= 4
     }
 
     #[inline]
@@ -365,6 +388,7 @@ impl BotAi {
         self.aer = None;
         self.mode = BotMode::Idle;
         self.kick_done = false;
+        self.kick_boost_flip = false;
         self.pad_target = None;
         self.stuck_t = 0.0;
         self.unstuck = 0.0;
@@ -376,7 +400,11 @@ impl BotAi {
         let b = car.basis;
         let ang = b.f.three_angle_to(to.three_normalize());
         let vf = car.vel.dot(b.f).max(0.0);
-        let turn = ang * (0.3 + vf * 0.012);
+        let turn = if self.is_champ() {
+            ang * (0.22 + vf * 0.009)
+        } else {
+            ang * (0.3 + vf * 0.012)
+        };
         turn + time_to_cover(
             dist,
             vf * if ang > 1.2 { 0.3 } else { 1.0 },
@@ -388,17 +416,22 @@ impl BotAi {
     fn find_intercept(&self, car: &Car, w: &World) -> Intercept {
         let pred = &w.pred;
         let shape = &w.shape;
+        let champ = self.is_champ();
         let max_jump = if self.d.jump_shot > 0.5 { 3.4 } else { 2.0 };
-        let mut i = 2;
+        let step = if champ { 1 } else { 3 };
+        let min_aer_boost = if champ { 18.0 } else { 25.0 };
+        let max_aer_t = if champ { 3.8 } else { 3.5 };
+        let min_aer_t = if champ { 0.35 } else { 0.6 };
+        let mut i = if champ { 1 } else { 2 };
         while i < pred.valid {
             let s = pred.slices[i];
             let near_surface = shape.dist(s.pos.x, s.pos.y, s.pos.z) < w.phys.ball_r + 1.4;
             if s.pos.y > max_jump && !(near_surface && s.pos.y < 14.0) {
                 if self.d.aerial > 0.0
                     && s.pos.y < self.d.aerial_h
-                    && car.boost > 25.0
-                    && s.t < 3.5
-                    && s.t > 0.6
+                    && car.boost > min_aer_boost
+                    && s.t < max_aer_t
+                    && s.t > min_aer_t
                     && self.aerial_feasible(car, s.pos, s.t, &w.phys)
                 {
                     return Intercept {
@@ -408,7 +441,7 @@ impl BotAi {
                         late: false,
                     };
                 }
-                i += 3;
+                i += step;
                 continue;
             }
             let est = self.estimate(car, s.pos, true);
@@ -420,7 +453,7 @@ impl BotAi {
                     late: false,
                 };
             }
-            i += 3;
+            i += step;
         }
         let last = pred.slices[pred.valid.saturating_sub(1)];
         Intercept {
@@ -437,7 +470,11 @@ impl BotAi {
         d.y -= 4.2 * t * 0.8;
         let a_req = 2.0 * d.length() / (t * t);
         let fuel = a_req / phys.boost_acc * t * phys.boost_use;
-        a_req < phys.boost_acc * 0.85 && fuel < car.boost - 5.0
+        if self.is_champ() {
+            a_req < phys.boost_acc * 0.92 && fuel < car.boost - 2.0
+        } else {
+            a_req < phys.boost_acc * 0.85 && fuel < car.boost - 5.0
+        }
     }
 
     pub fn update(&mut self, car_idx: usize, dt: f64, w: &mut World) {
@@ -660,26 +697,31 @@ impl BotAi {
         }
 
         if self.mode == BotMode::Attack {
-            let ahead = (w.ball.pos.z - car.pos.z) * ad < -4.0;
+            let champ = self.is_champ();
+            let ahead = (w.ball.pos.z - car.pos.z) * ad < if champ { -2.5 } else { -4.0 };
             let my_d = car.pos.distance(w.ball.pos);
+            let margin = if champ { 4.0 } else { 6.0 };
             let opp_close = w.cars.iter().any(|o| {
-                o.team != car.team && !o.demolished && o.pos.distance(w.ball.pos) < my_d - 6.0
+                o.team != car.team && !o.demolished && o.pos.distance(w.ball.pos) < my_d - margin
             });
             if ahead && opp_close && self.d.rot > 0.6 && (w.ball.pos.z - own_z).abs() < w.shape.l * 1.2
             {
                 self.mode = BotMode::Shadow;
             }
         }
+        let sup_boost_thresh = if self.is_champ() { 42.0 } else { 30.0 };
+        let def_boost_thresh = if self.is_champ() { 22.0 } else { 12.0 };
+        let sup_pad_d = if self.is_champ() { 28.0 } else { 40.0 };
         if self.d.boost > 0.3
-            && ((self.mode == BotMode::Support && car.boost < 30.0)
-                || (self.mode == BotMode::Defend && car.boost < 12.0))
+            && ((self.mode == BotMode::Support && car.boost < sup_boost_thresh)
+                || (self.mode == BotMode::Defend && car.boost < def_boost_thresh))
             && let Some(pad) = self.best_pad(
                 car_idx,
                 w,
                 if self.mode == BotMode::Defend {
                     18.0
                 } else {
-                    40.0
+                    sup_pad_d
                 },
                 None,
             )
@@ -688,6 +730,7 @@ impl BotAi {
             self.mode = BotMode::Boost;
         }
         if self.mode == BotMode::AerialPrep
+            && !self.is_champ()
             && self.d.aerial * (0.6 + self.p.air * 0.6) < w.rng.r#gen::<f64>()
         {
             self.mode = BotMode::Attack;
@@ -762,12 +805,14 @@ impl BotAi {
                 let sl = w.brain.slot_of(car_idx);
                 let n = sl.map(|s| s.n).unwrap_or(1);
                 let glz = w.shape.goal_line_z();
+                let champ = self.is_champ();
                 let (x, z) = if n <= 1 {
-                    let z = clamp(
-                        w.ball.pos.z - ad * (14.0 + self.p.defend * 8.0),
-                        -glz + 6.0,
-                        glz - 6.0,
-                    );
+                    let back = if champ {
+                        11.0 + self.p.defend * 5.0
+                    } else {
+                        14.0 + self.p.defend * 8.0
+                    };
+                    let z = clamp(w.ball.pos.z - ad * back, -glz + 6.0, glz - 6.0);
                     let x = w.ball.pos.x * 0.45 + if w.cars[car_idx].pos.x > 0.0 { 6.0 } else { -6.0 };
                     (x, z)
                 } else {
@@ -811,11 +856,20 @@ impl BotAi {
             }
             BotMode::Idle | BotMode::Defend => {
                 let gz = -ad * w.shape.goal_line_z();
-                let t = DVec3::new(
-                    clamp(w.ball.pos.x * 0.3, -w.shape.gw + 1.5, w.shape.gw - 1.5),
-                    0.0,
-                    gz + ad * 3.2,
-                );
+                let t = if self.is_champ() {
+                    let back_post_x = if w.ball.pos.x >= 0.0 {
+                        -(w.shape.gw - 2.2)
+                    } else {
+                        w.shape.gw - 2.2
+                    };
+                    DVec3::new(back_post_x, 0.0, gz + ad * 2.2)
+                } else {
+                    DVec3::new(
+                        clamp(w.ball.pos.x * 0.3, -w.shape.gw + 1.5, w.shape.gw - 1.5),
+                        0.0,
+                        gz + ad * 3.2,
+                    )
+                };
                 let d = w.cars[car_idx].pos.distance(t);
                 if d < 3.0 {
                     self.face_ball(car_idx, w);
@@ -844,10 +898,24 @@ impl BotAi {
 
     fn shot_target(&self, car_idx: usize, w: &World, pos: DVec3) -> DVec3 {
         let shape = &w.shape;
-        let ad = Self::attack_dir(&w.cars[car_idx]);
+        let car = &w.cars[car_idx];
+        let ad = Self::attack_dir(car);
         let glz = shape.goal_line_z();
+        let opp_z = ad * (glz + 2.0);
         let own_half = (pos.z * ad) < -glz * 0.35;
         if own_half {
+            if self.is_champ() && (pos.z * ad) > -glz * 0.65 && shape.goal_mode == GoalMode::Standard
+            {
+                let opp_in_net = w.cars.iter().any(|o| {
+                    o.team != car.team
+                        && !o.demolished
+                        && (o.pos.z - ad * glz).abs() < 30.0
+                        && o.pos.x.abs() < shape.gw + 8.0
+                });
+                if !opp_in_net {
+                    return DVec3::new(0.0, 0.0, opp_z);
+                }
+            }
             return DVec3::new(
                 if pos.x >= 0.0 {
                     shape.w * 0.9
@@ -869,9 +937,37 @@ impl BotAi {
                 ad * (sg.gz + sg.gnz * 2.5),
             );
         }
-        let opp_z = ad * (glz + 2.0);
         if self.p.pass > 0.6 && pos.x.abs() > shape.w * 0.55 && (pos.z * ad) > glz * 0.45 {
             return DVec3::new(0.0, 0.0, ad * (glz - 12.0));
+        }
+        if self.is_champ() {
+            let mut closest_def: Option<(f64, f64)> = None;
+            let goal_line_z = ad * glz;
+            for o in &w.cars {
+                if o.team != car.team && !o.demolished {
+                    let dz = (o.pos.z - goal_line_z).abs();
+                    if dz < 26.0 && o.pos.x.abs() < shape.gw + 6.0 {
+                        let d = o.pos.x.hypot(dz);
+                        if closest_def.is_none_or(|(bd, _)| d < bd) {
+                            closest_def = Some((d, o.pos.x));
+                        }
+                    }
+                }
+            }
+            let gx = if let Some((_, def_x)) = closest_def {
+                if def_x >= 0.0 {
+                    -(shape.gw - 1.65)
+                } else {
+                    shape.gw - 1.65
+                }
+            } else {
+                clamp(
+                    pos.x * 0.25 + if pos.x >= 0.0 { -2.2 } else { 2.2 },
+                    -shape.gw + 1.8,
+                    shape.gw - 1.8,
+                )
+            };
+            return DVec3::new(gx, 0.0, opp_z);
         }
         let gx = clamp(pos.x * 0.35, -shape.gw + 2.2, shape.gw - 2.2);
         DVec3::new(gx, 0.0, opp_z)
@@ -879,6 +975,7 @@ impl BotAi {
 
     fn attack(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
         let Some(it) = self.intercept else { return };
+        let champ = self.is_champ();
         let now = w.time;
         let t_left = (self.intercept_t - (now - self.decided_at)).max(0.02);
         let p = self.intercept_pos;
@@ -890,12 +987,18 @@ impl BotAi {
 
         {
             let car = &w.cars[car_idx];
-            if it.aerial && self.mode == BotMode::AerialPrep && car.on_ground && car.boost > 25.0 {
+            let min_aer_boost = if champ { 18.0 } else { 25.0 };
+            let max_aer_ang = if champ { 0.48 } else { 0.35 };
+            if it.aerial
+                && self.mode == BotMode::AerialPrep
+                && car.on_ground
+                && car.boost > min_aer_boost
+            {
                 let mut to_p = p - car.pos;
                 to_p.y = 0.0;
                 let ang = car.basis.f.three_angle_to(to_p.three_normalize()).abs();
-                if ang < 0.35 && self.aerial_feasible(car, p, it.t, &w.phys) {
-                    self.start_aerial(w.time, p, now + it.t);
+                if ang < max_aer_ang && self.aerial_feasible(car, p, it.t, &w.phys) {
+                    self.start_aerial(w.time, p, now + it.t, sd);
                     return;
                 }
             }
@@ -933,7 +1036,9 @@ impl BotAi {
         if eta < t_left - 0.35 {
             desired = clamp(dist / t_left.max(0.05) * 1.2, 5.0, 23.0);
         }
-        if align_shot > 0.8 && dist < 12.0 {
+        if champ && align_shot > 0.72 && dist < 16.0 {
+            desired = 23.0;
+        } else if align_shot > 0.8 && dist < 12.0 {
             desired = desired.max(15.0 + self.p.aggro * 8.0);
         }
         self.drive_to(car_idx, target, desired, w, false);
@@ -943,28 +1048,37 @@ impl BotAi {
         let bdist = to_b.length();
         let al = car.basis.to_local(to_b);
         let facing = al.x / bdist.max(0.01);
-        if car.on_ground && now - self.last_jump_t > 1.0 && align_shot > 0.4 {
+        let jump_cd = if champ { 0.75 } else { 1.0 };
+        if car.on_ground && now - self.last_jump_t > jump_cd && align_shot > 0.4 {
             let h = p.y - 0.4;
-            if p.y > 2.0 && p.y < 4.6 && self.d.jump_shot > w.rng.r#gen::<f64>() * 0.4 + 0.3 {
+            let jump_y_min = if champ { 1.9 } else { 2.0 };
+            let jump_y_max = if champ { 5.0 } else { 4.6 };
+            if p.y > jump_y_min
+                && p.y < jump_y_max
+                && (champ || self.d.jump_shot > w.rng.r#gen::<f64>() * 0.4 + 0.3)
+            {
                 let dbl = h > 2.3;
                 let tj = jump_time_for(h - 0.3, dbl);
-                if tj > 0.0 && (t_left - tj).abs() < 0.06 && facing > 0.75 && dist < 23.0 * tj + 4.0
+                let tol = if champ { 0.08 } else { 0.06 };
+                if tj > 0.0 && (t_left - tj).abs() < tol && facing > 0.75 && dist < 23.0 * tj + 4.0
                 {
                     self.start_jump(0.2, dbl);
                 }
             } else if p.y < 1.8
-                && bdist < 3.4 + car.speed() * 0.1
-                && bdist > 1.4
-                && facing > 0.88
-                && w.rng.r#gen::<f64>() < self.d.flip * 0.6
+                && bdist < if champ { 3.7 + car.speed() * 0.11 } else { 3.4 + car.speed() * 0.1 }
+                && bdist > if champ { 1.2 } else { 1.4 }
+                && facing > if champ { 0.85 } else { 0.88 }
+                && (champ || w.rng.r#gen::<f64>() < self.d.flip * 0.6)
             {
                 let lat = clamp(al.z / bdist * 2.5, -1.0, 1.0);
-                self.start_flip(1.0, lat * 0.6);
+                let lat_scale = if champ { 0.75 } else { 0.6 };
+                self.start_flip(1.0, lat * lat_scale, false);
             }
         }
     }
 
     fn save(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
+        let champ = self.is_champ();
         let ad = Self::attack_dir(&w.cars[car_idx]);
         let gz = -ad * w.shape.goal_line_z();
         let it = self.intercept;
@@ -998,27 +1112,30 @@ impl BotAi {
         self.drive_to(car_idx, target, 23.0, w, false);
 
         let car = &w.cars[car_idx];
-        if it.aerial && car.on_ground && car.boost > 20.0 && self.d.aerial > 0.3 {
-            self.start_aerial(w.time, p, w.time + it.t);
+        let min_aer_boost = if champ { 14.0 } else { 20.0 };
+        if it.aerial && car.on_ground && car.boost > min_aer_boost && self.d.aerial > 0.3 {
+            self.start_aerial(w.time, p, w.time + it.t, clear_dir);
             return;
         }
         let bdist = car.pos.distance(w.ball.pos);
-        if car.on_ground && w.time - self.last_jump_t > 1.0 {
-            if p.y > 2.0 && p.y < 4.6 && self.d.jump_shot > 0.3 {
+        let jump_cd = if champ { 0.75 } else { 1.0 };
+        if car.on_ground && w.time - self.last_jump_t > jump_cd {
+            if p.y > 2.0 && p.y < 4.8 && self.d.jump_shot > 0.3 {
                 let tj = jump_time_for(p.y - 0.7, p.y > 2.7);
                 if tj > 0.0
-                    && (self.intercept_t - (w.time - self.decided_at) - tj).abs() < 0.07
+                    && (self.intercept_t - (w.time - self.decided_at) - tj).abs() < 0.08
                     && bdist < 10.0
                 {
                     self.start_jump(0.2, p.y > 2.7);
                 }
-            } else if bdist < 3.2 && p.y < 1.8 && self.d.flip > 0.3 {
-                self.start_flip(1.0, 0.0);
+            } else if bdist < if champ { 3.6 } else { 3.2 } && p.y < 1.8 && self.d.flip > 0.3 {
+                self.start_flip(1.0, 0.0, false);
             }
         }
     }
 
     fn kickoff(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
+        let champ = self.is_champ();
         let team = w.cars[car_idx].team;
         let ad = Self::attack_dir(&w.cars[car_idx]);
         let ball_pos = w.ball.pos;
@@ -1055,18 +1172,50 @@ impl BotAi {
             };
             t.z -= ad * 0.4;
             self.drive_to(car_idx, t, 23.0, w, false);
-            let car = &mut w.cars[car_idx];
-            car.controls.boost = car.boost > 0.0 && self.d.kick > 0.4;
-            car.controls.throttle = 1.0;
-            let to_b = (ball_pos - car.pos).three_normalize();
-            let facing = car.basis.f.dot(to_b);
+            let (speed, facing, on_ground) = {
+                let car = &mut w.cars[car_idx];
+                car.controls.boost = car.boost > 0.0 && self.d.kick > 0.4;
+                car.controls.throttle = 1.0;
+                let to_b = (ball_pos - car.pos).three_normalize();
+                (car.speed(), car.basis.f.dot(to_b), car.on_ground)
+            };
+            if champ
+                && !self.kick_boost_flip
+                && on_ground
+                && d > 14.0
+                && d < 28.0
+                && speed > 10.5
+                && facing > 0.92
+            {
+                self.kick_boost_flip = true;
+                let diag = if car_pos.x > 1.0 {
+                    -0.35
+                } else if car_pos.x < -1.0 {
+                    0.35
+                } else {
+                    0.0
+                };
+                self.start_flip(1.0, diag, true);
+                return;
+            }
             if !self.kick_done
-                && d < 4.1 + car.speed() * 0.14
-                && facing > 0.94
+                && d < if champ { 4.3 } else { 4.1 } + speed * 0.14
+                && facing > if champ { 0.90 } else { 0.94 }
                 && self.d.flip > 0.3
             {
                 self.kick_done = true;
-                self.start_flip(1.0, 0.0);
+                let side_bias = if champ {
+                    if car_pos.x > 0.5 {
+                        -0.25
+                    } else if car_pos.x < -0.5 {
+                        0.25
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+                self.start_flip(1.0, side_bias, false);
             }
         } else {
             let team_count = w.cars.iter().filter(|o| o.team == team).count();
@@ -1088,6 +1237,18 @@ impl BotAi {
                 let t = clamp(((p.x - ax) * bx + (p.z - az) * bz) / l2, 0.0, 1.0);
                 (p.x - ax - bx * t).hypot(p.z - az - bz * t)
             };
+            if champ && team_count == 2 {
+                let mut cheat = DVec3::new(0.0, 0.0, gz * 0.32);
+                if let Some(lp) = lane_pos
+                    && lane_d(cheat, lp) < 7.0
+                {
+                    let cx = w.cars[car_idx].pos.x;
+                    let s = math_sign(cx - lp.x);
+                    cheat.x = (if s != 0.0 { s } else { 1.0 }) * 9.0;
+                }
+                self.drive_to(car_idx, cheat, 20.0, w, false);
+                return;
+            }
             let pad = if let Some(lp) = lane_pos {
                 let pred = |pos: DVec3| lane_d(pos, lp) > 7.0;
                 self.best_pad(car_idx, w, 45.0, Some(&pred))
@@ -1170,6 +1331,7 @@ impl BotAi {
             }
         }
 
+        let champ = self.is_champ();
         let (ang, dist, vf, on_ground, boost, team) = {
             let car = &mut w.cars[car_idx];
             let b = car.basis;
@@ -1185,13 +1347,16 @@ impl BotAi {
                 car.controls.steer = if ang > 0.0 { -1.0 } else { 1.0 };
                 return;
             }
-            car.controls.handbrake = ang.abs() > 1.6 && vf > 8.0 && car.on_ground;
+            let hb_ang = if champ { 1.15 } else { 1.6 };
+            let hb_vf = if champ { 7.0 } else { 8.0 };
+            car.controls.handbrake = ang.abs() > hb_ang && vf > hb_vf && car.on_ground;
             let want = desired_speed * self.d.speed;
             if want > vf + 0.6 {
                 car.controls.throttle = 1.0;
+                let max_boost_ang = if champ { 0.42 } else { 0.32 };
                 let boost_ok = self.d.boost > 0.2
                     && car.boost > 0.0
-                    && ang.abs() < 0.32
+                    && ang.abs() < max_boost_ang
                     && car.on_ground
                     && car.ground_normal.y > 0.6
                     && (want > 14.5 || want > vf + 7.0)
@@ -1207,22 +1372,24 @@ impl BotAi {
 
         if !cautious
             && on_ground
-            && ang.abs() < 0.06
-            && dist > 30.0
-            && vf > 9.0
-            && vf < 16.0
-            && boost < 15.0
+            && ang.abs() < if champ { 0.09 } else { 0.06 }
+            && dist > if champ { 22.0 } else { 30.0 }
+            && vf > if champ { 8.5 } else { 9.0 }
+            && vf < if champ { 18.0 } else { 16.0 }
+            && boost < if champ { 25.0 } else { 15.0 }
             && self.d.flip > 0.5
-            && w.time - self.last_jump_t > 2.0
+            && w.time - self.last_jump_t > if champ { 1.4 } else { 2.0 }
         {
-            self.start_flip(1.0, 0.0);
+            self.start_flip(1.0, 0.0, false);
         }
         if self.d.err < 0.3 && on_ground && w.time - self.last_jump_t > 1.0 {
+            let demo_d = if champ { 9.0 } else { 7.0 };
+            let demo_v = if champ { 16.0 } else { 18.0 };
             let dodge_demo = w.cars.iter().any(|o| {
                 if o.team != team && o.supersonic && !o.demolished {
                     let rel = car_pos - o.pos;
                     let dd = rel.length();
-                    dd < 7.0 && dd > 0.0 && o.vel.dot(rel) / dd > 18.0
+                    dd < demo_d && dd > 0.0 && o.vel.dot(rel) / dd > demo_v
                 } else {
                     false
                 }
@@ -1234,6 +1401,7 @@ impl BotAi {
     }
 
     fn recover(&self, car_idx: usize, _dt: f64, w: &mut World) {
+        let champ = self.is_champ();
         let car = &w.cars[car_idx];
         let look = car.pos + car.vel * 0.25;
         let dd = w.shape.dist(look.x, look.y, look.z);
@@ -1247,8 +1415,12 @@ impl BotAi {
             fwd = car.basis.f - up * car.basis.f.dot(up);
         }
         fwd = fwd.three_normalize();
-        self.orient(car_idx, fwd, Some(up), 1.0, w);
-        w.cars[car_idx].controls.throttle = 1.0;
+        self.orient(car_idx, fwd, Some(up), if champ { 1.5 } else { 1.0 }, w);
+        let car = &mut w.cars[car_idx];
+        car.controls.throttle = 1.0;
+        if champ && dd < 2.0 && car.basis.f.dot(fwd) < 0.85 {
+            car.controls.handbrake = true;
+        }
     }
 
     fn orient(&self, car_idx: usize, fwd: DVec3, up: Option<DVec3>, gain: f64, w: &mut World) {
@@ -1316,15 +1488,17 @@ impl BotAi {
         self.seq = Some(ActionSeq {
             t: 0.0,
             aim_ball: true,
+            boost_flip: false,
             steps,
         });
     }
 
-    fn start_flip(&mut self, f: f64, s: f64) {
+    fn start_flip(&mut self, f: f64, s: f64, boost_flip: bool) {
         self.last_jump_t = self.now;
         self.seq = Some(ActionSeq {
             t: 0.0,
             aim_ball: false,
+            boost_flip,
             steps: vec![
                 SeqStep {
                     t: 0.0,
@@ -1373,7 +1547,7 @@ impl BotAi {
     }
 
     fn run_seq(&mut self, car_idx: usize, dt: f64, w: &mut World) {
-        let (cur_opt, aim_ball, seq_t) = {
+        let (cur_opt, aim_ball, boost_flip, seq_t) = {
             let Some(s) = self.seq.as_mut() else { return };
             s.t += dt;
             let mut cur = None;
@@ -1382,13 +1556,16 @@ impl BotAi {
                     cur = Some(st);
                 }
             }
-            (cur, s.aim_ball, s.t)
+            (cur, s.aim_ball, s.boost_flip, s.t)
         };
         let Some(cur) = cur_opt else { return };
         {
-            let c = &mut w.cars[car_idx].controls;
-            c.jump = cur.jump;
-            c.throttle = 1.0;
+            let car = &mut w.cars[car_idx];
+            car.controls.jump = cur.jump;
+            car.controls.throttle = 1.0;
+            if boost_flip && seq_t < 0.15 && car.boost > 6.0 {
+                car.controls.boost = true;
+            }
         }
         if let Some(pitch) = cur.pitch {
             let c = &mut w.cars[car_idx].controls;
@@ -1404,7 +1581,7 @@ impl BotAi {
         }
     }
 
-    fn start_aerial(&mut self, now: f64, p: DVec3, t_hit: f64) {
+    fn start_aerial(&mut self, now: f64, p: DVec3, t_hit: f64, aim_dir: DVec3) {
         self.last_jump_t = now;
         self.aer = Some(AerialState {
             p,
@@ -1412,10 +1589,12 @@ impl BotAi {
             t: 0.0,
             dbl: p.y > 7.0,
             dodged: false,
+            aim_dir,
         });
     }
 
     fn fly_aerial(&mut self, car_idx: usize, dt: f64, w: &mut World) {
+        let champ = self.is_champ();
         let mut a = match self.aer {
             Some(a) => a,
             None => return,
@@ -1427,12 +1606,12 @@ impl BotAi {
             return;
         }
         let sl = w.pred.at(t_rem.max(0.02));
-        a.p = a.p.lerp(sl.pos, 0.3);
+        a.p = a.p.lerp(sl.pos, if champ { 0.55 } else { 0.3 });
         if a.t < 0.2 {
             let car = &mut w.cars[car_idx];
             car.controls.jump = true;
             car.controls.pitch = -0.6;
-            car.controls.boost = a.t > 0.08 && car.boost > 0.0;
+            car.controls.boost = a.t > if champ { 0.04 } else { 0.08 } && car.boost > 0.0;
             self.aer = Some(a);
             return;
         }
@@ -1444,25 +1623,31 @@ impl BotAi {
         let tc = t_rem.max(0.05);
         let car_pos = w.cars[car_idx].pos;
         let car_vel = w.cars[car_idx].vel;
-        let mut d = a.p - car_pos - car_vel * tc;
+        let aim_pt = if champ && t_rem > 0.08 {
+            a.p - a.aim_dir * 0.65
+        } else {
+            a.p
+        };
+        let mut d = aim_pt - car_pos - car_vel * tc;
         d.y += 0.5 * w.phys.g * tc * tc;
         let a_req = d * (2.0 / (tc * tc));
         let mag = a_req.length();
         let mut dir = if mag > 0.5 {
             a_req.three_normalize()
         } else {
-            (a.p - car_pos).three_normalize()
+            (aim_pt - car_pos).three_normalize()
         };
         if t_rem < 0.25 {
-            dir = (a.p - car_pos).three_normalize();
+            dir = (aim_pt - car_pos).three_normalize();
         }
-        self.orient(car_idx, dir, None, 1.2, w);
+        self.orient(car_idx, dir, None, if champ { 1.6 } else { 1.2 }, w);
         let ball_pos = w.ball.pos;
         let car = &mut w.cars[car_idx];
         let align = car.basis.f.dot(dir);
-        car.controls.boost = car.boost > 0.0 && align > 0.78 && mag > 2.2;
-        if t_rem < 0.2
-            && car.pos.distance(ball_pos) < 3.5
+        let min_align = if champ { 0.72 } else { 0.78 };
+        car.controls.boost = car.boost > 0.0 && align > min_align && mag > 2.2;
+        if t_rem < if champ { 0.24 } else { 0.2 }
+            && car.pos.distance(ball_pos) < if champ { 4.0 } else { 3.5 }
             && car.has_flip
             && self.d.flip > 0.6
         {
@@ -1500,7 +1685,10 @@ impl TeamBrain {
         if self.t > 0.0 {
             return;
         }
-        self.t = 0.3;
+        let has_champ = cars
+            .iter()
+            .any(|c| c.bot.as_ref().is_some_and(|b| b.is_champ()));
+        self.t = if has_champ { 0.15 } else { 0.3 };
         for team in 0..=1_u8 {
             let mem: Vec<usize> = cars
                 .iter()

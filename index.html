@@ -2219,9 +2219,20 @@ class Car {
       this.vel.addScaledVector(u, PHYS.jumpImp);
       this.jumping = true; this.jumpHoldT = 0; this.jumped = true; this.hasFlip = true; this.doubleJumped = false;
       this.timeSinceJump = 0; this.groundLock = 0.12; this.coyoteT = 0; this.events.push('jump');
-    } else if (jumpPressed && contacts === 0 && this.bodyContact && u.y < 0.5 && this.pos.y < 1.5 && this.vel.y < 2.0) {
-      this.vel.y += 3.5; _cv.crossVectors(u, tmpV.set(0, 1, 0)); if (_cv.lengthSq() < 0.01) _cv.copy(f);
-      this.angVel.addScaledVector(_cv.normalize(), 7.5); this.events.push('jump');
+    } else if (jumpPressed && contacts === 0 && (this.bodyContact || this.pos.y < 1.25) && u.y < 0.5 && this.pos.y < 1.5 && this.vel.y < 2.0) {
+      this.vel.y = Math.max(0, this.vel.y) + 3.2;
+      _cv.crossVectors(u, tmpV.set(0, 1, 0));
+      if (_cv.lengthSq() < 0.01) {
+        const dir = Math.abs(c.roll) > 0.1 ? Math.sign(c.roll) : (Math.abs(c.steer) > 0.1 ? Math.sign(c.steer) : 1);
+        _cv.copy(f).multiplyScalar(dir);
+      }
+      _cv.normalize();
+      const angle = Math.acos(clamp(u.y, -1, 1));
+      const undampedT = clamp((angle - 1.10) / PHYS.flipRate, 0.02, 0.40);
+      this.flipping = true;
+      this.flipT = 1.05 - undampedT;
+      this.angVel.copy(_cv).multiplyScalar(PHYS.flipRate);
+      this.events.push('jump');
     } else if (jumpPressed && contacts === 0 && !this.jumping && this.hasFlip && (this.timeSinceJump < PHYS.dodgeWindow || !this.jumped)) {
       const fin = c.pitch, sin = c.airRollFree ? 0 : c.steer;
       const mag = Math.hypot(fin, sin);
@@ -2353,9 +2364,8 @@ class Car {
     this.bodyContact = touched;
     if (touched && this.contacts === 0) {
       this.bodyContactT += PHYS.dt;
-      if (this.bodyContactT > 0.35) {
-        _cv.crossVectors(b.u, tmpV.set(0, 1, 0)); if (_cv.lengthSq() < 0.001) _cv.copy(b.f);
-        this.angVel.addScaledVector(_cv.normalize(), PHYS.dt * 18);
+      if (Math.abs(this.controls.roll) > 0.15) {
+        this.angVel.addScaledVector(b.f, Math.sign(this.controls.roll) * PHYS.dt * 14);
       }
     } else this.bodyContactT = 0;
   }
@@ -7234,7 +7244,8 @@ const DIFFICULTY = [
   { name: 'ROOKIE', react: 0.34, aim: 0.32, speed: 0.82, boost: 0.4, aerial: 0, aerialH: 0, flip: 0.15, jumpShot: 0.35, rot: 0.45, kick: 0.5, err: 0.9 },
   { name: 'PRO', react: 0.2, aim: 0.15, speed: 0.94, boost: 0.8, aerial: 0.4, aerialH: 7.5, flip: 0.6, jumpShot: 0.75, rot: 0.75, kick: 0.8, err: 0.5 },
   { name: 'ALL-STAR', react: 0.11, aim: 0.07, speed: 1, boost: 1, aerial: 0.8, aerialH: 13, flip: 0.9, jumpShot: 0.95, rot: 0.9, kick: 0.95, err: 0.25 },
-  { name: 'LEGEND', react: 0.05, aim: 0.025, speed: 1, boost: 1, aerial: 1, aerialH: 18, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.1 }
+  { name: 'LEGEND', react: 0.05, aim: 0.025, speed: 1, boost: 1, aerial: 1, aerialH: 18, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.1 },
+  { name: 'CHAMP', react: 0.02, aim: 0.005, speed: 1, boost: 1, aerial: 1, aerialH: 22, flip: 1, jumpShot: 1, rot: 1, kick: 1, err: 0.02 }
 ];
 const PERSONALITIES = [
   { name: 'BALANCED', aggro: 0.5, defend: 0.5, air: 0.5, pass: 0.4 },
@@ -7272,28 +7283,34 @@ const _a1 = new V3(), _a2 = new V3(), _a3 = new V3(), _a4 = new V3(), _a5 = new 
 
 class BotAI {
   constructor(car, diff, pers) {
-    this.car = car; this.diffIndex = diff; this.d = DIFFICULTY[diff]; this.p = PERSONALITIES[pers];
+    const di = Math.min(diff, DIFFICULTY.length - 1);
+    this.car = car; this.diffIndex = di; this.d = DIFFICULTY[di]; this.p = PERSONALITIES[pers];
     this.mode = 'idle'; this.decideT = Math.random() * 0.2; this.target = new V3(); this.seq = null; this.aer = null;
     this.intercept = null; this.interceptPos = new V3(); this.interceptT = 0; this.shotDir = new V3(0, 0, 1);
-    this.aimErr = 0; this.lastJumpT = -10; this.kickDone = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; this.unstuckSteer = 1;
+    this.aimErr = 0; this.lastJumpT = -10; this.kickDone = false; this.kickBoostFlip = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; this.unstuckSteer = 1;
   }
+  get isChamp() { return this.diffIndex >= 4; }
   get attackDir() { return this.car.team === 0 ? 1 : -1; }
-  reset() { this.seq = null; this.aer = null; this.mode = 'idle'; this.kickDone = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; }
+  reset() { this.seq = null; this.aer = null; this.mode = 'idle'; this.kickDone = false; this.kickBoostFlip = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; }
   estimate(target, useBoost = true) {
     const car = this.car; const to = _e1.copy(target).sub(car.pos); const dist = Math.max(0, to.length() - 1.6);
     const b = car.basis; const ang = b.f.angleTo(to.normalize());
     const vf = Math.max(0, car.vel.dot(b.f));
-    const turn = ang * (0.3 + vf * 0.012);
+    const turn = this.isChamp ? ang * (0.22 + vf * 0.009) : ang * (0.3 + vf * 0.012);
     return turn + timeToCover(dist, vf * (ang > 1.2 ? 0.3 : 1), useBoost && car.boost > 8 && this.d.boost > 0.5) / this.d.speed + (car.onGround ? 0 : 0.4);
   }
   findIntercept(w) {
-    const pred = w.pred, shape = w.shape;
+    const pred = w.pred, shape = w.shape, champ = this.isChamp;
     const maxJump = this.d.jumpShot > 0.5 ? 3.4 : 2.0;
-    for (let i = 2; i < pred.valid; i += 3) {
+    const step = champ ? 1 : 3;
+    const minAerBoost = champ ? 18 : 25;
+    const maxAerT = champ ? 3.8 : 3.5;
+    const minAerT = champ ? 0.35 : 0.6;
+    for (let i = champ ? 1 : 2; i < pred.valid; i += step) {
       const s = pred.slices[i];
       const nearSurface = shape.dist(s.pos.x, s.pos.y, s.pos.z) < PHYS.ballR + 1.4;
       if (s.pos.y > maxJump && !(nearSurface && s.pos.y < 14)) {
-        if (this.d.aerial > 0 && s.pos.y < this.d.aerialH && this.car.boost > 25 && s.t < 3.5 && s.t > 0.6) {
+        if (this.d.aerial > 0 && s.pos.y < this.d.aerialH && this.car.boost > minAerBoost && s.t < maxAerT && s.t > minAerT) {
           if (this.aerialFeasible(s.pos, s.t)) return { slice: s, t: s.t, aerial: true };
         }
         continue;
@@ -7309,7 +7326,7 @@ class BotAI {
     const d = _f1.copy(P).sub(car.pos).addScaledVector(car.vel, -T); d.y += 0.5 * PHYS.g * T * T; d.y -= 4.2 * T * 0.8;
     const aReq = 2 * d.length() / (T * T);
     const fuel = aReq / PHYS.boostAcc * T * PHYS.boostUse;
-    return aReq < PHYS.boostAcc * 0.85 && fuel < car.boost - 5;
+    return this.isChamp ? (aReq < PHYS.boostAcc * 0.92 && fuel < car.boost - 2) : (aReq < PHYS.boostAcc * 0.85 && fuel < car.boost - 5);
   }
   update(dt, w) {
     this.updateCore(dt, w);
@@ -7388,14 +7405,19 @@ class BotAI {
     else if (role === 'support') this.mode = 'support';
     else this.mode = 'defend';
     if (this.mode === 'attack') {
-      const ahead = (ball.pos.z - car.pos.z) * this.attackDir < -4;
-      const oppClose = w.cars.some(o => o.team !== car.team && !o.demolished && o.pos.distanceTo(ball.pos) < car.pos.distanceTo(ball.pos) - 6);
+      const champ = this.isChamp;
+      const ahead = (ball.pos.z - car.pos.z) * this.attackDir < (champ ? -2.5 : -4);
+      const margin = champ ? 4 : 6;
+      const oppClose = w.cars.some(o => o.team !== car.team && !o.demolished && o.pos.distanceTo(ball.pos) < car.pos.distanceTo(ball.pos) - margin);
       if (ahead && oppClose && this.d.rot > 0.6 && Math.abs(ball.pos.z - ownZ) < w.shape.L * 1.2) this.mode = 'shadow';
     }
-    if (this.d.boost > 0.3 && ((this.mode === 'support' && car.boost < 30) || (this.mode === 'defend' && car.boost < 12))) {
-      const pad = this.bestPad(w, this.mode === 'defend' ? 18 : 40); if (pad) { this.padTarget = pad; this.mode = 'boost'; }
+    const supBoost = this.isChamp ? 42 : 30;
+    const defBoost = this.isChamp ? 22 : 12;
+    const supPadD = this.isChamp ? 28 : 40;
+    if (this.d.boost > 0.3 && ((this.mode === 'support' && car.boost < supBoost) || (this.mode === 'defend' && car.boost < defBoost))) {
+      const pad = this.bestPad(w, this.mode === 'defend' ? 18 : supPadD); if (pad) { this.padTarget = pad; this.mode = 'boost'; }
     }
-    if (this.mode === 'aerialPrep' && this.d.aerial * (0.6 + this.p.air * 0.6) < Math.random()) this.mode = 'attack';
+    if (this.mode === 'aerialPrep' && !this.isChamp && this.d.aerial * (0.6 + this.p.air * 0.6) < Math.random()) this.mode = 'attack';
   }
   closestToGoal(w) {
     const car = this.car; const gz = -this.attackDir * w.shape.goalLineZ(); let best = null, bd = 1e9;
@@ -7427,7 +7449,7 @@ class BotAI {
       case 'support': {
         const sl = w.brain.slotOf(car); const n = sl ? sl.n : 1;
         let z, x;
-        if (n <= 1) { z = clamp(ball.pos.z - this.attackDir * (14 + this.p.defend * 8), -shape.goalLineZ() + 6, shape.goalLineZ() - 6); x = ball.pos.x * 0.45 + (car.pos.x > 0 ? 6 : -6); }
+        if (n <= 1) { const back = this.isChamp ? (11 + this.p.defend * 5) : (14 + this.p.defend * 8); z = clamp(ball.pos.z - this.attackDir * back, -shape.goalLineZ() + 6, shape.goalLineZ() - 6); x = ball.pos.x * 0.45 + (car.pos.x > 0 ? 6 : -6); }
         else {
           const spread = (sl.i / (n - 1) - 0.5) * 2; const mid = Math.abs(spread) < 0.34;
           z = clamp(ball.pos.z - this.attackDir * (mid ? 9 + this.p.defend * 5 : 15 + this.p.defend * 8 + Math.abs(spread) * 4), -shape.goalLineZ() + 6, shape.goalLineZ() - 6);
@@ -7443,7 +7465,9 @@ class BotAI {
       }
       default: {
         const gz = -this.attackDir * shape.goalLineZ();
-        const t = _a1.set(clamp(ball.pos.x * 0.3, -shape.gw + 1.5, shape.gw - 1.5), 0, gz + this.attackDir * 3.2);
+        const t = this.isChamp
+          ? _a1.set(ball.pos.x >= 0 ? -(shape.gw - 2.2) : shape.gw - 2.2, 0, gz + this.attackDir * 2.2)
+          : _a1.set(clamp(ball.pos.x * 0.3, -shape.gw + 1.5, shape.gw - 1.5), 0, gz + this.attackDir * 3.2);
         const d = car.pos.distanceTo(t);
         if (d < 3) { this.faceBall(dt, w); return; }
         this.driveTo(t, clamp(d * 1.2, 3, 23), w, true);
@@ -7457,10 +7481,17 @@ class BotAI {
     else { c.throttle = clamp(-vf * 0.4, -1, 1); }
   }
   shotTarget(w, pos) {
-    const shape = w.shape, ad = this.attackDir;
+    const shape = w.shape, ad = this.attackDir, car = this.car;
     const glz = shape.goalLineZ();
+    const oppZ = ad * (glz + 2);
     const ownHalf = (pos.z * ad) < -glz * 0.35;
-    if (ownHalf) return _a4.set(pos.x >= 0 ? shape.W * 0.9 : -shape.W * 0.9, 0, pos.z + ad * 35);
+    if (ownHalf) {
+      if (this.isChamp && (pos.z * ad) > -glz * 0.65 && shape.goalMode === 'standard') {
+        const oppInNet = w.cars.some(o => o.team !== car.team && !o.demolished && Math.abs(o.pos.z - ad * glz) < 30 && Math.abs(o.pos.x) < shape.gw + 8);
+        if (!oppInNet) return _a4.set(0, 0, oppZ);
+      }
+      return _a4.set(pos.x >= 0 ? shape.W * 0.9 : -shape.W * 0.9, 0, pos.z + ad * 35);
+    }
     if (shape.goalMode === 'standalone' && (pos.z * ad) > shape.goalZ + 1) {
       return _a4.set(0, 0, ad * (shape.goalZ - 9));
     }
@@ -7469,13 +7500,29 @@ class BotAI {
       const sx = pos.x >= 0 ? 1 : -1;
       return _a4.set(sx * (sg.gx + sg.gnx * 2.5), 0, ad * (sg.gz + sg.gnz * 2.5));
     }
-    const oppZ = ad * (glz + 2);
     if (this.p.pass > 0.6 && Math.abs(pos.x) > shape.W * 0.55 && (pos.z * ad) > glz * 0.45) return _a4.set(0, 0, ad * (glz - 12));
+    if (this.isChamp) {
+      let bestD = 1e9, defX = null;
+      const goalLineZ = ad * glz;
+      for (const o of w.cars) {
+        if (o.team !== car.team && !o.demolished) {
+          const dz = Math.abs(o.pos.z - goalLineZ);
+          if (dz < 26 && Math.abs(o.pos.x) < shape.gw + 6) {
+            const d = Math.hypot(o.pos.x, dz);
+            if (d < bestD) { bestD = d; defX = o.pos.x; }
+          }
+        }
+      }
+      const gx = defX !== null
+        ? (defX >= 0 ? -(shape.gw - 1.65) : shape.gw - 1.65)
+        : clamp(pos.x * 0.25 + (pos.x >= 0 ? -2.2 : 2.2), -shape.gw + 1.8, shape.gw - 1.8);
+      return _a4.set(gx, 0, oppZ);
+    }
     const gx = clamp(pos.x * 0.35, -shape.gw + 2.2, shape.gw - 2.2);
     return _a4.set(gx, 0, oppZ);
   }
   attack(dt, w) {
-    const car = this.car, ball = w.ball;
+    const car = this.car, ball = w.ball, champ = this.isChamp;
     const it = this.intercept; if (!it) return;
     const now = w.time;
     const tLeft = Math.max(0.02, this.interceptT - (now - (this.decidedAt || now)));
@@ -7483,9 +7530,9 @@ class BotAI {
     const tgt = this.shotTarget(w, P);
     const sd = this.shotDir.set(tgt.x - P.x, 0, tgt.z - P.z).normalize();
     const ca = Math.cos(this.aimErr), sa = Math.sin(this.aimErr); const sx = sd.x * ca - sd.z * sa, sz = sd.x * sa + sd.z * ca; sd.set(sx, 0, sz);
-    if (it.aerial && this.mode === 'aerialPrep' && car.onGround && car.boost > 25) {
+    if (it.aerial && this.mode === 'aerialPrep' && car.onGround && car.boost > (champ ? 18 : 25)) {
       const toP = _a1.copy(P).sub(car.pos); toP.y = 0; const ang = Math.abs(car.basis.f.angleTo(toP.normalize()));
-      if (ang < 0.35 && this.aerialFeasible(P, it.t)) { this.startAerial(w, P, now + it.t); return; }
+      if (ang < (champ ? 0.48 : 0.35) && this.aerialFeasible(P, it.t)) { this.startAerial(w, P, now + it.t, sd); return; }
     }
     const toBall = _a1.copy(P).sub(car.pos); const dist = Math.hypot(toBall.x, toBall.z);
     const side = _a2.set(car.pos.x - P.x, 0, car.pos.z - P.z); const along = side.dot(sd);
@@ -7504,24 +7551,25 @@ class BotAI {
     const eta = this.estimate(P);
     let desired = 23;
     if (eta < tLeft - 0.35) desired = clamp(dist / Math.max(0.05, tLeft) * 1.2, 5, 23);
-    if (alignShot > 0.8 && dist < 12) desired = Math.max(desired, 15 + this.p.aggro * 8);
+    if (champ && alignShot > 0.72 && dist < 16) desired = 23;
+    else if (alignShot > 0.8 && dist < 12) desired = Math.max(desired, 15 + this.p.aggro * 8);
     this.driveTo(target, desired, w, false);
     const toB = _a3.copy(ball.pos).sub(car.pos); const bdist = toB.length();
     car.basis.toLocal(toB, _al); const facing = _al.x / Math.max(0.01, bdist);
-    if (car.onGround && now - this.lastJumpT > 1.0 && alignShot > 0.4) {
+    if (car.onGround && now - this.lastJumpT > (champ ? 0.75 : 1.0) && alignShot > 0.4) {
       const h = P.y - 0.4;
-      if (P.y > 2.0 && P.y < 4.6 && this.d.jumpShot > Math.random() * 0.4 + 0.3) {
+      if (P.y > (champ ? 1.9 : 2.0) && P.y < (champ ? 5.0 : 4.6) && (champ || this.d.jumpShot > Math.random() * 0.4 + 0.3)) {
         const dbl = h > 2.3;
         const tj = jumpTimeFor(h - 0.3, dbl);
-        if (tj > 0 && Math.abs(tLeft - tj) < 0.06 && facing > 0.75 && dist < 23 * tj + 4) { this.startJump(0.2, dbl); return; }
-      } else if (P.y < 1.8 && bdist < 3.4 + car.speed * 0.1 && bdist > 1.4 && facing > 0.88 && Math.random() < this.d.flip * 0.6) {
+        if (tj > 0 && Math.abs(tLeft - tj) < (champ ? 0.08 : 0.06) && facing > 0.75 && dist < 23 * tj + 4) { this.startJump(0.2, dbl); return; }
+      } else if (P.y < 1.8 && bdist < (champ ? 3.7 + car.speed * 0.11 : 3.4 + car.speed * 0.1) && bdist > (champ ? 1.2 : 1.4) && facing > (champ ? 0.85 : 0.88) && (champ || Math.random() < this.d.flip * 0.6)) {
         const lat = clamp(_al.z / bdist * 2.5, -1, 1);
-        this.startFlip(1, lat * 0.6); return;
+        this.startFlip(1, lat * (champ ? 0.75 : 0.6), false); return;
       }
     }
   }
   save(dt, w) {
-    const car = this.car, shape = w.shape, ad = this.attackDir;
+    const car = this.car, shape = w.shape, ad = this.attackDir, champ = this.isChamp;
     const it = this.intercept; const gz = -ad * shape.goalLineZ();
     const P = it && !it.late ? it.slice.pos : null;
     if (!P) {
@@ -7536,15 +7584,15 @@ class BotAI {
     else target = _a2.copy(P).addScaledVector(clearDir, -clamp(dist * 0.25, 0.5, 4));
     if (P.y < 2.5) target.y = 0;
     this.driveTo(target, 23, w, false);
-    if (it.aerial && car.onGround && car.boost > 20 && this.d.aerial > 0.3) { this.startAerial(w, P, w.time + it.t); return; }
+    if (it.aerial && car.onGround && car.boost > (champ ? 14 : 20) && this.d.aerial > 0.3) { this.startAerial(w, P, w.time + it.t, clearDir); return; }
     const bdist = car.pos.distanceTo(w.ball.pos);
-    if (car.onGround && w.time - this.lastJumpT > 1.0) {
-      if (P.y > 2.0 && P.y < 4.6 && this.d.jumpShot > 0.3) { const tj = jumpTimeFor(P.y - 0.7, P.y > 2.7); if (tj > 0 && Math.abs(this.interceptT - (w.time - (this.decidedAt || w.time)) - tj) < 0.07 && bdist < 10) this.startJump(0.2, P.y > 2.7); }
-      else if (bdist < 3.2 && P.y < 1.8 && this.d.flip > 0.3) this.startFlip(1, 0);
+    if (car.onGround && w.time - this.lastJumpT > (champ ? 0.75 : 1.0)) {
+      if (P.y > 2.0 && P.y < 4.8 && this.d.jumpShot > 0.3) { const tj = jumpTimeFor(P.y - 0.7, P.y > 2.7); if (tj > 0 && Math.abs(this.interceptT - (w.time - (this.decidedAt || w.time)) - tj) < 0.08 && bdist < 10) this.startJump(0.2, P.y > 2.7); }
+      else if (bdist < (champ ? 3.6 : 3.2) && P.y < 1.8 && this.d.flip > 0.3) this.startFlip(1, 0, false);
     }
   }
   kickoff(dt, w) {
-    const car = this.car, c = car.controls, ball = w.ball;
+    const car = this.car, c = car.controls, ball = w.ball, champ = this.isChamp;
     let kicker = w.kicker(car.team) === car;
     if (kicker) {
       // Yield if a human teammate is clearly going for the ball and is at least as close
@@ -7561,7 +7609,16 @@ class BotAI {
       this.driveTo(t, 23, w, false); c.boost = car.boost > 0 && this.d.kick > 0.4; c.throttle = 1;
       const toB = _a3.copy(ball.pos).sub(car.pos).normalize();
       const facing = car.basis.f.dot(toB);
-      if (!this.kickDone && d < 4.1 + car.speed * 0.14 && facing > 0.94 && this.d.flip > 0.3) { this.kickDone = true; this.startFlip(1, 0); }
+      if (champ && !this.kickBoostFlip && car.onGround && d > 14 && d < 28 && car.speed > 10.5 && facing > 0.92) {
+        this.kickBoostFlip = true;
+        const diag = car.pos.x > 1 ? -0.35 : car.pos.x < -1 ? 0.35 : 0;
+        this.startFlip(1, diag, true); return;
+      }
+      if (!this.kickDone && d < (champ ? 4.3 : 4.1) + car.speed * 0.14 && facing > (champ ? 0.90 : 0.94) && this.d.flip > 0.3) {
+        this.kickDone = true;
+        const sideBias = champ ? (car.pos.x > 0.5 ? -0.25 : car.pos.x < -0.5 ? 0.25 : 0) : 0;
+        this.startFlip(1, sideBias, false);
+      }
     } else {
       const team = w.cars.filter(o => o.team === car.team);
       const gz = -this.attackDir * w.shape.goalLineZ();
@@ -7570,6 +7627,11 @@ class BotAI {
       const k = w.kicker(car.team);
       const lane = (k && k !== car && !k.demolished) ? k : null;
       const laneD = (p) => { const ax = lane.pos.x, az = lane.pos.z, bx = ball.pos.x - ax, bz = ball.pos.z - az; const L2 = bx * bx + bz * bz || 1; const t = clamp(((p.x - ax) * bx + (p.z - az) * bz) / L2, 0, 1); return Math.hypot(p.x - ax - bx * t, p.z - az - bz * t); };
+      if (champ && team.length === 2) {
+        const cheat = _a1.set(0, 0, gz * 0.32);
+        if (lane && laneD(cheat) < 7) cheat.x = (Math.sign(car.pos.x - lane.pos.x) || 1) * 9;
+        this.driveTo(cheat, 20, w, false); return;
+      }
       const pad = this.bestPad(w, 45, lane ? (p => laneD(p.pos) > 7) : null);
       if (pad && (pad.big || lane)) this.driveTo(pad.pos, 23, w, false);
       else {
@@ -7603,6 +7665,7 @@ class BotAI {
       }
     }
 
+    const champ = this.isChamp;
     const to = _a1.copy(navTarget).sub(car.pos); b.toLocal(to, _al);
     const dist = Math.hypot(_al.x, _al.z);
     const ang = Math.atan2(_al.z, _al.x);
@@ -7610,27 +7673,28 @@ class BotAI {
     c.steer = clamp(ang * 3.2 + yawRate * 0.25, -1, 1);
     const vf = car.vel.dot(b.f);
     if (Math.abs(ang) > 2.3 && dist < 7 && Math.abs(vf) < 6) { c.throttle = -1; c.steer = ang > 0 ? -1 : 1; return; }
-    c.handbrake = Math.abs(ang) > 1.6 && vf > 8 && car.onGround;
+    c.handbrake = Math.abs(ang) > (champ ? 1.15 : 1.6) && vf > (champ ? 7 : 8) && car.onGround;
     const want = desiredSpeed * this.d.speed;
     if (want > vf + 0.6) {
       c.throttle = 1;
-      const boostOk = this.d.boost > 0.2 && car.boost > 0 && Math.abs(ang) < 0.32 && car.onGround && car.groundNormal.y > 0.6 && (want > 14.5 || want > vf + 7) && vf < 22.6;
+      const boostOk = this.d.boost > 0.2 && car.boost > 0 && Math.abs(ang) < (champ ? 0.42 : 0.32) && car.onGround && car.groundNormal.y > 0.6 && (want > 14.5 || want > vf + 7) && vf < 22.6;
       c.boost = boostOk && (!cautious || car.boost > 30);
     } else if (want < vf - 2.5) c.throttle = vf > 0 ? -1 : 0;
     else c.throttle = clamp(want / 14, 0, 1);
-    if (!cautious && car.onGround && Math.abs(ang) < 0.06 && dist > 30 && vf > 9 && vf < 16 && car.boost < 15 && this.d.flip > 0.5 && w.time - this.lastJumpT > 2) this.startFlip(1, 0);
+    if (!cautious && car.onGround && Math.abs(ang) < (champ ? 0.09 : 0.06) && dist > (champ ? 22 : 30) && vf > (champ ? 8.5 : 9) && vf < (champ ? 18 : 16) && car.boost < (champ ? 25 : 15) && this.d.flip > 0.5 && w.time - this.lastJumpT > (champ ? 1.4 : 2)) this.startFlip(1, 0, false);
     if (this.d.err < 0.3) for (const o of w.cars) if (o.team !== car.team && o.supersonic && !o.demolished) {
-      const rel = _a3.copy(car.pos).sub(o.pos); const dd = rel.length(); if (dd < 7 && dd > 1e-4 && o.vel.dot(rel) / dd > 18 && car.onGround && w.time - this.lastJumpT > 1) { this.startJump(0.2, false); break; }
+      const rel = _a3.copy(car.pos).sub(o.pos); const dd = rel.length(); if (dd < (champ ? 9 : 7) && dd > 1e-4 && o.vel.dot(rel) / dd > (champ ? 16 : 18) && car.onGround && w.time - this.lastJumpT > 1) { this.startJump(0.2, false); break; }
     }
   }
   recover(dt, w) {
-    const car = this.car, c = car.controls;
+    const car = this.car, c = car.controls, champ = this.isChamp;
     const look = _a1.copy(car.pos).addScaledVector(car.vel, 0.25);
     const dd = w.shape.dist(look.x, look.y, look.z);
     const up = dd < 5 ? w.shape.normal(look.x, look.y, look.z, _a2) : _a2.set(0, 1, 0);
     const fwd = _a3.copy(car.vel); fwd.addScaledVector(up, -fwd.dot(up)); if (fwd.lengthSq() < 1) fwd.copy(car.basis.f).addScaledVector(up, -car.basis.f.dot(up)); fwd.normalize();
-    this.orient(fwd, up, dt, 1);
+    this.orient(fwd, up, dt, champ ? 1.5 : 1);
     c.throttle = 1;
+    if (champ && dd < 2 && car.basis.f.dot(fwd) < 0.85) c.handbrake = true;
   }
   orient(fwd, up, dt, gain = 1) {
     const car = this.car, c = car.controls, b = car.basis;
@@ -7653,9 +7717,9 @@ class BotAI {
     steps.push({ t: hold + 0.9, end: true });
     this.seq = { t: 0, steps, aimBall: true };
   }
-  startFlip(f, s) {
+  startFlip(f, s, boostFlip = false) {
     this.lastJumpT = this.now || 0;
-    this.seq = { t: 0, aimBall: false, steps: [{ t: 0, jump: true }, { t: 0.07, jump: false }, { t: 0.1, jump: true, pitch: f, steer: s }, { t: 0.16, jump: false, pitch: f, steer: s }, { t: 0.7, pitch: 0, end: false }, { t: 1.0, end: true }] };
+    this.seq = { t: 0, aimBall: false, boostFlip, steps: [{ t: 0, jump: true }, { t: 0.07, jump: false }, { t: 0.1, jump: true, pitch: f, steer: s }, { t: 0.16, jump: false, pitch: f, steer: s }, { t: 0.7, pitch: 0, end: false }, { t: 1.0, end: true }] };
   }
   runSeq(dt, w) {
     const car = this.car, c = car.controls, s = this.seq;
@@ -7663,35 +7727,38 @@ class BotAI {
     let cur = null; for (const st of s.steps) if (st.t <= s.t) cur = st;
     if (!cur) return;
     c.jump = !!cur.jump; c.throttle = 1;
+    if (s.boostFlip && s.t < 0.15 && car.boost > 6) c.boost = true;
     if (cur.pitch !== undefined) { c.pitch = cur.pitch; c.steer = c.yaw = cur.steer || 0; }
     else if (s.aimBall && !car.onGround) {
       const fwd = _a1.copy(w.ball.pos).sub(car.pos).normalize(); this.orient(fwd, null, dt, 0.6);
     }
     if (cur.end || (s.t > 0.3 && car.onGround && !cur.jump)) this.seq = null;
   }
-  startAerial(w, P, tHit) {
+  startAerial(w, P, tHit, aimDir) {
     this.lastJumpT = w.time;
-    this.aer = { P: P.clone(), tHit, t: 0, dbl: P.y > 7 };
+    this.aer = { P: P.clone(), tHit, t: 0, dbl: P.y > 7, aimDir: aimDir ? aimDir.clone() : new V3(0, 0, this.attackDir) };
   }
   flyAerial(dt, w) {
-    const car = this.car, c = car.controls, a = this.aer;
+    const car = this.car, c = car.controls, a = this.aer, champ = this.isChamp;
     a.t += dt;
     const T = a.tHit - w.time;
     if (T < -0.15 || a.t > 4.5 || (a.t > 0.4 && car.onGround)) { this.aer = null; return; }
-    const sl = w.pred.at(Math.max(0.02, T)); a.P.lerp(sl.pos, 0.3);
-    if (a.t < 0.2) { c.jump = true; c.pitch = -0.6; c.boost = a.t > 0.08 && car.boost > 0; return; }
+    const sl = w.pred.at(Math.max(0.02, T)); a.P.lerp(sl.pos, champ ? 0.55 : 0.3);
+    if (a.t < 0.2) { c.jump = true; c.pitch = -0.6; c.boost = a.t > (champ ? 0.04 : 0.08) && car.boost > 0; return; }
     if (a.dbl && a.t < 0.26) { c.jump = false; }
     else if (a.dbl && a.t < 0.32) { c.jump = true; }
     const Tc = Math.max(0.05, T);
-    const d = _a1.copy(a.P).sub(car.pos).addScaledVector(car.vel, -Tc); d.y += 0.5 * PHYS.g * Tc * Tc;
+    const aimPt = _a5.copy(a.P);
+    if (champ && T > 0.08 && a.aimDir) aimPt.addScaledVector(a.aimDir, -0.65);
+    const d = _a1.copy(aimPt).sub(car.pos).addScaledVector(car.vel, -Tc); d.y += 0.5 * PHYS.g * Tc * Tc;
     const aReq = _a2.copy(d).multiplyScalar(2 / (Tc * Tc));
     const mag = aReq.length();
-    const dir = mag > 0.5 ? _a3.copy(aReq).normalize() : _a3.copy(a.P).sub(car.pos).normalize();
-    if (T < 0.25) dir.copy(a.P).sub(car.pos).normalize();
-    this.orient(dir, null, dt, 1.2);
+    const dir = mag > 0.5 ? _a3.copy(aReq).normalize() : _a3.copy(aimPt).sub(car.pos).normalize();
+    if (T < 0.25) dir.copy(aimPt).sub(car.pos).normalize();
+    this.orient(dir, null, dt, champ ? 1.6 : 1.2);
     const align = car.basis.f.dot(dir);
-    c.boost = car.boost > 0 && align > 0.78 && mag > 2.2;
-    if (T < 0.2 && car.pos.distanceTo(w.ball.pos) < 3.5 && car.hasFlip && this.d.flip > 0.6) {
+    c.boost = car.boost > 0 && align > (champ ? 0.72 : 0.78) && mag > 2.2;
+    if (T < (champ ? 0.24 : 0.2) && car.pos.distanceTo(w.ball.pos) < (champ ? 4.0 : 3.5) && car.hasFlip && this.d.flip > 0.6) {
       const lp = car.basis.toLocal(_a1.copy(w.ball.pos).sub(car.pos), _al);
       c.jump = true; c.pitch = clamp(lp.x, -1, 1) > 0 ? 1 : 0; c.yaw = c.steer = clamp(lp.z * 2, -1, 1); a.dodged = true;
     }
@@ -7701,7 +7768,7 @@ class BotAI {
 class TeamBrain {
   constructor() { this.roles = new Map(); this.slots = new Map(); this.t = 0; this.kickers = [null, null]; }
   update(dt, w) {
-    this.t -= dt; if (this.t > 0) return; this.t = 0.3;
+    this.t -= dt; if (this.t > 0) return; this.t = w.cars.some(c => c.bot && c.bot.isChamp) ? 0.15 : 0.3;
     for (const team of [0, 1]) {
       const mem = w.cars.filter(c => c.team === team && !c.demolished);
       if (!mem.length) continue;
@@ -9457,7 +9524,7 @@ class Tournament {
   }
   get roundNames() { return ['QUARTERFINAL', 'SEMIFINAL', 'GRAND FINAL']; }
   currentOpponent() { const r = this.rounds[this.round]; const i = r.findIndex(t => t.me); return r[i % 2 ? i - 1 : i + 1]; }
-  opponentDifficulty() { return clamp(this.cfg.difficulty + this.round - 1 + (this.currentOpponent().rating > 4 ? 1 : 0), 0, 3); }
+  opponentDifficulty() { return clamp(this.cfg.difficulty + this.round - 1 + (this.currentOpponent().rating > 4 ? 1 : 0), 0, DIFFICULTY.length - 1); }
   recordPlayerResult(myScore, oppScore) {
     const r = this.rounds[this.round]; const res = [];
     for (let i = 0; i < r.length; i += 2) {
@@ -10559,7 +10626,7 @@ class UIManager {
           <div class="desc">Fight through the Quarterfinal, Semifinal and Grand Final. Every round the opposition gets sharper and the arena changes. Lose once and you're out.</div>
           <div class="sect">Format</div>${this.seg('tsize', [[1, '1 v 1'], [2, '2 v 2'], [3, '3 v 3'], [4, '4 v 4'], [5, '5 v 5']])}
           <div class="sect">Rules</div>${this.seg('tmode', [['standard', 'Standard'], ['mayhem', 'Mayhem · Power-ups']])}
-          <div class="sect">Starting difficulty</div>${this.seg('tdiff', DIFFICULTY.slice(0, 3).map((d, i) => [i, d.name]))}
+          <div class="sect">Starting difficulty</div>${this.seg('tdiff', DIFFICULTY.slice(0, 4).map((d, i) => [i, d.name]))}
           <div class="sect">Rounds</div><div class="desc">3 min matches · Overtime decides ties · Arena rotates each round</div>
           <div class="dock"><button class="cta alt" id="goTourney"><span>${ico('trophy')}Begin Tournament</span></button></div>`; break;
       case 'freeplay':

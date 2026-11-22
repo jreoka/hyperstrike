@@ -120,7 +120,7 @@ pub fn sanitize_lobby_settings(
         s.bot_fill = b;
     }
     if let Some(n) = json_strict_int(obj.get("botDiff"))
-        && (0..=3).contains(&n) {
+        && (0..=4).contains(&n) {
             s.bot_diff = n as i32;
         }
     if let Some(bm) = obj.get("boostMode").and_then(|v| v.as_str())
