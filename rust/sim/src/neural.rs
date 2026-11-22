@@ -12,7 +12,7 @@ use crate::world::World;
 
 // Observation / action layout shared by live inference AND the RL trainer (`rust/rl_env`).
 // Keep `rl/env.py` in sync with these constants.
-pub const NEURAL_FORMAT: &str = "hyperstrike_energy_rope_v3";
+pub const NEURAL_FORMAT: &str = "hyperstrike_rope_transformer_v1";
 pub const MAX_CARS: usize = 10;
 pub const OTHER_CARS: usize = MAX_CARS - 1;
 pub const NUM_PADS_OBS: usize = 6;
@@ -79,14 +79,17 @@ struct Manifest {
     format: String,
     d_model: usize,
     n_heads: usize,
-    mlp_ratio: usize,
-    entity_steps: usize,
-    temporal_steps: usize,
+    entity_layers: usize,
+    temporal_layers: usize,
     seq_len: usize,
-    #[serde(default)]
-    symmetric_k: bool,
+    #[serde(default = "default_rope_base")]
+    rope_base: f64,
     action_n_bins: Vec<usize>,
     tensors: Vec<TensorDesc>,
+}
+
+fn default_rope_base() -> f64 {
+    10000.0
 }
 
 struct Linear {
@@ -127,30 +130,6 @@ fn matvec(w: &[f32], bias: Option<&[f32]>, out_dim: usize, in_dim: usize, x: &[f
     }
 }
 
-/// Computes `out = W^T @ x` where `W` has shape `[rows, cols]`, `x` has len `rows`, `out` has len `cols`.
-#[inline]
-fn matvec_t(w: &[f32], rows: usize, cols: usize, x: &[f32], out: &mut [f32]) {
-    out[..cols].fill(0.0);
-    let chunks = cols / 4;
-    for r in 0..rows {
-        let xr = x[r];
-        if xr == 0.0 {
-            continue;
-        }
-        let row = &w[r * cols..(r + 1) * cols];
-        for c in 0..chunks {
-            let i = c * 4;
-            out[i] += xr * row[i];
-            out[i + 1] += xr * row[i + 1];
-            out[i + 2] += xr * row[i + 2];
-            out[i + 3] += xr * row[i + 3];
-        }
-        for i in (chunks * 4)..cols {
-            out[i] += xr * row[i];
-        }
-    }
-}
-
 #[inline]
 fn gelu_tanh(z: f32) -> f32 {
     const SQRT_2_OVER_PI: f32 = 0.7978845608;
@@ -176,16 +155,17 @@ impl RmsNorm {
     }
 }
 
-struct EnergyBlock {
-    norm: RmsNorm,
-    w_q: Vec<f32>,  // [dim, dim]
-    w_k: Vec<f32>,  // [dim, dim]
-    w_m: Vec<f32>,  // [mlp_dim, dim]
-    mlp_dim: usize,
-    beta: Vec<f32>, // [num_heads] = exp(log_beta)
-    dt: f32,
-    steps: usize,
-    symmetric_k: bool,
+/// Pre-norm transformer block mirroring `RoPETransformerBlock` in `rl/model.py`:
+/// `x += W_o·MHA(RMSNorm(x))`, `x += W_2·GELU(W_1·RMSNorm(x))`.
+struct TfBlock {
+    attn_norm: RmsNorm,
+    wq: Linear,
+    wk: Linear,
+    wv: Linear,
+    wo: Linear,
+    mlp_norm: RmsNorm,
+    fc1: Linear,
+    fc2: Linear,
 }
 
 pub struct NeuralPolicy {
@@ -199,12 +179,13 @@ pub struct NeuralPolicy {
     other_proj: Linear,
     pad_proj: Linear,
     type_emb: Vec<f32>, // [4, d_model]
-    entity_block: EnergyBlock,
+    entity_blocks: Vec<TfBlock>,
     entity_norm: RmsNorm,
-    temporal_block: EnergyBlock,
+    temporal_blocks: Vec<TfBlock>,
     final_norm: RmsNorm,
     action_heads: Vec<Linear>,
-    inv_freq: Vec<f64>, // [head_dim / 2]
+    rope_cos: Vec<f32>, // [seq_len, head_dim / 2]
+    rope_sin: Vec<f32>, // [seq_len, head_dim / 2]
 }
 
 impl NeuralPolicy {
@@ -218,6 +199,12 @@ impl NeuralPolicy {
         }
         if manifest.action_n_bins.len() != ACTION_DIM {
             return Err(format!("expected {ACTION_DIM} action heads"));
+        }
+        if manifest.n_heads == 0 || !manifest.d_model.is_multiple_of(manifest.n_heads) {
+            return Err("d_model must be divisible by n_heads".into());
+        }
+        if manifest.seq_len == 0 {
+            return Err("seq_len must be > 0".into());
         }
         let raw = fs::read(bin_path)
             .map_err(|e| format!("failed to read {}: {e}", bin_path.display()))?;
@@ -264,24 +251,16 @@ impl NeuralPolicy {
             })
         };
 
-        let load_energy = |prefix: &str, steps: usize, symmetric_k: bool| -> Result<EnergyBlock, String> {
-            let norm = load_norm(&format!("{prefix}.norm"))?;
-            let (_, w_q) = get_tensor(&format!("{prefix}.w_q"))?;
-            let (_, w_k) = get_tensor(&format!("{prefix}.w_k"))?;
-            let (m_shape, w_m) = get_tensor(&format!("{prefix}.w_m"))?;
-            let (_, log_beta) = get_tensor(&format!("{prefix}.log_beta"))?;
-            let (_, dt_v) = get_tensor(&format!("{prefix}.dt"))?;
-            let beta = log_beta.into_iter().map(|v| v.exp()).collect();
-            Ok(EnergyBlock {
-                norm,
-                w_q,
-                w_k,
-                w_m,
-                mlp_dim: m_shape[0],
-                beta,
-                dt: dt_v[0],
-                steps,
-                symmetric_k,
+        let load_block = |prefix: &str| -> Result<TfBlock, String> {
+            Ok(TfBlock {
+                attn_norm: load_norm(&format!("{prefix}.attn_norm"))?,
+                wq: load_linear(&format!("{prefix}.wq"), false)?,
+                wk: load_linear(&format!("{prefix}.wk"), false)?,
+                wv: load_linear(&format!("{prefix}.wv"), false)?,
+                wo: load_linear(&format!("{prefix}.wo"), false)?,
+                mlp_norm: load_norm(&format!("{prefix}.mlp_norm"))?,
+                fc1: load_linear(&format!("{prefix}.fc1"), false)?,
+                fc2: load_linear(&format!("{prefix}.fc2"), false)?,
             })
         };
 
@@ -290,22 +269,36 @@ impl NeuralPolicy {
         let head_dim = d_model / n_heads;
         let seq_len = manifest.seq_len;
 
-        let entity_block = load_energy("entity_block", manifest.entity_steps, manifest.symmetric_k)?;
-        let temporal_block = load_energy("temporal_block", manifest.temporal_steps, false)?;
-        let max_mlp_dim = entity_block
-            .mlp_dim
-            .max(temporal_block.mlp_dim)
-            .max(d_model * manifest.mlp_ratio);
+        let entity_blocks = (0..manifest.entity_layers)
+            .map(|i| load_block(&format!("entity_blocks.{i}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let temporal_blocks = (0..manifest.temporal_layers)
+            .map(|i| load_block(&format!("temporal_blocks.{i}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let max_mlp_dim = entity_blocks
+            .iter()
+            .chain(temporal_blocks.iter())
+            .map(|b| b.fc1.out_dim)
+            .max()
+            .unwrap_or(d_model);
 
         let mut action_heads = Vec::with_capacity(ACTION_DIM);
         for i in 0..ACTION_DIM {
             action_heads.push(load_linear(&format!("action_heads.{i}"), true)?);
         }
 
+        // RoPE tables matching `build_rope_cache` (f32 inv_freq, f32 angles) in rl/model.py.
         let half = head_dim / 2;
-        let mut inv_freq = Vec::with_capacity(half);
+        let mut rope_cos = vec![0.0_f32; seq_len * half];
+        let mut rope_sin = vec![0.0_f32; seq_len * half];
         for j in 0..half {
-            inv_freq.push(1.0_f64 / 10000.0_f64.powf((2 * j) as f64 / head_dim as f64));
+            let inv_freq =
+                (1.0_f64 / manifest.rope_base.powf((2 * j) as f64 / head_dim as f64)) as f32;
+            for p in 0..seq_len {
+                let angle = p as f32 * inv_freq;
+                rope_cos[p * half + j] = angle.cos();
+                rope_sin[p * half + j] = angle.sin();
+            }
         }
 
         Ok(Self {
@@ -319,32 +312,120 @@ impl NeuralPolicy {
             other_proj: load_linear("other_proj", true)?,
             pad_proj: load_linear("pad_proj", true)?,
             type_emb: get_tensor("type_emb.weight")?.1,
-            entity_block,
+            entity_blocks,
             entity_norm: load_norm("entity_norm")?,
-            temporal_block,
+            temporal_blocks,
             final_norm: load_norm("final_norm")?,
             action_heads,
-            inv_freq,
+            rope_cos,
+            rope_sin,
         })
     }
 
-    /// Split-half RoPE matching `x1, x2 = x.chunk(2, dim=-1); cat([x1*cos - x2*sin, x1*sin + x2*cos])`.
-    /// Pass `invert = true` for `apply_rope(x, cos, -sin)`.
+    /// Split-half RoPE matching `x1, x2 = x.chunk(2, dim=-1); cat([x1*cos - x2*sin, x1*sin + x2*cos])`,
+    /// applied independently to every head of a `[d_model]` vector.
     #[inline]
-    fn apply_rope_pos(&self, vec: &mut [f32], pos: usize, invert: bool) {
+    fn apply_rope_pos(&self, vec: &mut [f32], pos: usize) {
         let half = self.head_dim / 2;
-        let p = pos as f64;
-        let sign = if invert { -1.0_f32 } else { 1.0_f32 };
+        let cos = &self.rope_cos[pos * half..(pos + 1) * half];
+        let sin = &self.rope_sin[pos * half..(pos + 1) * half];
         for h in 0..self.n_heads {
             let base = h * self.head_dim;
             for j in 0..half {
-                let angle = p * self.inv_freq[j];
-                let c = angle.cos() as f32;
-                let s = (angle.sin() as f32) * sign;
                 let x1 = vec[base + j];
                 let x2 = vec[base + half + j];
-                vec[base + j] = x1 * c - x2 * s;
-                vec[base + half + j] = x1 * s + x2 * c;
+                vec[base + j] = x1 * cos[j] - x2 * sin[j];
+                vec[base + half + j] = x1 * sin[j] + x2 * cos[j];
+            }
+        }
+    }
+
+    /// Runs one transformer block in place over `x = [n, d]`.
+    /// `only_row = Some(r)` updates just row `r` (used on the last layer, where only one
+    /// output token is read); keys/values are still computed from every row.
+    fn block_forward(
+        &self,
+        blk: &TfBlock,
+        x: &mut [f32],
+        n: usize,
+        causal: bool,
+        rope: bool,
+        only_row: Option<usize>,
+        s: &mut NeuralScratch,
+    ) {
+        let d = self.d_model;
+        let nh = self.n_heads;
+        let hd = self.head_dim;
+        let mlp_d = blk.fc1.out_dim;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        for t in 0..n {
+            let row = t * d..(t + 1) * d;
+            blk.attn_norm.forward(&x[row.clone()], &mut s.g[row.clone()]);
+            blk.wk.forward(&s.g[row.clone()], &mut s.k[row.clone()]);
+            blk.wv.forward(&s.g[row.clone()], &mut s.v[row.clone()]);
+            if rope {
+                self.apply_rope_pos(&mut s.k[row], t);
+            }
+        }
+
+        let rows = match only_row {
+            Some(r) => r..r + 1,
+            None => 0..n,
+        };
+        for r in rows {
+            blk.wq.forward(&s.g[r * d..(r + 1) * d], &mut s.q);
+            if rope {
+                self.apply_rope_pos(&mut s.q, r);
+            }
+            let n_keys = if causal { r + 1 } else { n };
+
+            s.attn_o.fill(0.0);
+            for h in 0..nh {
+                let ho = h * hd;
+                let mut max_sc = f32::NEG_INFINITY;
+                for t in 0..n_keys {
+                    let k_off = t * d + ho;
+                    let mut dot = 0.0_f32;
+                    for j in 0..hd {
+                        dot += s.q[ho + j] * s.k[k_off + j];
+                    }
+                    let sc = dot * scale;
+                    s.scores[t] = sc;
+                    if sc > max_sc {
+                        max_sc = sc;
+                    }
+                }
+                let mut denom = 0.0_f32;
+                for sc in s.scores.iter_mut().take(n_keys) {
+                    let e = (*sc - max_sc).exp();
+                    *sc = e;
+                    denom += e;
+                }
+                let inv_d = if denom > 0.0 { 1.0 / denom } else { 0.0 };
+                for t in 0..n_keys {
+                    let w = s.scores[t] * inv_d;
+                    let v_off = t * d + ho;
+                    for j in 0..hd {
+                        s.attn_o[ho + j] += w * s.v[v_off + j];
+                    }
+                }
+            }
+
+            let xr = &mut x[r * d..(r + 1) * d];
+            blk.wo.forward(&s.attn_o, &mut s.tmp);
+            for i in 0..d {
+                xr[i] += s.tmp[i];
+            }
+
+            blk.mlp_norm.forward(xr, &mut s.norm_buf);
+            blk.fc1.forward(&s.norm_buf, &mut s.mlp_h[..mlp_d]);
+            for v in s.mlp_h[..mlp_d].iter_mut() {
+                *v = gelu_tanh(*v);
+            }
+            blk.fc2.forward(&s.mlp_h[..mlp_d], &mut s.tmp);
+            for i in 0..d {
+                xr[i] += s.tmp[i];
             }
         }
     }
@@ -360,243 +441,56 @@ impl NeuralPolicy {
         out_emb: &mut [f32],
     ) {
         let d = self.d_model;
-        let nh = self.n_heads;
-        let hd = self.head_dim;
+        let mut tokens = std::mem::take(&mut scratch.tokens);
 
-        // Compact only active tokens
+        // Compact only active tokens (masked keys never influence the [SELF] token).
         let mut n_tok = 0_usize;
-
-        self.self_proj.forward(self_obs, &mut scratch.tokens[0..d]);
-        for i in 0..d {
-            scratch.tokens[i] += self.type_emb[i];
-        }
-        n_tok += 1;
-
-        let off = n_tok * d;
-        self.ball_proj
-            .forward(ball_obs, &mut scratch.tokens[off..off + d]);
-        for i in 0..d {
-            scratch.tokens[off + i] += self.type_emb[d + i];
-        }
-        n_tok += 1;
-
+        let mut push = |proj: &Linear, inp: &[f32], ty: usize, tokens: &mut [f32]| {
+            let off = n_tok * d;
+            proj.forward(inp, &mut tokens[off..off + d]);
+            for i in 0..d {
+                tokens[off + i] += self.type_emb[ty * d + i];
+            }
+            n_tok += 1;
+        };
+        push(&self.self_proj, self_obs, 0, &mut tokens);
+        push(&self.ball_proj, ball_obs, 1, &mut tokens);
         for k in 0..OTHER_CARS {
-            if !other_mask[k] {
-                continue;
-            }
-            let off = n_tok * d;
-            self.other_proj
-                .forward(&other_obs[k], &mut scratch.tokens[off..off + d]);
-            for i in 0..d {
-                scratch.tokens[off + i] += self.type_emb[2 * d + i];
-            }
-            n_tok += 1;
-        }
-
-        for k in 0..NUM_PADS_OBS {
-            let off = n_tok * d;
-            self.pad_proj
-                .forward(&pads_obs[k], &mut scratch.tokens[off..off + d]);
-            for i in 0..d {
-                scratch.tokens[off + i] += self.type_emb[3 * d + i];
-            }
-            n_tok += 1;
-        }
-
-        let blk = &self.entity_block;
-        let mlp_d = blk.mlp_dim;
-        for step in 0..blk.steps {
-            let is_last = step + 1 == blk.steps;
-            let q_tokens = if is_last && !blk.symmetric_k { 1 } else { n_tok };
-
-            for s in 0..n_tok {
-                blk.norm
-                    .forward(&scratch.tokens[s * d..(s + 1) * d], &mut scratch.g_tok[s * d..(s + 1) * d]);
-                let gs = &scratch.g_tok[s * d..(s + 1) * d];
-                if s < q_tokens || blk.symmetric_k {
-                    matvec(&blk.w_q, None, d, d, gs, &mut scratch.q[s * d..(s + 1) * d]);
-                }
-                matvec(&blk.w_k, None, d, d, gs, &mut scratch.k[s * d..(s + 1) * d]);
-            }
-
-            let upd_tokens = if is_last { 1 } else { n_tok };
-            for s in 0..upd_tokens {
-                // Attention gradient wrt Q: softmax((q * beta) @ k^T) @ k
-                scratch.grad_buf[..d].fill(0.0);
-                for h in 0..nh {
-                    let beta = blk.beta[h];
-                    let q_off = s * d + h * hd;
-                    let mut max_sc = f32::NEG_INFINITY;
-                    for t in 0..n_tok {
-                        let k_off = t * d + h * hd;
-                        let mut dot = 0.0_f32;
-                        for j in 0..hd {
-                            dot += scratch.q[q_off + j] * scratch.k[k_off + j];
-                        }
-                        let sc = dot * beta;
-                        scratch.scores[t] = sc;
-                        if sc > max_sc {
-                            max_sc = sc;
-                        }
-                    }
-                    let mut denom = 0.0_f32;
-                    for sc in scratch.scores.iter_mut().take(n_tok) {
-                        let e = (*sc - max_sc).exp();
-                        *sc = e;
-                        denom += e;
-                    }
-                    let inv_d = if denom > 0.0 { 1.0 / denom } else { 0.0 };
-                    let out_off = h * hd;
-                    for t in 0..n_tok {
-                        let w = scratch.scores[t] * inv_d;
-                        let k_off = t * d + h * hd;
-                        for j in 0..hd {
-                            scratch.grad_buf[out_off + j] += w * scratch.k[k_off + j];
-                        }
-                    }
-                }
-                matvec_t(&blk.w_q, d, d, &scratch.grad_buf[..d], &mut scratch.d_attn);
-
-                if blk.symmetric_k {
-                    scratch.grad_buf[..d].fill(0.0);
-                    for h in 0..nh {
-                        let beta = blk.beta[h];
-                        let k_off = s * d + h * hd;
-                        let mut max_sc = f32::NEG_INFINITY;
-                        for t in 0..n_tok {
-                            let q_off = t * d + h * hd;
-                            let mut dot = 0.0_f32;
-                            for j in 0..hd {
-                                dot += scratch.k[k_off + j] * scratch.q[q_off + j];
-                            }
-                            let sc = dot * beta;
-                            scratch.scores[t] = sc;
-                            if sc > max_sc {
-                                max_sc = sc;
-                            }
-                        }
-                        let mut denom = 0.0_f32;
-                        for sc in scratch.scores.iter_mut().take(n_tok) {
-                            let e = (*sc - max_sc).exp();
-                            *sc = e;
-                            denom += e;
-                        }
-                        let inv_d = if denom > 0.0 { 1.0 / denom } else { 0.0 };
-                        let out_off = h * hd;
-                        for t in 0..n_tok {
-                            let w = scratch.scores[t] * inv_d;
-                            let q_off = t * d + h * hd;
-                            for j in 0..hd {
-                                scratch.grad_buf[out_off + j] += w * scratch.q[q_off + j];
-                            }
-                        }
-                    }
-                    matvec_t(&blk.w_k, d, d, &scratch.grad_buf[..d], &mut scratch.d_attn_k);
-                    for i in 0..d {
-                        scratch.d_attn[i] += scratch.d_attn_k[i];
-                    }
-                }
-
-                // FFN energy gradient: W_m^T @ gelu(W_m @ g)
-                let gs = &scratch.g_tok[s * d..(s + 1) * d];
-                matvec(&blk.w_m, None, mlp_d, d, gs, &mut scratch.mlp_h[..mlp_d]);
-                for v in scratch.mlp_h[..mlp_d].iter_mut() {
-                    *v = gelu_tanh(*v);
-                }
-                matvec_t(&blk.w_m, mlp_d, d, &scratch.mlp_h[..mlp_d], &mut scratch.d_ffn);
-
-                let row = &mut scratch.tokens[s * d..(s + 1) * d];
-                for i in 0..d {
-                    row[i] += blk.dt * (scratch.d_attn[i] + scratch.d_ffn[i]);
-                }
+            if other_mask[k] {
+                push(&self.other_proj, &other_obs[k], 2, &mut tokens);
             }
         }
+        for pad in pads_obs.iter() {
+            push(&self.pad_proj, pad, 3, &mut tokens);
+        }
 
-        self.entity_norm.forward(&scratch.tokens[0..d], out_emb);
+        let n_layers = self.entity_blocks.len();
+        for (li, blk) in self.entity_blocks.iter().enumerate() {
+            let only = if li + 1 == n_layers { Some(0) } else { None };
+            self.block_forward(blk, &mut tokens[..n_tok * d], n_tok, false, false, only, scratch);
+        }
+
+        self.entity_norm.forward(&tokens[0..d], out_emb);
+        scratch.tokens = tokens;
     }
 
-    /// Exact per-energy-step RoPE K-cache for causal temporal UnifiedEnergyBlock:
-    /// projects only the single new token at each energy step (O(steps) instead of O(steps * T)).
-    fn step_temporal_kv(
-        &self,
-        frame_emb: &[f32],
-        step_pos: usize,
-        k_cache: &mut [f32], // [temporal_steps * seq_len * d]
-        scratch: &mut NeuralScratch,
-    ) -> Controls {
+    /// Runs the causal RoPE temporal encoder over the full `[seq_len, d]` window (positions
+    /// 0..T-1, exactly like training) and greedily decodes the action heads at the last position.
+    fn forward_temporal(&self, window: &[f32], scratch: &mut NeuralScratch) -> Controls {
         let d = self.d_model;
-        let nh = self.n_heads;
-        let hd = self.head_dim;
-        let t_max = self.seq_len;
-        let slot = step_pos % t_max;
-        let valid_len = (step_pos + 1).min(t_max);
-        let blk = &self.temporal_block;
-        let mlp_d = blk.mlp_dim;
+        let t_len = self.seq_len;
+        let last = t_len - 1;
 
-        scratch.cur_x.copy_from_slice(frame_emb);
-
-        for st in 0..blk.steps {
-            let layer_off = st * t_max * d;
-            blk.norm.forward(&scratch.cur_x, &mut scratch.norm_buf);
-
-            matvec(&blk.w_q, None, d, d, &scratch.norm_buf, &mut scratch.q[..d]);
-            self.apply_rope_pos(&mut scratch.q[..d], step_pos, false);
-
-            let k_slot = layer_off + slot * d;
-            matvec(&blk.w_k, None, d, d, &scratch.norm_buf, &mut k_cache[k_slot..k_slot + d]);
-            self.apply_rope_pos(&mut k_cache[k_slot..k_slot + d], step_pos, false);
-
-            scratch.grad_buf[..d].fill(0.0);
-            for h in 0..nh {
-                let beta = blk.beta[h];
-                let q_off = h * hd;
-                let mut max_sc = f32::NEG_INFINITY;
-                for idx in 0..valid_len {
-                    let k_off = layer_off + idx * d + h * hd;
-                    let mut dot = 0.0_f32;
-                    for j in 0..hd {
-                        dot += scratch.q[q_off + j] * k_cache[k_off + j];
-                    }
-                    let sc = dot * beta;
-                    scratch.scores[idx] = sc;
-                    if sc > max_sc {
-                        max_sc = sc;
-                    }
-                }
-                let mut denom = 0.0_f32;
-                for sc in scratch.scores.iter_mut().take(valid_len) {
-                    let e = (*sc - max_sc).exp();
-                    *sc = e;
-                    denom += e;
-                }
-                let inv_d = if denom > 0.0 { 1.0 / denom } else { 0.0 };
-                let out_off = h * hd;
-                for idx in 0..valid_len {
-                    let w = scratch.scores[idx] * inv_d;
-                    let k_off = layer_off + idx * d + h * hd;
-                    for j in 0..hd {
-                        scratch.grad_buf[out_off + j] += w * k_cache[k_off + j];
-                    }
-                }
-            }
-
-            // Inverse RoPE on attention gradient before projecting back with W_q^T
-            self.apply_rope_pos(&mut scratch.grad_buf[..d], step_pos, true);
-            matvec_t(&blk.w_q, d, d, &scratch.grad_buf[..d], &mut scratch.d_attn);
-
-            matvec(&blk.w_m, None, mlp_d, d, &scratch.norm_buf, &mut scratch.mlp_h[..mlp_d]);
-            for v in scratch.mlp_h[..mlp_d].iter_mut() {
-                *v = gelu_tanh(*v);
-            }
-            matvec_t(&blk.w_m, mlp_d, d, &scratch.mlp_h[..mlp_d], &mut scratch.d_ffn);
-
-            for i in 0..d {
-                scratch.cur_x[i] += blk.dt * (scratch.d_attn[i] + scratch.d_ffn[i]);
-            }
+        let mut x = std::mem::take(&mut scratch.seq);
+        x.copy_from_slice(window);
+        let n_layers = self.temporal_blocks.len();
+        for (li, blk) in self.temporal_blocks.iter().enumerate() {
+            let only = if li + 1 == n_layers { Some(last) } else { None };
+            self.block_forward(blk, &mut x, t_len, true, true, only, scratch);
         }
-
         self.final_norm
-            .forward(&scratch.cur_x, &mut scratch.norm_buf);
+            .forward(&x[last * d..(last + 1) * d], &mut scratch.norm_buf);
+        scratch.seq = x;
 
         let mut vals = [0.0_f64; ACTION_DIM];
         let mut logits = [0.0_f32; 8];
@@ -631,38 +525,36 @@ impl NeuralPolicy {
 
 #[derive(Clone, Debug)]
 struct NeuralScratch {
-    tokens: Vec<f32>,
-    g_tok: Vec<f32>,
-    q: Vec<f32>,
-    k: Vec<f32>,
-    scores: Vec<f32>,
-    norm_buf: Vec<f32>,
-    grad_buf: Vec<f32>,
-    d_attn: Vec<f32>,
-    d_attn_k: Vec<f32>,
-    mlp_h: Vec<f32>,
-    d_ffn: Vec<f32>,
-    cur_x: Vec<f32>,
-    emb: Vec<f32>,
+    tokens: Vec<f32>,   // [TOTAL_TOKENS, d]
+    seq: Vec<f32>,      // [seq_len, d]
+    g: Vec<f32>,        // [max_rows, d]
+    k: Vec<f32>,        // [max_rows, d]
+    v: Vec<f32>,        // [max_rows, d]
+    q: Vec<f32>,        // [d]
+    attn_o: Vec<f32>,   // [d]
+    tmp: Vec<f32>,      // [d]
+    norm_buf: Vec<f32>, // [d]
+    mlp_h: Vec<f32>,    // [max_mlp_dim]
+    scores: Vec<f32>,   // [max_rows]
+    emb: Vec<f32>,      // [d]
 }
 
 impl NeuralScratch {
     fn new(policy: &NeuralPolicy) -> Self {
         let d = policy.d_model;
-        let max_s = TOTAL_TOKENS.max(policy.seq_len);
+        let max_rows = TOTAL_TOKENS.max(policy.seq_len);
         Self {
             tokens: vec![0.0; TOTAL_TOKENS * d],
-            g_tok: vec![0.0; TOTAL_TOKENS * d],
-            q: vec![0.0; TOTAL_TOKENS * d],
-            k: vec![0.0; TOTAL_TOKENS * d],
-            scores: vec![0.0; max_s],
+            seq: vec![0.0; policy.seq_len * d],
+            g: vec![0.0; max_rows * d],
+            k: vec![0.0; max_rows * d],
+            v: vec![0.0; max_rows * d],
+            q: vec![0.0; d],
+            attn_o: vec![0.0; d],
+            tmp: vec![0.0; d],
             norm_buf: vec![0.0; d],
-            grad_buf: vec![0.0; d],
-            d_attn: vec![0.0; d],
-            d_attn_k: vec![0.0; d],
             mlp_h: vec![0.0; policy.max_mlp_dim],
-            d_ffn: vec![0.0; d],
-            cur_x: vec![0.0; d],
+            scores: vec![0.0; max_rows],
             emb: vec![0.0; d],
         }
     }
@@ -670,8 +562,10 @@ impl NeuralScratch {
 
 #[derive(Clone, Debug)]
 pub struct NeuralBotState {
-    k_cache: Vec<f32>,
-    step_pos: usize,
+    /// Sliding window of the last `seq_len` frame embeddings, oldest first (mirrors the
+    /// trainer's `HistoryBuffer`: on a fresh episode every slot is filled with the first frame).
+    history: Vec<f32>,
+    fresh: bool,
     tick_accum: u8,
     stagger_applied: bool,
     cached_controls: Controls,
@@ -680,10 +574,9 @@ pub struct NeuralBotState {
 
 impl NeuralBotState {
     pub fn new(policy: &NeuralPolicy) -> Self {
-        let cache_len = policy.temporal_block.steps * policy.seq_len * policy.d_model;
         Self {
-            k_cache: vec![0.0_f32; cache_len],
-            step_pos: 0,
+            history: vec![0.0_f32; policy.seq_len * policy.d_model],
+            fresh: true,
             tick_accum: TICKS_PER_ACTION,
             stagger_applied: false,
             cached_controls: Controls::default(),
@@ -692,8 +585,8 @@ impl NeuralBotState {
     }
 
     pub fn reset(&mut self) {
-        self.k_cache.fill(0.0);
-        self.step_pos = 0;
+        self.history.fill(0.0);
+        self.fresh = true;
         self.tick_accum = TICKS_PER_ACTION;
         self.stagger_applied = false;
         self.cached_controls = Controls::default();
@@ -721,10 +614,21 @@ impl NeuralBotState {
             &mut self.scratch,
             &mut emb,
         );
-        self.cached_controls =
-            policy.step_temporal_kv(&emb, self.step_pos, &mut self.k_cache, &mut self.scratch);
+
+        let d = policy.d_model;
+        if self.fresh {
+            for slot in self.history.chunks_exact_mut(d) {
+                slot.copy_from_slice(&emb);
+            }
+            self.fresh = false;
+        } else {
+            self.history.copy_within(d.., 0);
+            let n = self.history.len();
+            self.history[n - d..].copy_from_slice(&emb);
+        }
         self.scratch.emb = emb;
-        self.step_pos += 1;
+
+        self.cached_controls = policy.forward_temporal(&self.history, &mut self.scratch);
         self.cached_controls
     }
 }

@@ -319,18 +319,16 @@ def train(args: argparse.Namespace) -> None:
         d_model=args.d_model,
         n_heads=args.n_heads,
         mlp_ratio=args.mlp_ratio,
-        entity_steps=args.entity_steps,
-        temporal_steps=args.temporal_steps,
+        entity_layers=args.entity_layers,
+        temporal_layers=args.temporal_layers,
         seq_len=args.seq_len,
-        dt=args.energy_dt,
-        symmetric_k=args.symmetric_k,
     ).to(device)
 
     n_params = sum(p.numel() for p in policy.parameters())
     print(
-        f"[Model] UnifiedEnergyRoPEPolicy: {n_params / 1e6:.3f}M params "
+        f"[Model] RoPETransformerPolicy: {n_params / 1e6:.3f}M params "
         f"(d={args.d_model}, h={args.n_heads}, mlp={args.mlp_ratio}x, "
-        f"ent_steps={args.entity_steps}, tmp_steps={args.temporal_steps}, T={args.seq_len})"
+        f"ent_layers={args.entity_layers}, tmp_layers={args.temporal_layers}, T={args.seq_len})"
     )
 
     optimizer = torch.optim.AdamW(
@@ -737,7 +735,7 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train a Unified Energy RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + AdamW.")
+    p = argparse.ArgumentParser(description="Train a RoPE Transformer to play Hyperstrike (1v1..5v5) via Self-Play PPO + AdamW.")
     p.add_argument("--num-envs", type=int, default=128, help="Parallel Rust environments")
     p.add_argument("--min-team-size", type=int, default=1, help="Minimum team size (1..5)")
     p.add_argument("--max-team-size", type=int, default=5, help="Maximum team size (1..5)")
@@ -752,13 +750,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mayhem-prob", type=float, default=0.4, help="Fraction of episodes played in Mayhem (power-ups) mode")
     p.add_argument("--bot-wr-window", type=int, default=50, help="Updates in the rolling vsBot win-rate window")
     p.add_argument("--bot-wr-min-games", type=int, default=30, help="Min decided bot games in the window before best.pt can be saved")
-    p.add_argument("--d-model", type=int, default=64, help="Energy Transformer hidden dimension (64 = fast Fly.io CPU)")
+    p.add_argument("--d-model", type=int, default=64, help="Transformer hidden dimension (64 = fast Fly.io CPU)")
     p.add_argument("--n-heads", type=int, default=4, help="Attention heads")
-    p.add_argument("--mlp-ratio", type=int, default=3, help="FFN expansion ratio for w_m")
-    p.add_argument("--entity-steps", type=int, default=2, help="Energy refinement steps in entity block")
-    p.add_argument("--temporal-steps", type=int, default=3, help="Energy refinement steps in causal RoPE temporal block")
-    p.add_argument("--energy-dt", type=float, default=0.25, help="Initial energy gradient step size dt")
-    p.add_argument("--symmetric-k", action="store_true", help="Enable symmetric K attention gradient in entity block")
+    p.add_argument("--mlp-ratio", type=int, default=4, help="FFN expansion ratio")
+    p.add_argument("--entity-layers", type=int, default=2, help="Bidirectional transformer layers in the entity encoder")
+    p.add_argument("--temporal-layers", type=int, default=2, help="Causal RoPE transformer layers in the temporal encoder")
     p.add_argument("--seq-len", type=int, default=12, help="Temporal context window in frames")
     p.add_argument("--lr", type=float, default=3e-4, help="PPO initial AdamW learning rate")
     p.add_argument("--lr-end", type=float, default=5e-5, help="PPO final AdamW learning rate")
