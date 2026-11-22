@@ -32,7 +32,10 @@ enum MatchCmd {
         packed: [f64; 6],
     },
     ReplayDone(String),
-    RemovePlayer(String),
+    RemovePlayer {
+        user_id: String,
+        reason: String,
+    },
     SetPaused(bool),
     Stop,
 }
@@ -185,14 +188,17 @@ impl MatchHandle for TokioMatchHandle {
         true
     }
 
-    fn remove_player(&self, user_id: &str) {
+    fn remove_player(&self, user_id: &str, reason: &str) {
         {
             let mut st = self.load.lock().unwrap_or_else(|e| e.into_inner());
             st.humans.remove(user_id);
         }
         self.mark_loaded(user_id);
         if !self.stopped.load(Ordering::Relaxed) {
-            let _ = self.tx.send(MatchCmd::RemovePlayer(user_id.to_string()));
+            let _ = self.tx.send(MatchCmd::RemovePlayer {
+                user_id: user_id.to_string(),
+                reason: reason.to_string(),
+            });
         }
     }
 
@@ -392,8 +398,8 @@ fn apply_cmd(sim: &mut ServerMatch, cmd: MatchCmd) -> bool {
             sim.mark_replay_done(&uid);
             true
         }
-        MatchCmd::RemovePlayer(uid) => {
-            sim.remove_player(&uid);
+        MatchCmd::RemovePlayer { user_id, reason } => {
+            sim.remove_player_with_reason(&user_id, &reason);
             true
         }
         MatchCmd::SetPaused(p) => {

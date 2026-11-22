@@ -445,16 +445,21 @@ pub struct MatchPlayerSpec {
 
 pub trait MatchEventSink: Send + Sync {
     fn broadcast(&self, msg: serde_json::Value);
+    fn send_user(&self, user_id: &str, msg: serde_json::Value);
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload);
     fn send_spectators(&self, payload: SnapshotPayload);
     fn on_goal(&self, info: serde_json::Value);
     fn on_end(&self, score: [i32; 2], stats: HashMap<String, MatchStatsEntry>);
+    fn on_afk_kick(&self, user_id: &str);
     fn on_error(&self, message: String);
 }
 
 pub struct MatchCreateOptions {
     pub settings: LobbySettings,
     pub teammate_diff: Option<i32>,
+    pub afk_enabled: bool,
+    pub afk_warn_s: Option<f64>,
+    pub afk_kick_s: Option<f64>,
     pub players: Vec<MatchPlayerSpec>,
     pub callbacks: Arc<dyn MatchEventSink>,
 }
@@ -467,7 +472,7 @@ pub trait MatchHandle: Send + Sync {
     fn mark_loaded(&self, user_id: &str);
     fn replay_done(&self, user_id: &str);
     fn push_input(&self, user_id: &str, seq: i64, packed: &[serde_json::Value]) -> bool;
-    fn remove_player(&self, user_id: &str);
+    fn remove_player(&self, user_id: &str, reason: &str);
     fn set_paused(&self, paused: bool);
     fn stop(&self);
 }

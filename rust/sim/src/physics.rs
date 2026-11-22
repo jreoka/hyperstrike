@@ -287,7 +287,13 @@ impl BallPredictor {
                 };
                 continue;
             }
-            ball_integrate(&mut s, self.dt, arena, phys, false);
+            if s.vel.length_squared() > 1600.0 {
+                let half_dt = self.dt * 0.5;
+                ball_integrate(&mut s, half_dt, arena, phys, false);
+                ball_integrate(&mut s, half_dt, arena, phys, false);
+            } else {
+                ball_integrate(&mut s, self.dt, arena, phys, false);
+            }
             let g = arena.in_goal(s.pos, phys.ball_r);
             self.slices[i] = PredSlice {
                 t,
@@ -659,13 +665,19 @@ impl Car {
             } else {
                 arena.raycast(wp, down, max_t)
             };
-            if t >= 0.0 {
+            let hit_normal = if t >= 0.0 {
+                let hit_p = wp + down * t;
+                let wn = arena.normal(hit_p.x, hit_p.y, hit_p.z);
+                if wn.dot(u) > 0.2 { Some(wn) } else { None }
+            } else {
+                None
+            };
+            if let Some(wn) = hit_normal {
                 w.contact = true;
                 contacts += 1;
                 let len = (t - w.r).max(0.0).min(phys.susp_max);
                 w.len = len;
-                let hit_p = wp + down * t;
-                w.normal = arena.normal(hit_p.x, hit_p.y, hit_p.z);
+                w.normal = wn;
                 gn += w.normal;
                 let comp = phys.susp_rest - len;
                 let rate = clamp((w.prev_len - len) / dt, -8.0, 8.0);
@@ -841,7 +853,13 @@ impl Car {
             self.ground_lock = 0.12;
             self.coyote_t = 0.0;
             self.events.push(CarEventKind::Jump);
-        } else if jump_pressed && contacts < 2 && self.body_contact && self.contacts == 0 {
+        } else if jump_pressed
+            && contacts == 0
+            && self.body_contact
+            && u.y < 0.5
+            && self.pos.y < 1.5
+            && self.vel.y < 2.0
+        {
             self.vel.y += 3.5;
             let mut axis = u.cross(DVec3::Y);
             if axis.length_squared() < 0.01 {
@@ -1111,26 +1129,39 @@ pub fn collide_car_ball(
     let b = car.basis;
     let h = car.half;
     let kl = b.to_local(ball.pos - car.pos);
-    let cx = clamp(kl.x, -h.x, h.x);
-    let cy = clamp(kl.y, -h.y, h.y);
-    let cz = clamp(kl.z, -h.z, h.z);
-    let mut dx = kl.x - cx;
-    let mut dy = kl.y - cy;
-    let mut dz = kl.z - cz;
-    let mut dist = (dx * dx + dy * dy + dz * dz).sqrt();
+    let mut cx = clamp(kl.x, -h.x, h.x);
+    let mut cy = clamp(kl.y, -h.y, h.y);
+    let mut cz = clamp(kl.z, -h.z, h.z);
+    let dx = kl.x - cx;
+    let dy = kl.y - cy;
+    let dz = kl.z - cz;
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
     let r = ball.r;
     if dist >= r {
         return None;
     }
-    if dist < 1e-5 {
-        dx = 0.0;
-        dy = 1.0;
-        dz = 0.0;
-        dist = 1e-5;
-    }
-    let kn = b.to_world(DVec3::new(dx / dist, dy / dist, dz / dist));
+    let (local_n, pen) = if dist < 1e-5 {
+        let ox = (h.x - kl.x.abs()).max(0.0);
+        let oy = (h.y - kl.y.abs()).max(0.0);
+        let oz = (h.z - kl.z.abs()).max(0.0);
+        if oy <= ox && oy <= oz {
+            let s = if kl.y < 0.0 { -1.0 } else { 1.0 };
+            cy = s * h.y;
+            (DVec3::new(0.0, s, 0.0), r + oy)
+        } else if ox <= oz {
+            let s = if kl.x < 0.0 { -1.0 } else { 1.0 };
+            cx = s * h.x;
+            (DVec3::new(s, 0.0, 0.0), r + ox)
+        } else {
+            let s = if kl.z < 0.0 { -1.0 } else { 1.0 };
+            cz = s * h.z;
+            (DVec3::new(0.0, 0.0, s), r + oz)
+        }
+    } else {
+        (DVec3::new(dx / dist, dy / dist, dz / dist), r - dist)
+    };
+    let kn = b.to_world(local_n);
     let kcp = b.to_world(DVec3::new(cx, cy, cz)) + car.pos;
-    let pen = r - dist;
     let mc = phys.car_mass;
     let mb = phys.ball_mass;
     let ball_v0 = ball.vel;
@@ -1172,6 +1203,14 @@ pub fn collide_car_ball(
             car.vel += vt * (jt / mc);
             ball.ang_vel += rb.cross(vt) * (-jt / (0.4 * mb * r * r));
             car.apply_ang_impulse(rc.cross(vt) * (jt * ang_recoil), mc);
+        }
+        let bw = ball.ang_vel.length();
+        if bw > phys.ball_max_ang {
+            ball.ang_vel *= phys.ball_max_ang / bw;
+        }
+        let cw = car.ang_vel.length();
+        if cw > phys.car_max_ang {
+            car.ang_vel *= phys.car_max_ang / cw;
         }
     }
     // Mid-air flip reset
@@ -1300,6 +1339,11 @@ pub enum CarCollisionResult {
         victim_idx: usize,
         overdrive: bool,
     },
+    DoubleDemo {
+        a_idx: usize,
+        b_idx: usize,
+        overdrive: bool,
+    },
 }
 
 pub fn collide_cars(
@@ -1321,6 +1365,10 @@ pub fn collide_cars(
     let corr = (pen - 0.004).max(0.0) * 0.8 * 0.5;
     a.pos -= n * corr;
     b.pos += n * corr;
+
+    let pre_va = a.vel;
+    let pre_vb = b.vel;
+    let pre_closing = pre_va.dot(n) - pre_vb.dot(n);
 
     let ra_n = a.half.x * a.basis.f.dot(n).abs()
         + a.half.y * a.basis.u.dot(n).abs()
@@ -1363,38 +1411,92 @@ pub fn collide_cars(
         }
     }
 
-    if a.ov_t > 0.0 && a.team != b.team && allow_demos {
-        return Some(CarCollisionResult::Demo {
-            attacker_idx: a_idx,
-            victim_idx: b_idx,
-            overdrive: true,
-        });
+    if a.team != b.team && allow_demos {
+        let a_ov = a.ov_t > 0.0;
+        let b_ov = b.ov_t > 0.0;
+        if a_ov && b_ov {
+            return Some(CarCollisionResult::DoubleDemo {
+                a_idx,
+                b_idx,
+                overdrive: true,
+            });
+        }
+        if a_ov {
+            return Some(CarCollisionResult::Demo {
+                attacker_idx: a_idx,
+                victim_idx: b_idx,
+                overdrive: true,
+            });
+        }
+        if b_ov {
+            return Some(CarCollisionResult::Demo {
+                attacker_idx: b_idx,
+                victim_idx: a_idx,
+                overdrive: true,
+            });
+        }
     }
-    if b.ov_t > 0.0 && b.team != a.team && allow_demos {
-        return Some(CarCollisionResult::Demo {
-            attacker_idx: b_idx,
-            victim_idx: a_idx,
-            overdrive: true,
-        });
+
+    // Check supersonic demolitions symmetrically using pre-impulse velocities so elastic
+    // bounce or car ordering never blocks a valid demo.
+    let a_toward = pre_va.dot(n);
+    let b_toward = pre_vb.dot(-n);
+    if a.team != b.team && allow_demos && pre_closing >= 4.0 {
+        let a_fwd = a.basis.f.dot(n) > 0.55;
+        let b_fwd = b.basis.f.dot(-n) > 0.55;
+        let a_cd_ok = now - a.bump_cooldown.get(&b.id).copied().unwrap_or(-10.0) >= 0.3;
+        let b_cd_ok = now - b.bump_cooldown.get(&a.id).copied().unwrap_or(-10.0) >= 0.3;
+        let a_demo = a_fwd && a.supersonic && a_toward > phys.supersonic * 0.5 && a_cd_ok;
+        let b_demo = b_fwd && b.supersonic && b_toward > phys.supersonic * 0.5 && b_cd_ok;
+        if a_demo && b_demo {
+            a.bump_cooldown.insert(b.id, now);
+            b.bump_cooldown.insert(a.id, now);
+            return Some(CarCollisionResult::DoubleDemo {
+                a_idx,
+                b_idx,
+                overdrive: false,
+            });
+        }
+        if a_demo {
+            a.bump_cooldown.insert(b.id, now);
+            return Some(CarCollisionResult::Demo {
+                attacker_idx: a_idx,
+                victim_idx: b_idx,
+                overdrive: false,
+            });
+        }
+        if b_demo {
+            b.bump_cooldown.insert(a.id, now);
+            return Some(CarCollisionResult::Demo {
+                attacker_idx: b_idx,
+                victim_idx: a_idx,
+                overdrive: false,
+            });
+        }
     }
 
     let mut result = CarCollisionResult::Touch {
         a_idx,
         b_idx,
-        strength: -vn,
+        strength: (-vn).max(pre_closing.max(0.0)),
     };
 
-    for pass in 0..2 {
-        let (att, att_idx, vic, vic_idx, dir) = if pass == 0 {
-            (&mut *a, a_idx, &mut *b, b_idx, 1.0)
+    // Evaluate bumps in order of the car driving harder into the collision so a stationary
+    // car facing an incoming opponent never steals the bump.
+    let order = if b_toward > a_toward { [1, 0] } else { [0, 1] };
+    for pass in order {
+        let (att, att_idx, vic, vic_idx, dir, att_pre_vel, att_toward) = if pass == 0 {
+            (&mut *a, a_idx, &mut *b, b_idx, 1.0, pre_va, a_toward)
         } else {
-            (&mut *b, b_idx, &mut *a, a_idx, -1.0)
+            (&mut *b, b_idx, &mut *a, a_idx, -1.0, pre_vb, b_toward)
         };
         let nd = n * dir;
         let fwd_hit = att.basis.f.dot(nd) > 0.55;
         let side_hit = !fwd_hit && att.basis.r.dot(nd).abs() > 0.6;
-        let closing = att.vel.dot(nd) - vic.vel.dot(nd);
-        if (!fwd_hit && !side_hit) || closing < if fwd_hit { 4.0 } else { 5.0 } {
+        if (!fwd_hit && !side_hit)
+            || att_toward < 2.0
+            || pre_closing < if fwd_hit { 4.0 } else { 5.0 }
+        {
             continue;
         }
         let last = att.bump_cooldown.get(&vic.id).copied().unwrap_or(-10.0);
@@ -1402,21 +1504,13 @@ pub fn collide_cars(
             continue;
         }
         att.bump_cooldown.insert(vic.id, now);
-        if fwd_hit && att.supersonic && att.team != vic.team && allow_demos {
-            result = CarCollisionResult::Demo {
-                attacker_idx: att_idx,
-                victim_idx: vic_idx,
-                overdrive: false,
-            };
-            break;
-        }
-        let rs = closing.min(46.0);
+        let rs = pre_closing.min(46.0);
         let mut bdir = DVec3::new(nd.x, 0.0, nd.z);
         if bdir.length_squared() < 1e-4 {
             bdir = att.basis.f;
         }
         bdir = bdir.three_normalize();
-        let av = DVec3::new(att.vel.x, 0.0, att.vel.z);
+        let av = DVec3::new(att_pre_vel.x, 0.0, att_pre_vel.z);
         if av.length_squared() > 1.0 {
             bdir = bdir
                 .lerp(av.three_normalize(), if fwd_hit { 0.4 } else { 0.15 })
@@ -1431,6 +1525,10 @@ pub fn collide_cars(
         off -= bdir * off.dot(bdir);
         vic.ang_vel +=
             DVec3::Y * clamp(off.dot(DVec3::Y.cross(bdir)) * rs * 0.25, -2.5, 2.5);
+        let vw = vic.ang_vel.length();
+        if vw > phys.car_max_ang {
+            vic.ang_vel *= phys.car_max_ang / vw;
+        }
         if vic.on_ground {
             vic.ground_lock = vic.ground_lock.max(0.06);
         }

@@ -339,3 +339,227 @@ async fn e2e_cross_room_kick_blocked_and_reauth_cleans_up() {
     server_task.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[tokio::test]
+async fn e2e_multiplayer_quit_and_afk_kick_replace_players_with_bots() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "hyperstrike_e2e_afk_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = Config::from_env(&repo_root);
+    config.data_dir = tmp_dir.clone();
+    config.db_file = tmp_dir.join("db.json");
+    config.client_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into();
+    config.allowed_origin.clear();
+    config.allowed_host.clear();
+    config.afk_warn_secs = 0.25;
+    config.afk_kick_secs = 0.6;
+
+    let backend = Arc::new(SimPool::new(2));
+    let state = AppState::new(config.clone(), backend);
+    let (tok_a, tok_b, tok_c) = {
+        let mut db = state.db.lock().unwrap();
+        let make_user = |id: &str, name: &str| server_core::db::User {
+            id: id.into(),
+            username: name.into(),
+            pass_hash: "00".repeat(64),
+            salt: "testsalt12345678".into(),
+            created_at: 1_700_000_000_000,
+            level: 1,
+            xp: 0,
+            total_xp: 0,
+            rp: 100,
+            peak_rp: 100,
+            stats: server_core::db::UserStats::default(),
+            car: server_core::db::sanitize_car(None),
+            anti_cheat_flags: 0,
+            last_report_at: 0,
+            ac_ban_until: None,
+            ac_log: Vec::new(),
+        };
+        db.data.users.insert("driver1".into(), make_user("u_1", "Driver1"));
+        db.data.users.insert("quitter".into(), make_user("u_2", "Quitter"));
+        db.data.users.insert("sleeper".into(), make_user("u_3", "Sleeper"));
+        (
+            db.create_session("driver1"),
+            db.create_session("quitter"),
+            db.create_session("sleeper"),
+        )
+    };
+
+    let app = server_core::router(Arc::clone(&state));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
+    });
+
+    let set_cookie = issue_client_cookie(&config.client_secret, "");
+    let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+    let connect = || {
+        let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+        req.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+        req.headers_mut()
+            .insert("Origin", format!("http://{addr}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+
+    let (mut ws_a, _) = connect().await.expect("WS A");
+    let (mut ws_b, _) = connect().await.expect("WS B");
+    let (mut ws_c, _) = connect().await.expect("WS C");
+
+    for (ws, tok) in [(&mut ws_a, &tok_a), (&mut ws_b, &tok_b), (&mut ws_c, &tok_c)] {
+        ws.send(Message::Text(json!({ "type": "auth", "token": tok }).to_string().into()))
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), ws.next()).await;
+    }
+
+    // Driver1 creates a 2v2 lobby, Quitter & Sleeper join
+    ws_a.send(Message::Text(
+        json!({ "type": "lobby_create", "settings": { "teamSize": 2, "botFill": false, "arena": 0 } })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+
+    let mut lobby_code = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline && lobby_code.is_empty() {
+        if let Ok(Some(Ok(Message::Text(txt)))) =
+            tokio::time::timeout(Duration::from_millis(200), ws_a.next()).await
+        {
+            let v: Value = serde_json::from_str(&txt).unwrap();
+            if v["type"] == "lobby_joined" {
+                lobby_code = v["lobby"]["code"].as_str().unwrap().to_string();
+            }
+        }
+    }
+    assert!(!lobby_code.is_empty(), "expected lobby_joined with code");
+
+    for ws in [&mut ws_b, &mut ws_c] {
+        ws.send(Message::Text(
+            json!({ "type": "lobby_join", "code": lobby_code }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), ws.next()).await;
+    }
+
+    // Start multiplayer match
+    ws_a.send(Message::Text(json!({ "type": "lobby_start" }).to_string().into()))
+        .await
+        .unwrap();
+
+    let mut mid: Option<u64> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline && mid.is_none() {
+        if let Ok(Some(Ok(Message::Text(txt)))) =
+            tokio::time::timeout(Duration::from_millis(200), ws_a.next()).await
+        {
+            let v: Value = serde_json::from_str(&txt).unwrap();
+            if v["type"] == "match_start" {
+                mid = v["mid"].as_u64();
+            }
+        }
+    }
+    let mid = mid.expect("expected match_start with mid");
+
+    // All three clients report loaded
+    for ws in [&mut ws_a, &mut ws_b, &mut ws_c] {
+        ws.send(Message::Text(
+            json!({ "type": "match_loaded", "m": mid }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    }
+
+    // Quitter quits mid-match -> should be replaced by bot immediately
+    ws_b.send(Message::Text(json!({ "type": "lobby_leave" }).to_string().into()))
+        .await
+        .unwrap();
+
+    // Driver1 keeps sending varying inputs while countdown (3s) finishes + Sleeper goes AFK (~0.6s)
+    let mut seq = 1_i64;
+    let mut saw_quitter_bot = false;
+    let mut saw_sleeper_bot = false;
+    let mut sleeper_saw_warn = false;
+    let mut sleeper_saw_kick = false;
+    let mut drive_tick = tokio::time::interval(Duration::from_millis(40));
+
+    let end_deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < end_deadline
+        && !(saw_quitter_bot && saw_sleeper_bot && sleeper_saw_warn && sleeper_saw_kick)
+    {
+        tokio::select! {
+            _ = drive_tick.tick() => {
+                let thr = if seq % 2 == 0 { 1.0 } else { 0.3 };
+                let _ = ws_a.send(Message::Text(
+                    json!({ "type": "in", "m": mid, "s": seq, "c": [thr, 0.0, 0.0, 0.0, 0.0, 0] })
+                        .to_string()
+                        .into(),
+                )).await;
+                let _ = ws_c.send(Message::Text(
+                    json!({ "type": "in", "m": mid, "s": seq, "c": [0.0, 0.0, 0.0, 0.0, 0.0, 0] })
+                        .to_string()
+                        .into(),
+                )).await;
+                seq += 1;
+            }
+            maybe_a = ws_a.next() => {
+                if let Some(Ok(Message::Text(txt))) = maybe_a {
+                    let v: Value = serde_json::from_str(&txt).unwrap();
+                    if v["type"] == "player_replaced_by_bot" {
+                        if v["userId"] == "u_2" && v["reason"] == "left" {
+                            saw_quitter_bot = true;
+                        }
+                        if v["userId"] == "u_3" && v["reason"] == "afk" {
+                            saw_sleeper_bot = true;
+                        }
+                    }
+                }
+            }
+            maybe_c = ws_c.next() => {
+                if let Some(Ok(Message::Text(txt))) = maybe_c {
+                    let v: Value = serde_json::from_str(&txt).unwrap();
+                    if v["type"] == "afk_warn" {
+                        sleeper_saw_warn = true;
+                    }
+                    if v["type"] == "afk_kick" {
+                        sleeper_saw_kick = true;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(saw_quitter_bot, "expected quitter to be replaced by a bot");
+    assert!(sleeper_saw_warn, "expected AFK player to receive afk_warn");
+    assert!(sleeper_saw_kick, "expected AFK player to receive afk_kick");
+    assert!(saw_sleeper_bot, "expected AFK-kicked player to be replaced by a bot");
+
+    {
+        let rt = state.rt.lock().unwrap();
+        let lb = rt.lobbies.get(&lobby_code).expect("lobby still active for Driver1");
+        assert!(lb.players.contains_key("u_1"), "active player remains in lobby");
+        assert!(!lb.players.contains_key("u_2"), "quitter removed from lobby");
+        assert!(!lb.players.contains_key("u_3"), "AFK player removed from lobby");
+    }
+
+    let _ = ws_a.close(None).await;
+    let _ = ws_b.close(None).await;
+    let _ = ws_c.close(None).await;
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

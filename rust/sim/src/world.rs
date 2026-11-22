@@ -142,7 +142,8 @@ impl World {
                 };
                 self.pred.update(&self.ball, &self.shape, &self.phys);
             }
-            self.brain.update(dt, &self.cars, &self.ball, self.shape.l);
+            self.brain
+                .update(dt, &self.cars, &self.ball, self.shape.goal_line_z());
             for i in 0..self.cars.len() {
                 if let Some(mut bot) = self.cars[i].bot.take() {
                     bot.update(i, dt, self);
@@ -253,6 +254,14 @@ impl World {
                                 overdrive,
                             }) => {
                                 self.demolish(victim_idx, attacker_idx, overdrive);
+                            }
+                            Some(CarCollisionResult::DoubleDemo {
+                                a_idx,
+                                b_idx,
+                                overdrive,
+                            }) => {
+                                self.demolish(a_idx, b_idx, overdrive);
+                                self.demolish(b_idx, a_idx, overdrive);
                             }
                             Some(CarCollisionResult::Bump {
                                 attacker_idx,

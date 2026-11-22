@@ -188,6 +188,8 @@ mod tests {
             client_secret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             sim_workers: 1,
             trust_proxy: false,
+            afk_warn_secs: 20.0,
+            afk_kick_secs: 30.0,
         };
         AppState::new(cfg, Arc::new(NoopMatchBackend))
     }

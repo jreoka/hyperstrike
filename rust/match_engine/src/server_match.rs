@@ -21,6 +21,8 @@ pub const MAX_AHEAD_SLOTS: usize = 10;
 pub const SKIP_TO_SLOTS: usize = 3;
 pub const MAX_FUTURE_SEQ: i64 = 240;
 pub const IDLE_CLEAR_SLOTS: u32 = 12;
+pub const AFK_WARN_S: f64 = 20.0;
+pub const AFK_KICK_S: f64 = 30.0;
 pub const COUNTDOWN_S: f64 = 3.0;
 pub const GOAL_PAUSE_S: f64 = 3.4;
 pub const REPLAY_MAX_S: f64 = 12.0;
@@ -116,6 +118,26 @@ impl MatchState {
     }
 }
 
+#[inline]
+fn is_active_controls(p: &[f64; 6]) -> bool {
+    p[0].abs() > 0.05
+        || p[1].abs() > 0.05
+        || p[2].abs() > 0.05
+        || p[3].abs() > 0.05
+        || p[4].abs() > 0.05
+        || (p[5] as i32) != 0
+}
+
+#[inline]
+fn controls_changed(a: &[f64; 6], b: &[f64; 6]) -> bool {
+    (a[0] - b[0]).abs() > 0.05
+        || (a[1] - b[1]).abs() > 0.05
+        || (a[2] - b[2]).abs() > 0.05
+        || (a[3] - b[3]).abs() > 0.05
+        || (a[4] - b[4]).abs() > 0.05
+        || (a[5] as i32) != (b[5] as i32)
+}
+
 struct HumanState {
     car_idx: usize,
     buf: HashMap<i64, [f64; 6]>,
@@ -126,6 +148,11 @@ struct HumanState {
     starves: u32,
     idle: u32,
     edge: i32,
+    afk_sec: f64,
+    afk_warned_sec: Option<u32>,
+    last_activity_ctl: [f64; 6],
+    had_active_ctl: bool,
+    activity_this_slot: bool,
 }
 
 impl HumanState {
@@ -140,6 +167,11 @@ impl HumanState {
             starves: 0,
             idle: 0,
             edge: 0,
+            afk_sec: 0.0,
+            afk_warned_sec: None,
+            last_activity_ctl: [0.0; 6],
+            had_active_ctl: false,
+            activity_this_slot: false,
         }
     }
 }
@@ -152,6 +184,9 @@ pub struct ServerMatch {
     pub finished: bool,
     pub paused: bool,
     pub running: bool,
+    afk_enabled: bool,
+    afk_warn_s: f64,
+    afk_kick_s: f64,
     callbacks: Arc<dyn MatchEventSink>,
     humans: IndexMap<String, HumanState>,
     car_user_ids: Vec<Option<String>>,
@@ -289,6 +324,15 @@ impl ServerMatch {
             300.0
         };
 
+        let afk_warn_s = opts
+            .afk_warn_s
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(AFK_WARN_S);
+        let afk_kick_s = opts
+            .afk_kick_s
+            .filter(|v| v.is_finite() && *v > afk_warn_s)
+            .unwrap_or((afk_warn_s + 10.0).max(AFK_KICK_S));
+
         Self {
             settings: s,
             world,
@@ -297,6 +341,9 @@ impl ServerMatch {
             finished: false,
             paused: false,
             running: false,
+            afk_enabled: opts.afk_enabled,
+            afk_warn_s,
+            afk_kick_s,
             callbacks: opts.callbacks,
             humans,
             car_user_ids,
@@ -382,6 +429,16 @@ impl ServerMatch {
         ((self.slot_sec - self.acc - elapsed) * 1000.0).max(0.0)
     }
 
+    fn record_activity(h: &mut HumanState, inp: &[f64; 6]) {
+        let active = is_active_controls(inp);
+        let changed = controls_changed(inp, &h.last_activity_ctl);
+        if (active && changed) || (!active && h.had_active_ctl) {
+            h.activity_this_slot = true;
+            h.last_activity_ctl = *inp;
+            h.had_active_ctl = active;
+        }
+    }
+
     pub fn push_input(&mut self, user_id: &str, seq: i64, packed: [f64; 6]) -> bool {
         let Some(h) = self.humans.get_mut(user_id) else {
             return false;
@@ -402,6 +459,7 @@ impl ServerMatch {
                 // instead of holding stale controls until the client's inSeq catches up.
                 h.applied = packed;
                 h.idle = 0;
+                Self::record_activity(h, &packed);
             }
             return true;
         }
@@ -432,6 +490,7 @@ impl ServerMatch {
                 peek[5] = ((inp[5] as i32) & !17) as f64;
                 h.applied = peek;
                 h.idle = 0;
+                Self::record_activity(h, &inp);
                 if h.edge != 0 {
                     let bits = (h.applied[5] as i32) | h.edge;
                     h.applied[5] = bits as f64;
@@ -444,18 +503,24 @@ impl ServerMatch {
         }
         let mut depth = h.buf.len();
         if depth > MAX_AHEAD_SLOTS {
-            while depth > SKIP_TO_SLOTS {
+            while depth > SKIP_TO_SLOTS && !h.buf.is_empty() {
                 if let Some(old) = h.buf.remove(&h.next_seq) {
                     h.edge |= (old[5] as i32) & 17;
+                    Self::record_activity(h, &old);
                     depth -= 1;
+                    h.next_seq += 1;
+                } else if let Some(&min_seq) = h.buf.keys().min() {
+                    h.next_seq = min_seq;
+                } else {
+                    break;
                 }
-                h.next_seq += 1;
             }
         }
         h.depth = depth;
         if let Some(inp) = h.buf.remove(&h.next_seq) {
             h.applied = inp;
             h.idle = 0;
+            Self::record_activity(h, &inp);
         } else {
             if in_play {
                 h.starves = h.starves.saturating_add(1);
@@ -480,14 +545,133 @@ impl ServerMatch {
         }
     }
 
+    fn pick_replacement_bot_name(&mut self) -> String {
+        let used: HashSet<String> = self
+            .world
+            .cars
+            .iter()
+            .map(|c| c.name.to_uppercase())
+            .collect();
+        let start = self.world.rng.gen_range(0..BOT_NAMES.len());
+        for offset in 0..BOT_NAMES.len() {
+            let cand = BOT_NAMES[(start + offset) % BOT_NAMES.len()];
+            if !used.contains(cand) {
+                return cand.to_string();
+            }
+        }
+        format!("BOT {}", self.world.cars.len() + 1)
+    }
+
     pub fn remove_player(&mut self, user_id: &str) {
+        self.remove_player_with_reason(user_id, "left");
+    }
+
+    pub fn remove_player_with_reason(&mut self, user_id: &str, reason: &str) {
         let Some(h) = self.humans.shift_remove(user_id) else {
             return;
         };
-        let diff_idx = usize::try_from(self.settings.bot_diff.max(0)).unwrap_or(1);
-        let bot = BotAi::new_with_rng(diff_idx, 0, &mut self.world.rng);
+        self.replay_done.remove(user_id);
+        let diff_idx = usize::try_from(self.settings.bot_diff.clamp(0, 3)).unwrap_or(1);
+        let pers_idx = self.world.rng.gen_range(0..PERSONALITIES.len());
+        let mut bot = BotAi::new_with_rng(diff_idx, pers_idx, &mut self.world.rng);
+        bot.reset();
+        let bot_name = self.pick_replacement_bot_name();
+        let bot_id = format!("bot_rep_{}", h.car_idx);
+        let mut old_name = String::new();
+        let mut team = 0_u8;
+        let mut design = 0_usize;
         if let Some(car) = self.world.cars.get_mut(h.car_idx) {
+            old_name = car.name.clone();
+            team = car.team;
+            design = car.design;
+            car.name = bot_name.clone();
+            car.controls = Controls::default();
+            car.prev_jump = false;
+            car.prev_item = false;
             car.bot = Some(bot);
+        }
+        if let Some(slot) = self.car_user_ids.get_mut(h.car_idx) {
+            *slot = None;
+        }
+        if let Some(info) = self.car_info.get_mut(h.car_idx) {
+            *info = json!({
+                "userId": Value::Null,
+                "botId": bot_id,
+                "team": team,
+                "name": bot_name,
+                "car": Value::Null,
+                "body": design,
+            });
+        }
+        self.stats_dirty = true;
+        self.callbacks.broadcast(json!({
+            "type": "player_replaced_by_bot",
+            "carIndex": h.car_idx,
+            "userId": user_id,
+            "oldName": old_name,
+            "botName": bot_name,
+            "botId": bot_id,
+            "team": team,
+            "reason": reason,
+        }));
+    }
+
+    fn update_afk(&mut self, slot_dt: f64) {
+        if !self.afk_enabled || self.finished || self.state == MatchState::Ended {
+            return;
+        }
+        let live_play = self.state == MatchState::Play && !self.world.frozen;
+        let mut clears: Vec<String> = Vec::new();
+        let mut warns: Vec<(String, u32)> = Vec::new();
+        let mut kicks: Vec<String> = Vec::new();
+
+        for (uid, h) in &mut self.humans {
+            if h.activity_this_slot {
+                h.activity_this_slot = false;
+                h.afk_sec = 0.0;
+                if h.afk_warned_sec.take().is_some() {
+                    clears.push(uid.clone());
+                }
+                continue;
+            }
+            if !live_play {
+                continue;
+            }
+            let demolished = self
+                .world
+                .cars
+                .get(h.car_idx)
+                .is_some_and(|c| c.demolished);
+            if demolished {
+                continue;
+            }
+            h.afk_sec += slot_dt;
+            if h.afk_sec >= self.afk_kick_s {
+                kicks.push(uid.clone());
+            } else if h.afk_sec >= self.afk_warn_s {
+                let rem = (self.afk_kick_s - h.afk_sec).ceil().max(1.0) as u32;
+                if h.afk_warned_sec != Some(rem) {
+                    h.afk_warned_sec = Some(rem);
+                    warns.push((uid.clone(), rem));
+                }
+            }
+        }
+
+        for uid in clears {
+            self.callbacks.send_user(&uid, json!({ "type": "afk_clear" }));
+        }
+        for (uid, rem) in warns {
+            self.callbacks.send_user(
+                &uid,
+                json!({
+                    "type": "afk_warn",
+                    "remaining": rem,
+                }),
+            );
+        }
+        for uid in kicks {
+            self.remove_player_with_reason(&uid, "afk");
+            self.callbacks.on_afk_kick(&uid);
         }
     }
 
@@ -496,6 +680,7 @@ impl ServerMatch {
         for h in self.humans.values_mut() {
             Self::consume_input(h, in_play);
         }
+        self.update_afk(self.slot_sec);
         let dt = self.world.phys.dt;
         for _ in 0..TICKS_PER_INPUT {
             for h in self.humans.values() {
@@ -628,9 +813,10 @@ impl ServerMatch {
                     .get(spot_idx)
                     .copied()
                     .unwrap_or(KICKOFF_SPOTS[4]);
-                let (mut x, z) = self.world.shape.kickoff_pos(spot, team);
+                let (mut x, mut z) = self.world.shape.kickoff_pos(spot, team);
                 if i >= order.len() {
                     x += ((i - order.len() + 1) as f64) * 4.0;
+                    (x, z) = self.world.shape.push_inside_xz(x, z, 4.0);
                 }
                 let yaw = yaw_toward(x, z, 0.0, 0.0);
                 let car = &mut self.world.cars[car_idx];
@@ -1124,10 +1310,12 @@ mod tests {
     struct NullSink;
     impl MatchEventSink for NullSink {
         fn broadcast(&self, _msg: Value) {}
+        fn send_user(&self, _user_id: &str, _msg: Value) {}
         fn send_raw(&self, _user_id: &str, _payload: SnapshotPayload) {}
         fn send_spectators(&self, _payload: SnapshotPayload) {}
         fn on_goal(&self, _info: Value) {}
         fn on_end(&self, _score: [i32; 2], _stats: HashMap<String, MatchStatsEntry>) {}
+        fn on_afk_kick(&self, _user_id: &str) {}
         fn on_error(&self, _message: String) {}
     }
 
@@ -1138,6 +1326,9 @@ mod tests {
         let mut m = ServerMatch::new(MatchCreateOptions {
             settings,
             teammate_diff: None,
+            afk_enabled: false,
+            afk_warn_s: None,
+            afk_kick_s: None,
             players: vec![MatchPlayerSpec {
                 user_id: "u1".into(),
                 username: "Tester".into(),
@@ -1195,5 +1386,212 @@ mod tests {
         assert_eq!(h.buf.len(), 1);
         assert_eq!(h.starves, starves_before);
         assert_eq!(h.applied[5], 1.0, "jump bit fires on exact consumed seq");
+    }
+
+    struct CaptureSink {
+        broadcasts: std::sync::Mutex<Vec<Value>>,
+        user_msgs: std::sync::Mutex<Vec<(String, Value)>>,
+        afk_kicks: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl CaptureSink {
+        fn new() -> Self {
+            Self {
+                broadcasts: std::sync::Mutex::new(Vec::new()),
+                user_msgs: std::sync::Mutex::new(Vec::new()),
+                afk_kicks: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl MatchEventSink for CaptureSink {
+        fn broadcast(&self, msg: Value) {
+            self.broadcasts.lock().unwrap().push(msg);
+        }
+        fn send_user(&self, user_id: &str, msg: Value) {
+            self.user_msgs
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), msg));
+        }
+        fn send_raw(&self, _user_id: &str, _payload: SnapshotPayload) {}
+        fn send_spectators(&self, _payload: SnapshotPayload) {}
+        fn on_goal(&self, _info: Value) {}
+        fn on_end(&self, _score: [i32; 2], _stats: HashMap<String, MatchStatsEntry>) {}
+        fn on_afk_kick(&self, user_id: &str) {
+            self.afk_kicks.lock().unwrap().push(user_id.to_string());
+        }
+        fn on_error(&self, _message: String) {}
+    }
+
+    fn make_mp_afk_match(
+        afk_enabled: bool,
+        afk_warn_s: Option<f64>,
+        afk_kick_s: Option<f64>,
+    ) -> (ServerMatch, Arc<CaptureSink>) {
+        let sink = Arc::new(CaptureSink::new());
+        let mut settings = default_lobby_settings("P1");
+        settings.team_size = 1;
+        settings.bot_fill = false;
+        let mut m = ServerMatch::new(MatchCreateOptions {
+            settings,
+            teammate_diff: None,
+            afk_enabled,
+            afk_warn_s,
+            afk_kick_s,
+            players: vec![
+                MatchPlayerSpec {
+                    user_id: "u1".into(),
+                    username: "ActivePlayer".into(),
+                    team: 0,
+                    car: sanitize_car(None),
+                },
+                MatchPlayerSpec {
+                    user_id: "u2".into(),
+                    username: "IdlePlayer".into(),
+                    team: 1,
+                    car: sanitize_car(None),
+                },
+            ],
+            callbacks: sink.clone(),
+        });
+        m.start();
+        (m, sink)
+    }
+
+    #[test]
+    fn afk_watch_warns_clears_pauses_and_kicks_replacing_with_bot() {
+        let (mut m, sink) = make_mp_afk_match(true, Some(1.0), Some(2.0));
+
+        // 1. During Countdown (frozen), AFK timer must NOT advance even after >3s of slots
+        for _ in 0..120 {
+            m.run_slot();
+        }
+        assert!(sink.user_msgs.lock().unwrap().is_empty());
+        assert!(sink.afk_kicks.lock().unwrap().is_empty());
+
+        // Enter live Play
+        m.state = MatchState::Play;
+        m.world.frozen = false;
+
+        // 2. Run 70 slots (~1.16s): u1 actively varies controls, u2 sends tiny analog noise (< 0.05)
+        let mut seq = 1_i64;
+        for i in 0..70 {
+            let throttle = if i % 10 < 5 { 1.0 } else { 0.5 };
+            assert!(m.push_input("u1", seq, [throttle, 0.0, 0.0, 0.0, 0.0, 0.0]));
+            let noise = if i % 2 == 0 { 0.02 } else { -0.02 };
+            assert!(m.push_input("u2", seq, [noise, 0.0, 0.0, 0.0, 0.0, 0.0]));
+            seq += 1;
+            m.run_slot();
+        }
+        {
+            let msgs = sink.user_msgs.lock().unwrap();
+            assert!(
+                msgs.iter()
+                    .any(|(u, v)| u == "u2" && v["type"] == "afk_warn"),
+                "expected afk_warn for u2"
+            );
+            assert!(
+                !msgs.iter().any(|(u, _)| u == "u1"),
+                "active u1 should not receive AFK warnings"
+            );
+        }
+
+        // 3. u2 provides a real control input -> afk_clear fires and resets timer
+        assert!(m.push_input("u1", seq, [1.0, 0.5, 0.0, 0.5, 0.0, 0.0]));
+        assert!(m.push_input("u2", seq, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+        seq += 1;
+        m.run_slot();
+        assert!(
+            sink.user_msgs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(u, v)| u == "u2" && v["type"] == "afk_clear"),
+            "expected afk_clear when u2 moves"
+        );
+        assert!(sink.afk_kicks.lock().unwrap().is_empty());
+
+        // 4. u2 holds constant rubber-banded throttle=1.0 unchanged for >2s -> must still kick!
+        for i in 0..140 {
+            let throttle = if i % 10 < 5 { 1.0 } else { 0.2 };
+            assert!(m.push_input("u1", seq, [throttle, 0.0, 0.0, 0.0, 0.0, 0.0]));
+            let _ = m.push_input("u2", seq, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+            seq += 1;
+            m.run_slot();
+        }
+
+        let kicks = sink.afk_kicks.lock().unwrap().clone();
+        assert_eq!(kicks, vec!["u2".to_string()], "expected u2 AFK kick");
+        assert!(!m.humans.contains_key("u2"), "u2 removed from humans");
+        assert!(m.humans.contains_key("u1"), "u1 still human");
+        assert!(m.world.cars[1].bot.is_some(), "u2 car replaced by bot");
+        assert_eq!(m.car_user_ids[1], None, "departed user id cleared from car");
+        assert_ne!(
+            m.world.cars[1].name, "IDLEPLAYER",
+            "replacement car gets bot name"
+        );
+        assert!(
+            sink.broadcasts.lock().unwrap().iter().any(|v| {
+                v["type"] == "player_replaced_by_bot"
+                    && v["userId"] == "u2"
+                    && v["reason"] == "afk"
+                    && v["carIndex"] == 1
+            }),
+            "expected player_replaced_by_bot broadcast with reason=afk"
+        );
+
+        // Replacement bot actively drives on subsequent slots
+        let pos_before = m.world.cars[1].pos;
+        for _ in 0..60 {
+            m.run_slot();
+        }
+        assert!(
+            m.world.cars[1].pos.distance(pos_before) > 1.0,
+            "replacement bot should actively drive"
+        );
+    }
+
+    #[test]
+    fn afk_watch_disabled_in_solo_matches() {
+        let (mut m, sink) = make_mp_afk_match(false, Some(0.5), Some(1.0));
+        m.state = MatchState::Play;
+        m.world.frozen = false;
+        for _ in 0..180 {
+            m.run_slot();
+        }
+        assert!(sink.user_msgs.lock().unwrap().is_empty());
+        assert!(sink.afk_kicks.lock().unwrap().is_empty());
+        assert!(m.world.cars[1].bot.is_none());
+    }
+
+    #[test]
+    fn quit_or_kick_replaces_player_with_bot_and_unblocks_replay() {
+        let (mut m, sink) = make_mp_afk_match(true, Some(20.0), Some(30.0));
+        m.state = MatchState::Goal;
+        m.state_t = GOAL_PAUSE_S + 0.5;
+        m.mark_replay_done("u1");
+        // u2 has not finished replay yet, then quits
+        m.remove_player_with_reason("u2", "left");
+
+        assert!(m.world.cars[1].bot.is_some());
+        assert_eq!(m.car_user_ids[1], None);
+        assert_eq!(m.car_info[1]["userId"], Value::Null);
+        assert!(m.car_info[1]["botId"].is_string());
+        assert!(
+            sink.broadcasts.lock().unwrap().iter().any(|v| {
+                v["type"] == "player_replaced_by_bot"
+                    && v["userId"] == "u2"
+                    && v["reason"] == "left"
+            })
+        );
+
+        // Next slot immediately transitions to Countdown because all remaining humans are replay_done
+        m.run_slot();
+        assert_eq!(
+            m.state,
+            MatchState::Countdown,
+            "leaving player must unblock pending goal replay"
+        );
     }
 }

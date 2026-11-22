@@ -417,10 +417,13 @@ fn leave_lobby(rt: &mut RuntimeState, db: &Database, conn_id: u64, reason: &str)
 
     if let Some(lb) = rt.lobbies.get_mut(&code) {
         let was_host = lb.host_id == uid;
-        lb.players.shift_remove(&uid);
+        let removed_player = lb.players.shift_remove(&uid);
+        let was_driver = removed_player
+            .as_ref()
+            .is_some_and(|p| p.team == 0 || p.team == 1);
         lb.ac.remove(&uid);
         if let Some(sim) = lb.sim.as_ref() {
-            sim.remove_player(&uid);
+            sim.remove_player(&uid, reason);
         }
 
         if lb.players.is_empty() {
@@ -445,7 +448,8 @@ fn leave_lobby(rt: &mut RuntimeState, db: &Database, conn_id: u64, reason: &str)
                     "type": "player_left_match",
                     "userId": uid,
                     "username": username,
-                    "reason": reason
+                    "reason": reason,
+                    "replacedByBot": was_driver
                 }));
             }
         }
@@ -975,6 +979,22 @@ impl MatchEventSink for LobbyEventSink {
         }
     }
 
+    fn send_user(&self, user_id: &str, msg: Value) {
+        let rt = self.state.rt.lock().unwrap();
+        let Some(lb) = rt.lobbies.get(&self.lobby_code) else {
+            return;
+        };
+        if !self.is_current(lb) {
+            return;
+        }
+        if let Some(&cid) = rt.clients_by_user_id.get(user_id)
+            && let Some(c) = rt.conns.get(&cid)
+            && c.lobby_code.as_deref() == Some(&self.lobby_code)
+        {
+            c.send_json(&msg);
+        }
+    }
+
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload) {
         let rt = self.state.rt.lock().unwrap();
         let Some(lb) = rt.lobbies.get(&self.lobby_code) else {
@@ -1022,6 +1042,53 @@ impl MatchEventSink for LobbyEventSink {
 
     fn on_end(&self, score: [i32; 2], stats: HashMap<String, MatchStatsEntry>) {
         finalize_multiplayer_match(&self.state, &self.lobby_code, self.match_gen, score, stats);
+    }
+
+    fn on_afk_kick(&self, user_id: &str) {
+        let mut rt = self.state.rt.lock().unwrap();
+        let db = self.state.db.lock().unwrap();
+        let (conn_id, username) = {
+            let Some(lb) = rt.lobbies.get(&self.lobby_code) else {
+                return;
+            };
+            if !self.is_current(lb) {
+                return;
+            }
+            let Some(p) = lb.players.get(user_id) else {
+                return;
+            };
+            let uname = p.username.clone();
+            let cid = rt.clients_by_user_id.get(user_id).copied();
+            (cid, uname)
+        };
+        if let Some(cid) = conn_id
+            && rt
+                .conns
+                .get(&cid)
+                .is_some_and(|c| c.lobby_code.as_deref() == Some(self.lobby_code.as_str()))
+        {
+            send_to_conn(
+                &rt,
+                cid,
+                &json!({
+                    "type": "afk_kick",
+                    "reason": "Removed from match for inactivity (AFK)."
+                }),
+            );
+            leave_lobby(&mut rt, &db, cid, "afk");
+            if let Some(lb) = rt.lobbies.get(&self.lobby_code) {
+                broadcast_lobby(
+                    &rt,
+                    lb,
+                    &json!({
+                        "type": "lobby_chat",
+                        "system": true,
+                        "text": format!("[AFK] {username} was kicked for inactivity and replaced by a bot.")
+                    }),
+                    None,
+                );
+            }
+        }
     }
 
     fn on_error(&self, message: String) {
@@ -1088,6 +1155,13 @@ impl MatchEventSink for SoloEventSink {
         }
     }
 
+    fn send_user(&self, user_id: &str, msg: Value) {
+        if user_id != self.user_id {
+            return;
+        }
+        self.broadcast(msg);
+    }
+
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload) {
         if user_id != self.user_id {
             return;
@@ -1114,6 +1188,8 @@ impl MatchEventSink for SoloEventSink {
     fn on_end(&self, score: [i32; 2], stats: HashMap<String, MatchStatsEntry>) {
         finalize_solo_match(&self.state, self.conn_id, self.solo_gen, score, stats);
     }
+
+    fn on_afk_kick(&self, _user_id: &str) {}
 
     fn on_error(&self, message: String) {
         eprintln!("[SIM] Solo match aborted: {message}");
@@ -1823,6 +1899,9 @@ fn handle_ws_message(
             let fut = state.backend.create_match(MatchCreateOptions {
                 settings: settings.clone(),
                 teammate_diff: None,
+                afk_enabled: true,
+                afk_warn_s: Some(state.config.afk_warn_secs),
+                afk_kick_s: Some(state.config.afk_kick_secs),
                 players: match_players.clone(),
                 callbacks: sink,
             });
@@ -1855,7 +1934,7 @@ fn handle_ws_message(
                                 if lb.players.contains_key(&mp.user_id) {
                                     present.push(mp.user_id.clone());
                                 } else {
-                                    sim.remove_player(&mp.user_id);
+                                    sim.remove_player(&mp.user_id, "left");
                                 }
                             }
                             let snap = lobby_snapshot(&db, lb);
@@ -2073,6 +2152,9 @@ fn handle_ws_message(
             let fut = state.backend.create_match(MatchCreateOptions {
                 settings: settings.clone(),
                 teammate_diff: Some(teammate_diff),
+                afk_enabled: false,
+                afk_warn_s: None,
+                afk_kick_s: None,
                 players: vec![MatchPlayerSpec {
                     user_id: user_id.clone(),
                     username,

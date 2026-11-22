@@ -452,8 +452,14 @@ impl BotAi {
         if w.ball.stuck_to == Some(car_idx) {
             if w.cars[car_idx].on_ground && self.seq.is_none() && self.aer.is_none() {
                 let s = &w.shape;
-                let gx = clamp(w.cars[car_idx].pos.x * 0.2, -s.gw + 2.0, s.gw - 2.0);
-                let goal = DVec3::new(gx, 0.0, ad * (s.l + 3.0));
+                let car_pos = w.cars[car_idx].pos;
+                let goal = if let Some(sg) = s.split_goal {
+                    let sx = if car_pos.x >= 0.0 { 1.0 } else { -1.0 };
+                    DVec3::new(sx * (sg.gx + sg.gnx * 2.5), 0.0, ad * (sg.gz + sg.gnz * 2.5))
+                } else {
+                    let gx = clamp(car_pos.x * 0.2, -s.gw + 2.0, s.gw - 2.0);
+                    DVec3::new(gx, 0.0, ad * (s.goal_line_z() + 3.0))
+                };
                 self.drive_to(car_idx, goal, 23.0, w, false);
                 let car = &w.cars[car_idx];
                 let to = goal - car.pos;
@@ -491,15 +497,16 @@ impl BotAi {
         let tb = ball.pos - car.pos;
         let db = tb.length();
         let fdot = tb.dot(car.basis.f) / db.max(0.01);
+        let glz = s.goal_line_z();
         let ball_to_goal_x = -ball.pos.x;
-        let ball_to_goal_z = ad * s.l - ball.pos.z;
+        let ball_to_goal_z = ad * glz - ball.pos.z;
         let bgl = ball_to_goal_x.hypot(ball_to_goal_z);
         let bgl = if bgl == 0.0 { 1.0 } else { bgl };
         let hl = tb.x.hypot(tb.z);
         let hl = if hl == 0.0 { 1.0 } else { hl };
         let align = (tb.x * ball_to_goal_x + tb.z * ball_to_goal_z) / (hl * bgl);
         let threat = w.pred.goal_team == car.team as i32 && w.pred.goal_time < 3.5;
-        let own_goal_dist = (ball.pos.z + ad * s.l).abs();
+        let own_goal_dist = (ball.pos.z + ad * glz).abs();
 
         let mut near_opp = 1e9_f64;
         for o in &w.cars {
@@ -959,7 +966,7 @@ impl BotAi {
 
     fn save(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
         let ad = Self::attack_dir(&w.cars[car_idx]);
-        let gz = -ad * w.shape.l;
+        let gz = -ad * w.shape.goal_line_z();
         let it = self.intercept;
         let p_opt = it.filter(|x| !x.late).map(|x| x.slice.pos);
         let Some(p) = p_opt else {
@@ -1581,7 +1588,7 @@ impl TeamBrain {
                     } else {
                         0.0
                     };
-                if d < bd - 0.3 {
+                if d < bd {
                     bd = d;
                     best = Some(i);
                 }

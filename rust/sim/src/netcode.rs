@@ -241,9 +241,11 @@ pub fn net_read_ball(f: &[f32], o: usize, b: &mut Ball, n_cars: usize) {
     };
     b.stuck_local = DVec3::new(f[o + 17] as f64, f[o + 18] as f64, f[o + 19] as f64);
     let lt = f[o + 20] as i32;
-    if lt >= 0 && (lt as usize) < n_cars {
-        b.last_touch = Some(lt as usize);
-    }
+    b.last_touch = if lt >= 0 && (lt as usize) < n_cars {
+        Some(lt as usize)
+    } else {
+        None
+    };
     let fl = f[o + 21] as i32;
     b.frozen = (fl & 1) != 0;
     b.on_ground = (fl & 2) != 0;

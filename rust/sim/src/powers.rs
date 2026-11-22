@@ -580,7 +580,9 @@ impl PowerSystem {
             c.basis = Basis::from_quat(c.quat);
             let mut local = c.basis.to_local(w.ball.pos - c.pos);
             let min_len = c.half.x + 0.75;
-            if local.length() < min_len {
+            if local.length_squared() < 1e-6 {
+                local = DVec3::new(min_len, 0.0, 0.0);
+            } else if local.length() < min_len {
                 local = local.with_length(min_len);
             }
             w.ball.stuck_local = local;
@@ -1066,6 +1068,9 @@ impl PowerSystem {
             }
             if w.ball.ice_t > 0.0 && s.kind == "tether" {
                 self.shatter(c_idx, w);
+            }
+            if s.kind == "tether" {
+                w.register_touch(c_idx);
             }
             self.shots[idx].phase = ShotPhase::Pull;
             self.shots[idx].pt = 0.0;

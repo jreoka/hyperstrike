@@ -379,6 +379,10 @@ body.pad-ui .prompts .gp{display:inline-flex}
   clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%)}
 #replayTag i{width:11px;height:11px;border-radius:50%;background:#ff3b3b;animation:blink 1s infinite;box-shadow:0 0 10px #ff3b3b}
 #replayTag small{font-size:9px;letter-spacing:.2em;color:var(--ink2);font-style:normal;margin-left:8px}
+#afkWarn{position:absolute;top:86px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:10px 26px;font-size:14px;font-weight:900;font-style:italic;letter-spacing:.18em;color:#fff;background:linear-gradient(90deg,rgba(44,12,16,.92),rgba(110,20,28,.92),rgba(44,12,16,.92));border:1px solid rgba(255,90,106,.75);border-bottom:2px solid var(--bad);box-shadow:0 8px 26px rgba(255,60,80,.35);white-space:nowrap;clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%);animation:afkPulse 1s ease-in-out infinite}
+#afkWarn i{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 10px var(--gold);flex:none}
+#afkWarn b{color:var(--gold);font-family:var(--mono);font-style:normal;font-size:15px}
+@keyframes afkPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
 #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:9;mix-blend-mode:screen}
 .ping{display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 9px;background:rgba(6,10,22,.66);border:1px solid var(--line);
   font:700 11px var(--mono);letter-spacing:.04em;color:var(--ink2);white-space:nowrap;pointer-events:none;user-select:none;--pc:var(--good)}
@@ -685,6 +689,7 @@ body.portrait-lock #rotateLock{display:flex}
   <div id="goalBanner"><div class="big" id="gbBig">GOAL!</div><div class="strip"><span id="gbStrip">BLUE SCORES</span></div><div class="meta" id="gbMeta"></div></div>
   <div id="popup"></div>
   <div id="replayTag" class="hidden"><i></i>REPLAY<small>PRESS JUMP TO SKIP</small></div>
+  <div id="afkWarn" class="hidden"><i></i><span>AFK WARNING · MOVE NOW OR BE KICKED IN <b id="afkSec">10s</b></span></div>
   <div id="camTag">BALL CAM</div>
   <div id="speedo"><b id="speedVal">0</b><span>KM/H</span></div>
   <div id="boostGauge">
@@ -1493,7 +1498,8 @@ class ArenaShape {
     if (this.goalMode === 'standalone') {
       let d = this.shellDist(ax, y, az);
       const gz = this.goalZ, gd = this.gd, gt = this.gt;
-      if (az > gz - 4.0 && az < gz + gd + gt + 4.0 && ax < gw + gt + 4.0 && y < gh + gt + 4.0) {
+      const margin = d > 0 ? d : 0;
+      if (az > gz - margin && az < gz + gd + gt + margin && ax < gw + gt + margin && y < gh + gt + margin) {
         const dSide = sdBox(ax - (gw + gt * 0.5), y - (gh + gt) * 0.5, az - (gz + (gd + gt) * 0.5), gt * 0.5, (gh + gt) * 0.5, (gd + gt) * 0.5);
         const dBack = sdBox(ax, y - (gh + gt) * 0.5, az - (gz + gd + gt * 0.5), gw + gt, (gh + gt) * 0.5, gt * 0.5);
         const dRoof = sdBox(ax, y - (gh + gt * 0.5), az - (gz + (gd + gt) * 0.5), gw + gt, gt * 0.5, (gd + gt) * 0.5);
@@ -1598,7 +1604,11 @@ class ArenaShape {
       t += s * 0.95;
       if (t > maxT) return -1;
     }
-    return t <= maxT ? t : -1;
+    if (t <= maxT) {
+      const s = this.dist(o.x + d.x * t, o.y + d.y * t, o.z + d.z * t);
+      if (s < 0.01) { const r = t + (s < 0 ? s : 0); return r > 0 ? r : 0; }
+    }
+    return -1;
   }
   wallDist2D(x, z) { return this.d2(x < 0 ? -x : x, z < 0 ? -z : z); }
   inGoal(p, r) {
@@ -1751,13 +1761,19 @@ class BallPredictor {
     for (let i = 0; i < this.steps; i++) {
       s.gScale = anti > 0 ? 0.2 : 1; anti -= this.dt;
       if ((i + 1) * this.dt < hold) { s.pos.addScaledVector(s.vel, this.dt); const sl = this.slices[i]; sl.t = (i + 1) * this.dt; sl.pos.copy(s.pos); sl.vel.copy(s.vel); sl.goal = -1; continue; }
-      ballIntegrate(s, this.dt, arena, false);
+      if (s.vel.lengthSq() > 1600) {
+        const halfDt = this.dt * 0.5;
+        ballIntegrate(s, halfDt, arena, false);
+        ballIntegrate(s, halfDt, arena, false);
+      } else {
+        ballIntegrate(s, this.dt, arena, false);
+      }
       const sl = this.slices[i]; sl.t = (i + 1) * this.dt; sl.pos.copy(s.pos); sl.vel.copy(s.vel);
       const g = arena.inGoal(s.pos, PHYS.ballR); sl.goal = g;
       if (g >= 0 && this.goalTeam < 0) { this.goalTeam = g; this.goalTime = sl.t; this.valid = i + 1; break; }
     }
   }
-  at(t) { const i = clamp(Math.round(t / this.dt) - 1, 0, this.valid - 1); return this.slices[i]; }
+  at(t) { if (this.valid <= 0) return this.slices[0]; const i = clamp(Math.round(t / this.dt) - 1, 0, this.valid - 1); return this.slices[i]; }
 }
 
 const WHEEL_LAYOUT = [
@@ -1844,11 +1860,16 @@ class Car {
       // so small bumps don't flicker traction / grounded state on and off
       const maxT = PHYS.suspMax + w.r + (w.contact ? PHYS.suspGrace : 0);
       const t = this.groundLock > 0 ? -1 : arena.raycast(_cv, down, maxT);
+      let hitValid = false;
       if (t >= 0) {
+        _cv2.copy(_cv).addScaledVector(down, t);
+        arena.normal(_cv2.x, _cv2.y, _cv2.z, w.normal);
+        hitValid = w.normal.dot(u) > 0.2;
+      }
+      if (hitValid) {
         w.contact = true; contacts++;
         const len = Math.min(PHYS.suspMax, Math.max(0, t - w.r)); w.len = len;
-        _cv2.copy(_cv).addScaledVector(down, t);
-        arena.normal(_cv2.x, _cv2.y, _cv2.z, w.normal); gn.add(w.normal);
+        gn.add(w.normal);
         const comp = PHYS.suspRest - len;
         const rate = clamp((w.prevLen - len) / dt, -8, 8);
         const F = clamp(PHYS.suspK * comp + PHYS.suspC * rate, 0, 22);
@@ -1928,7 +1949,7 @@ class Car {
       this.vel.addScaledVector(u, PHYS.jumpImp);
       this.jumping = true; this.jumpHoldT = 0; this.jumped = true; this.hasFlip = true; this.doubleJumped = false;
       this.timeSinceJump = 0; this.groundLock = 0.12; this.coyoteT = 0; this.events.push('jump');
-    } else if (jumpPressed && contacts < 2 && this.bodyContact && this.contacts === 0) {
+    } else if (jumpPressed && contacts === 0 && this.bodyContact && u.y < 0.5 && this.pos.y < 1.5 && this.vel.y < 2.0) {
       this.vel.y += 3.5; _cv.crossVectors(u, tmpV.set(0, 1, 0)); if (_cv.lengthSq() < 0.01) _cv.copy(f);
       this.angVel.addScaledVector(_cv.normalize(), 7.5); this.events.push('jump');
     } else if (jumpPressed && contacts === 0 && !this.jumping && this.hasFlip && (this.timeSinceJump < PHYS.dodgeWindow || !this.jumped)) {
@@ -2016,7 +2037,7 @@ class Car {
     // points can penetrate. Cuts ~95% of SDF evaluations during online rollback ticks.
     const px = this.pos.x, py = this.pos.y, pz = this.pos.z, br = this.boundR;
     if (arena.dist(px, py, pz) > br) { this.bodyContact = false; this.bodyContactT = 0; return; }
-    if (!arena.goalMode && py < arena.H - arena.Rf - br) {
+    if (arena.goalMode === 'standard' && arena.type !== 'figure8' && py < arena.H - arena.Rf - br) {
       const ax = px < 0 ? -px : px, az = pz < 0 ? -pz : pz;
       if (az <= arena.L - arena.Rf - 1.0 - br && arena.d2(ax, az) > arena.Rf + br) {
         const minY = py - (Math.abs(b.f.y) * this.half.x + Math.abs(b.u.y) * this.half.y + Math.abs(b.r.y) * this.half.z);
@@ -2075,15 +2096,32 @@ function collideCarBall(car, ball, tick, arena) {
   if (car.demolished) return null;
   const b = car.basis.fromQuat(car.quat), h = car.half;
   _k1.copy(ball.pos).sub(car.pos); b.toLocal(_k1, _kl);
-  const cx = clamp(_kl.x, -h.x, h.x), cy = clamp(_kl.y, -h.y, h.y), cz = clamp(_kl.z, -h.z, h.z);
-  let dx = _kl.x - cx, dy = _kl.y - cy, dz = _kl.z - cz;
-  let dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  let cx = clamp(_kl.x, -h.x, h.x), cy = clamp(_kl.y, -h.y, h.y), cz = clamp(_kl.z, -h.z, h.z);
+  const dx = _kl.x - cx, dy = _kl.y - cy, dz = _kl.z - cz;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   const R = ball.R;
   if (dist >= R) return null;
-  if (dist < 1e-5) { dx = 0; dy = 1; dz = 0; dist = 1e-5; }
-  _kn.set(dx / dist, dy / dist, dz / dist); b.toWorld(_kn, _kn);
+  let pen;
+  if (dist < 1e-5) {
+    const ox = Math.max(0, h.x - Math.abs(_kl.x));
+    const oy = Math.max(0, h.y - Math.abs(_kl.y));
+    const oz = Math.max(0, h.z - Math.abs(_kl.z));
+    if (oy <= ox && oy <= oz) {
+      const s = _kl.y < 0 ? -1 : 1;
+      cy = s * h.y; _kn.set(0, s, 0); pen = R + oy;
+    } else if (ox <= oz) {
+      const s = _kl.x < 0 ? -1 : 1;
+      cx = s * h.x; _kn.set(s, 0, 0); pen = R + ox;
+    } else {
+      const s = _kl.z < 0 ? -1 : 1;
+      cz = s * h.z; _kn.set(0, 0, s); pen = R + oz;
+    }
+  } else {
+    _kn.set(dx / dist, dy / dist, dz / dist);
+    pen = R - dist;
+  }
+  b.toWorld(_kn, _kn);
   _kcp.set(cx, cy, cz); b.toWorld(_kcp, _kcp).add(car.pos);
-  const pen = R - dist;
   const mc = PHYS.carMass, mb = PHYS.ballMass;
   const ballV0 = _k4.copy(ball.vel);
   const ballSpeed0 = ballV0.length();
@@ -2117,6 +2155,8 @@ function collideCarBall(car, ball, tick, arena) {
       tmpV2.crossVectors(rb, vt).multiplyScalar(-jt / (0.4 * mb * R * R)); ball.angVel.add(tmpV2);
       tmpV2.crossVectors(rc, vt).multiplyScalar(jt * angRecoil); car.applyAngImpulse(tmpV2, mc);
     }
+    const bw = ball.angVel.length(); if (bw > PHYS.ballMaxAng) ball.angVel.multiplyScalar(PHYS.ballMaxAng / bw);
+    const cw = car.angVel.length(); if (cw > PHYS.carMaxAng) car.angVel.multiplyScalar(PHYS.carMaxAng / cw);
   }
   // Mid-air flip reset when underside of car makes solid contact with the ball
   if (car.contacts === 0 && !car.hasFlip && _kl.y < -h.y * 0.45 && b.u.dot(_kn) < -0.72 && Math.abs(_kl.x) < h.x * 0.8 && Math.abs(_kl.z) < h.z * 0.8) {
@@ -2167,7 +2207,7 @@ function obbOverlap(a, b, outN) {
   }
   return minO;
 }
-const _ccN = new V3(), _ccP = new V3();
+const _ccN = new V3(), _ccP = new V3(), _ccPreA = new V3(), _ccPreB = new V3();
 function collideCars(a, b, game) {
   if (a.demolished || b.demolished) return null;
   if (a.pos.distanceToSquared(b.pos) > 4) return null;
@@ -2177,6 +2217,8 @@ function collideCars(a, b, game) {
   // soft positional correction with a small slop so resting contacts don't buzz
   const corr = Math.max(0, pen - 0.004) * 0.8 * 0.5;
   a.pos.addScaledVector(n, -corr); b.pos.addScaledVector(n, corr);
+  _ccPreA.copy(a.vel); _ccPreB.copy(b.vel);
+  const preClosing = _ccPreA.dot(n) - _ccPreB.dot(n);
   // contact point: midpoint of centres projected onto the (approximate) contact plane,
   // so impulses get sensible lever arms instead of spinning cars from their centres
   const raN = a.half.x * Math.abs(a.basis.f.dot(n)) + a.half.y * Math.abs(a.basis.u.dot(n)) + a.half.z * Math.abs(a.basis.r.dot(n));
@@ -2206,27 +2248,44 @@ function collideCars(a, b, game) {
     const wb = b.angVel.length(); if (wb > PHYS.carMaxAng) b.angVel.multiplyScalar(PHYS.carMaxAng / wb);
   }
   const now = game.time;
-  for (const [att, vic] of [[a, b], [b, a]]) if (att.ovT > 0 && att.team !== vic.team && game.allowDemos) return { type: 'demo', attacker: att, victim: vic, overdrive: true };
-  let result = { type: 'touch', a, b, strength: -vn };
-  for (const [att, vic, dir] of [[a, b, 1], [b, a, -1]]) {
+  if (a.team !== b.team && game.allowDemos) {
+    const aOv = a.ovT > 0, bOv = b.ovT > 0;
+    if (aOv && bOv) return { type: 'doubleDemo', a, b, overdrive: true };
+    if (aOv) return { type: 'demo', attacker: a, victim: b, overdrive: true };
+    if (bOv) return { type: 'demo', attacker: b, victim: a, overdrive: true };
+  }
+  const aToward = _ccPreA.dot(n), bToward = -_ccPreB.dot(n);
+  if (a.team !== b.team && game.allowDemos && preClosing >= 4) {
+    const aFwd = a.basis.f.dot(n) > 0.55;
+    const bFwd = b.basis.f.dot(n) < -0.55;
+    const aCd = now - (a.bumpCooldown.get(b.id) ?? -10) >= 0.3;
+    const bCd = now - (b.bumpCooldown.get(a.id) ?? -10) >= 0.3;
+    const aDemo = aFwd && a.supersonic && aToward > PHYS.supersonic * 0.5 && aCd;
+    const bDemo = bFwd && b.supersonic && bToward > PHYS.supersonic * 0.5 && bCd;
+    if (aDemo && bDemo) { a.bumpCooldown.set(b.id, now); b.bumpCooldown.set(a.id, now); return { type: 'doubleDemo', a, b, overdrive: false }; }
+    if (aDemo) { a.bumpCooldown.set(b.id, now); return { type: 'demo', attacker: a, victim: b, overdrive: false }; }
+    if (bDemo) { b.bumpCooldown.set(a.id, now); return { type: 'demo', attacker: b, victim: a, overdrive: false }; }
+  }
+  let result = { type: 'touch', a, b, strength: Math.max(-vn, Math.max(0, preClosing)) };
+  const passes = bToward > aToward ? [[b, a, -1, _ccPreB, bToward], [a, b, 1, _ccPreA, aToward]] : [[a, b, 1, _ccPreA, aToward], [b, a, -1, _ccPreB, bToward]];
+  for (const [att, vic, dir, attPreVel, attToward] of passes) {
     const nd = _k5.copy(n).multiplyScalar(dir);
     const fwdHit = att.basis.f.dot(nd) > 0.55;
     const sideHit = !fwdHit && Math.abs(att.basis.r.dot(nd)) > 0.6;
-    const closing = att.vel.dot(nd) - vic.vel.dot(nd);
-    if ((!fwdHit && !sideHit) || closing < (fwdHit ? 4 : 5)) continue;
-    const key = vic.id; const last = att.bumpCooldown.get(key) || -10;
+    if ((!fwdHit && !sideHit) || attToward < 2 || preClosing < (fwdHit ? 4 : 5)) continue;
+    const key = vic.id; const last = att.bumpCooldown.get(key) ?? -10;
     if (now - last < 0.3) continue;
     att.bumpCooldown.set(key, now);
-    if (fwdHit && att.supersonic && att.team !== vic.team && game.allowDemos) { result = { type: 'demo', attacker: att, victim: vic }; break; }
-    const rs = Math.min(closing, 46);
+    const rs = Math.min(preClosing, 46);
     // Bump direction blends the contact normal with the attacker's travel so hits send cars where you aimed
     tmpV3.set(nd.x, 0, nd.z); if (tmpV3.lengthSq() < 1e-4) tmpV3.copy(att.basis.f); tmpV3.normalize();
-    const av = _k6.set(att.vel.x, 0, att.vel.z); if (av.lengthSq() > 1) tmpV3.lerp(av.normalize(), fwdHit ? 0.4 : 0.15).normalize();
+    const av = _k6.set(attPreVel.x, 0, attPreVel.z); if (av.lengthSq() > 1) tmpV3.lerp(av.normalize(), fwdHit ? 0.4 : 0.15).normalize();
     const scale = fwdHit ? 0.85 : 0.4;
     vic.vel.addScaledVector(tmpV3, curve(BUMP_CURVE, rs) * scale).add(tmpV2.set(0, curve(BUMP_UP_CURVE, rs) * (vic.onGround ? 1 : 0.4) * (fwdHit ? 1 : 0.3), 0));
     // A little tumble on the victim, scaled by hit strength (off-centre hits spin more)
     const off = _k1.copy(vic.pos).sub(att.pos); off.addScaledVector(tmpV3, -off.dot(tmpV3));
     vic.angVel.addScaledVector(V3Up, clamp(off.dot(_k2.crossVectors(V3Up, tmpV3)) * rs * 0.25, -2.5, 2.5));
+    const vw = vic.angVel.length(); if (vw > PHYS.carMaxAng) vic.angVel.multiplyScalar(PHYS.carMaxAng / vw);
     if (vic.onGround) vic.groundLock = Math.max(vic.groundLock, 0.06);
     result = { type: 'bump', attacker: att, victim: vic, strength: rs };
     break;
@@ -6869,7 +6928,10 @@ class BotAI {
     const car = this.car, c = car.controls, ball = w.ball, s = w.shape, ad = this.attackDir;
     if (ball.stuckTo === car) {
       if (car.onGround && !this.seq && !this.aer) {
-        const goal = _a4.set(clamp(car.pos.x * 0.2, -s.gw + 2, s.gw - 2), 0, ad * (s.L + 3)); this.driveTo(goal, 23, w, false);
+        const goal = s.goalMode === 'split'
+          ? _a4.set((car.pos.x >= 0 ? 1 : -1) * (s.splitGoal.gx + s.splitGoal.gnx * 2.5), 0, ad * (s.splitGoal.gz + s.splitGoal.gnz * 2.5))
+          : _a4.set(clamp(car.pos.x * 0.2, -s.gw + 2, s.gw - 2), 0, ad * (s.goalLineZ() + 3));
+        this.driveTo(goal, 23, w, false);
         const to = _a3.copy(goal).sub(car.pos); const d = to.length(); const facing = to.dot(car.basis.f) / Math.max(0.01, d);
         if (d < 16 + this.d.aim * 10 && facing > 0.9 && Math.random() < dt * 3) c.item = true;
       }
@@ -6880,10 +6942,11 @@ class BotAI {
     if (this.itemHold < 0.5 + this.d.react * 4) return;
     const id = car.item; const tgt = w.powers.targetFor(car, id); if (!tgt) { if (this.itemHold > 20) this.itemHold = 0; return; }
     const tb = _a1.copy(ball.pos).sub(car.pos); const db = tb.length(); const fdot = tb.dot(car.basis.f) / Math.max(0.01, db);
-    const ballToGoalX = -ball.pos.x, ballToGoalZ = ad * s.L - ball.pos.z; const bgl = Math.hypot(ballToGoalX, ballToGoalZ) || 1;
+    const glz = s.goalLineZ();
+    const ballToGoalX = -ball.pos.x, ballToGoalZ = ad * glz - ball.pos.z; const bgl = Math.hypot(ballToGoalX, ballToGoalZ) || 1;
     const hl = Math.hypot(tb.x, tb.z) || 1; const align = (tb.x * ballToGoalX + tb.z * ballToGoalZ) / (hl * bgl);
     const threat = w.pred.goalTeam === car.team && w.pred.goalTime < 3.5;
-    const ownGoalDist = Math.abs(ball.pos.z + ad * s.L);
+    const ownGoalDist = Math.abs(ball.pos.z + ad * glz);
     let nearOpp = 1e9, oppBallD = 1e9; for (const o of w.cars) if (o.team !== car.team && !o.demolished) { nearOpp = Math.min(nearOpp, o.pos.distanceTo(car.pos)); oppBallD = Math.min(oppBallD, o.pos.distanceTo(ball.pos)); }
     let go = false;
     switch (id) {
@@ -7068,7 +7131,7 @@ class BotAI {
   }
   save(dt, w) {
     const car = this.car, shape = w.shape, ad = this.attackDir;
-    const it = this.intercept; const gz = -ad * shape.L;
+    const it = this.intercept; const gz = -ad * shape.goalLineZ();
     const P = it && !it.late ? it.slice.pos : null;
     if (!P) {
       const t = _a1.set(clamp(w.ball.pos.x * 0.5, -shape.gw + 1, shape.gw - 1), 0, gz + ad * 1.5);
@@ -7166,7 +7229,7 @@ class BotAI {
     else c.throttle = clamp(want / 14, 0, 1);
     if (!cautious && car.onGround && Math.abs(ang) < 0.06 && dist > 30 && vf > 9 && vf < 16 && car.boost < 15 && this.d.flip > 0.5 && w.time - this.lastJumpT > 2) this.startFlip(1, 0);
     if (this.d.err < 0.3) for (const o of w.cars) if (o.team !== car.team && o.supersonic && !o.demolished) {
-      const rel = _a3.copy(car.pos).sub(o.pos); const dd = rel.length(); if (dd < 7 && o.vel.dot(rel) / dd > 18 && car.onGround && w.time - this.lastJumpT > 1) { this.startJump(0.2, false); break; }
+      const rel = _a3.copy(car.pos).sub(o.pos); const dd = rel.length(); if (dd < 7 && dd > 1e-4 && o.vel.dot(rel) / dd > 18 && car.onGround && w.time - this.lastJumpT > 1) { this.startJump(0.2, false); break; }
     }
   }
   recover(dt, w) {
@@ -7251,7 +7314,7 @@ class TeamBrain {
     for (const team of [0, 1]) {
       const mem = w.cars.filter(c => c.team === team && !c.demolished);
       if (!mem.length) continue;
-      const ad = team === 0 ? 1 : -1; const gz = -ad * w.shape.L;
+      const ad = team === 0 ? 1 : -1; const gz = -ad * w.shape.goalLineZ();
       const scored = mem.map(c => {
         const bot = c.bot; const est = bot ? bot.estimate(w.ball.pos) : c.pos.distanceTo(w.ball.pos) / 14;
         const ahead = (w.ball.pos.z - c.pos.z) * ad < -3 ? 2.2 : 0;
@@ -7274,7 +7337,7 @@ class TeamBrain {
     for (const team of [0, 1]) {
       const mem = cars.filter(c => c.team === team);
       // Humans win ties (e.g. mirrored diagonal spots) so a bot teammate never races them to the ball
-      let best = null, bd = 1e9; for (const c of mem) { const d = c.pos.distanceTo(ball.pos) - (c.bot ? 0 : 1.0) + (c.pos.x * (team === 0 ? 1 : -1) < -0.5 ? -0.01 : 0); if (d < bd - 0.3) { bd = d; best = c; } }
+      let best = null, bd = 1e9; for (const c of mem) { const d = c.pos.distanceTo(ball.pos) - (c.bot ? 0 : 1.0) + (c.pos.x * (team === 0 ? 1 : -1) < -0.5 ? -0.01 : 0); if (d < bd) { bd = d; best = c; } }
       this.kickers[team] = best;
     }
   }
@@ -7359,6 +7422,7 @@ class World {
           if (this.cars[i].isRemote && this.cars[j].isRemote) continue;
           const r = collideCars(this.cars[i], this.cars[j], this);
           if (r && r.type === 'demo') this.demolish(r.victim, r.attacker, r.overdrive);
+          else if (r && r.type === 'doubleDemo') { this.demolish(r.a, r.b, r.overdrive); this.demolish(r.b, r.a, r.overdrive); }
           else if (r && r.type === 'bump') { this.events.push({ type: 'bump', a: r.attacker, b: r.victim, strength: r.strength }); if (P && ball.stuckTo === r.victim && r.attacker.team !== r.victim.team) P.release(false); }
         }
       }
@@ -7487,7 +7551,7 @@ function netReadBall(f, o, b, cars) {
   b.gScale = f[o + 13]; b.iceT = f[o + 14]; b.antiT = f[o + 15];
   b.stuckTo = f[o + 16] >= 0 ? (cars[f[o + 16] | 0] || null) : null;
   b.stuckLocal.set(f[o + 17], f[o + 18], f[o + 19]);
-  const lt = f[o + 20] | 0; if (lt >= 0 && cars[lt]) b.lastTouch = cars[lt];
+  const lt = f[o + 20] | 0; b.lastTouch = (lt >= 0 && cars[lt]) ? cars[lt] : null;
   const fl = f[o + 21] | 0; b.frozen = !!(fl & 1); b.onGround = !!(fl & 2);
 }
 // info: { state, overtime, cd, timeLeft, otTime, score:[a,b], ctls:[packed per car], meta: string|null }
@@ -7667,7 +7731,9 @@ class PowerSystem {
     if (c.ovT > 0) { const d = _pw1.copy(b.pos).sub(c.pos).normalize(); b.vel.addScaledVector(d, 9 + hit.strength * 0.35); const sp = b.vel.length(); if (sp > PHYS.ballMax) b.vel.multiplyScalar(PHYS.ballMax / sp); this.ev('ovHit', { car: c, pos: b.pos.clone() }); }
     if (c.spikeT > 0 && !b.stuckTo && b.iceT <= 0) {
       b.stuckTo = c; c.basis.fromQuat(c.quat); c.basis.toLocal(_pw1.copy(b.pos).sub(c.pos), b.stuckLocal);
-      const L = b.stuckLocal; if (L.length() < c.half.x + 0.75) L.setLength(c.half.x + 0.75);
+      const L = b.stuckLocal;
+      if (L.lengthSq() < 1e-6) L.set(c.half.x + 0.75, 0, 0);
+      else if (L.length() < c.half.x + 0.75) L.setLength(c.half.x + 0.75);
       this.ev('attach', { car: c, pos: b.pos.clone() });
     }
   }
@@ -7677,8 +7743,9 @@ class PowerSystem {
     c.basis.fromQuat(c.quat); const off = c.basis.toWorld(b.stuckLocal, _pw1);
     b.pos.copy(c.pos).add(off); b.vel.copy(c.vel).add(_pw2.crossVectors(c.angVel, off)); b.angVel.copy(c.angVel);
     quatIntegrate(b.quat, b.angVel, dt);
+    b.onGround = false;
     const d = w.shape.dist(b.pos.x, b.pos.y, b.pos.z);
-    if (d < b.R) { const n = w.shape.normal(b.pos.x, b.pos.y, b.pos.z, _pw2); b.pos.addScaledVector(n, b.R - d); if (b.R - d > 0.35) this.release(false); }
+    if (d < b.R) { const n = w.shape.normal(b.pos.x, b.pos.y, b.pos.z, _pw2); b.pos.addScaledVector(n, b.R - d); if (n.y > 0.7) b.onGround = true; if (b.R - d > 0.35) this.release(false); }
   }
   shockwave(c) {
     const w = this.w, b = w.ball, R = 16;
@@ -7791,6 +7858,7 @@ class PowerSystem {
       this.ev('bootHit', { car: c, target: v, pos: v.pos.clone() });
     } else {
       if (b.stuckTo) this.release(false); if (b.iceT > 0 && S.kind === 'tether') this.shatter(c);
+      if (S.kind === 'tether') w.registerTouch(c);
       S.phase = 'pull'; S.pt = 0; this.ev('hook', { car: c, hookKind: S.kind, pos: b.pos.clone() });
     }
   }
@@ -8215,8 +8283,8 @@ class ModeBase {
       mem.forEach((c, i) => {
         const spot = KICKOFF_SPOTS[order[i % order.length]] || KICKOFF_SPOTS[4];
         const v = s.kickoffPos(spot, team);
-        let x = v.x, z = v.z;
-        if (i >= order.length) x += (i - order.length + 1) * 4;
+        if (i >= order.length) { v.x += (i - order.length + 1) * 4; s.pushInside(v, 4.0); }
+        const x = v.x, z = v.z;
         c.place(x, 0.35, z, yawToward(x, z, 0, 0)); c.boost = 33; c.demolished = false; if (c.bot) c.bot.reset();
       });
     }
@@ -8493,6 +8561,9 @@ class OnlineMatchMode extends MatchMode {
     c.basis.fromQuat(c.quat); const off = c.basis.toWorld(b.stuckLocal, this._tmpV);
     b.pos.copy(c.pos).add(off); b.vel.copy(c.vel).add(this._tmpV2.crossVectors(c.angVel, off)); b.angVel.copy(c.angVel);
     quatIntegrate(b.quat, b.angVel, dt);
+    b.onGround = false;
+    const d = w.shape.dist(b.pos.x, b.pos.y, b.pos.z);
+    if (d < b.R) { const n = w.shape.normal(b.pos.x, b.pos.y, b.pos.z, this._tmpV2); b.pos.addScaledVector(n, b.R - d); if (n.y > 0.7) b.onGround = true; }
   }
   goPlay() {
     const g = this.game;
@@ -9301,16 +9372,54 @@ class OnlineManager {
         if (g.mode instanceof OnlineMatchMode) ui.toast(`NEW LOBBY HOST: ${msg.hostName}`);
         break;
       case 'player_left_match':
-        ui.feed(`${msg.username} LEFT THE MATCH`, -1);
+        if (!msg.replacedByBot) ui.feed(`${msg.username} LEFT THE MATCH`, -1);
+        break;
+      case 'player_replaced_by_bot': {
+        const w = g.world;
+        const car = w && Number.isInteger(msg.carIndex) ? w.cars[msg.carIndex] : null;
+        if (car) {
+          car.name = msg.botName || 'BOT';
+          car.netUserId = null;
+          car.netBotId = msg.botId || `bot_rep_${msg.carIndex}`;
+          const tag = ui.tags.get(car);
+          if (tag && tag.firstChild) tag.firstChild.textContent = car.name;
+        }
+        if (car !== g.player) {
+          const oldName = msg.oldName || 'PLAYER';
+          const botName = msg.botName || 'BOT';
+          const why = msg.reason === 'afk' ? 'KICKED (AFK)'
+            : msg.reason === 'anticheat' ? 'KICKED (ANTI-CHEAT)'
+            : msg.reason === 'disconnected' ? 'DISCONNECTED'
+            : msg.reason === 'kicked' ? 'KICKED'
+            : 'LEFT';
+          ui.feed(`${oldName} ${why} · ${botName} [BOT] JOINED`, Number.isInteger(msg.team) ? msg.team : -1);
+        }
+        break;
+      }
+      case 'afk_warn':
+        ui.afkWarn(msg.remaining);
+        break;
+      case 'afk_clear':
+        ui.clearAfkWarn();
+        break;
+      case 'afk_kick':
+        ui.clearAfkWarn();
+        this.lobby = null;
+        this.chatLog = [];
+        if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
+        if (g.inGame) g.exitToMenu();
+        ui.toast(msg.reason || 'REMOVED FROM MATCH FOR INACTIVITY (AFK)', 4000);
         break;
       case 'anticheat_warn':
-        ui.toast(msg.reason || 'ANTI-CHEAT WARNING');
+        ui.toast(msg.reason || 'ANTI-CHEAT WARNING', 3200);
         ui.popup('ANTI-CHEAT WARNING', '#ff5b5b');
         break;
       case 'anticheat_kick':
+        ui.clearAfkWarn();
         this.lobby = null;
+        if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
         if (g.inGame) g.exitToMenu();
-        ui.toast(msg.reason || 'REMOVED BY ANTI-CHEAT');
+        ui.toast(msg.reason || 'REMOVED BY ANTI-CHEAT', 4000);
         break;
       case 'match_finished':
         this.lobby = msg.lobby || this.lobby;
@@ -9492,6 +9601,21 @@ class UIManager {
     const cd = $('countdown'); if (cd) { cd.className = ''; cd.textContent = ''; }
     const pop = $('popup'); if (pop) { pop.className = ''; pop.textContent = ''; }
     const fd = $('feed'); if (fd) fd.innerHTML = '';
+    this.clearAfkWarn();
+  }
+  afkWarn(rem) {
+    const el = $('afkWarn'), sec = $('afkSec');
+    if (!el || !sec) return;
+    const n = Math.max(1, Math.ceil(Number(rem) || 1));
+    const wasHidden = el.classList.contains('hidden');
+    sec.textContent = n + 's';
+    el.classList.remove('hidden');
+    if (wasHidden) this.g.audio && this.g.audio.ui && this.g.audio.ui('back');
+    else if (n <= 5 && this.g.audio && this.g.audio.clockTick) this.g.audio.clockTick(n);
+  }
+  clearAfkWarn() {
+    const el = $('afkWarn');
+    if (el) el.classList.add('hidden');
   }
   toggleMute() {
     Settings.set('muted', !Settings.data.muted);
@@ -10028,7 +10152,7 @@ class UIManager {
     setTimeout(() => f.classList.add('out'), 4200); setTimeout(() => f.remove(), 4800);
     while ($('feed').children.length > 5) $('feed').lastChild.remove();
   }
-  toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(this._tt); this._tt = setTimeout(() => el.classList.remove('show'), 1800); }
+  toast(t, ms = 1800) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(this._tt); this._tt = setTimeout(() => el.classList.remove('show'), ms); }
   flash(a) { const el = $('flash'); el.style.transition = 'none'; el.style.opacity = a; void el.offsetWidth; el.style.transition = 'opacity .6s'; el.style.opacity = 0; }
   replayTag(v) { $('replayTag').classList.toggle('hidden', !v); }
   setupHud(game) {
@@ -10167,6 +10291,7 @@ class UIManager {
       if (c === game.player || c.demolished || !show || (game.mode && game.mode.state === 'replay')) continue;
       let el = this.tags.get(c);
       if (!el) { el = document.createElement('div'); el.className = 'tag ' + (c.team === 0 ? 'blue' : 'orange'); el.style.left = '0'; el.style.top = '0'; el.innerHTML = `<span></span><i></i>`; $('tags').appendChild(el); this.tags.set(c, el); el.firstChild.textContent = c.name; }
+      else if (el.firstChild.textContent !== c.name) { el.firstChild.textContent = c.name; }
       const wp = tmpV.copy(game.visualPos(c)); wp.y += 0.9;
       const toCam = tmpV3.copy(wp).sub(cam.position);
       const dist = toCam.length();
@@ -10249,7 +10374,7 @@ class UIManager {
     let mvp = null; const m = game.mode; const win = m.score[0] > m.score[1] ? 0 : 1;
     for (const c of cars) if (c.team === win && (!mvp || c.stats.score > mvp.stats.score)) mvp = c;
     return `<table class="stats"><tr><th>PLAYER</th><th>SCORE</th><th>GOALS</th><th>ASSISTS</th><th>SAVES</th><th>SHOTS</th><th>DEMOS</th></tr>` +
-      cars.map(c => `<tr class="${c.team === 0 ? 'blue' : 'orange'} ${c === game.player ? 'me' : ''}"><td>${c.name}${highlightMvp && c === mvp ? '<span class="mvp">MVP</span>' : ''}${c.bot ? ` <span style="color:#5f7196;font-size:10px">${c.bot.p.name}</span>` : ''}</td><td>${c.stats.score}</td><td>${c.stats.goals}</td><td>${c.stats.assists}</td><td>${c.stats.saves}</td><td>${c.stats.shots}</td><td>${c.stats.demos}</td></tr>`).join('') + '</table>';
+      cars.map(c => `<tr class="${c.team === 0 ? 'blue' : 'orange'} ${c === game.player ? 'me' : ''}"><td>${this.esc(c.name)}${highlightMvp && c === mvp ? '<span class="mvp">MVP</span>' : ''}${c.bot ? ` <span style="color:#5f7196;font-size:10px">${c.bot.p.name}</span>` : (c.netBotId ? ' <span style="color:#5f7196;font-size:10px">BOT</span>' : '')}</td><td>${c.stats.score}</td><td>${c.stats.goals}</td><td>${c.stats.assists}</td><td>${c.stats.saves}</td><td>${c.stats.shots}</td><td>${c.stats.demos}</td></tr>`).join('') + '</table>';
   }
   showScoreboard(game, v) {
     if (!v) { if (this._sb) { this.hideOverlay(); } return; }

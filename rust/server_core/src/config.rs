@@ -15,6 +15,8 @@ pub struct Config {
     pub client_secret: String,
     pub sim_workers: usize,
     pub trust_proxy: bool,
+    pub afk_warn_secs: f64,
+    pub afk_kick_secs: f64,
 }
 
 impl Config {
@@ -62,6 +64,17 @@ impl Config {
                 .map(|v| v == "1")
                 .unwrap_or(false);
 
+        let afk_warn_secs = std::env::var("AFK_WARN_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|&v| v.is_finite() && v > 0.0)
+            .unwrap_or(20.0);
+        let afk_kick_secs = std::env::var("AFK_KICK_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|&v| v.is_finite() && v > afk_warn_secs)
+            .unwrap_or((afk_warn_secs + 10.0).max(30.0));
+
         Self {
             port,
             data_dir,
@@ -73,6 +86,8 @@ impl Config {
             client_secret,
             sim_workers,
             trust_proxy,
+            afk_warn_secs,
+            afk_kick_secs,
         }
     }
 
@@ -301,6 +316,8 @@ mod tests {
             client_secret: "secret".into(),
             sim_workers: 1,
             trust_proxy: false,
+            afk_warn_secs: 20.0,
+            afk_kick_secs: 30.0,
         };
 
         let mut h = HeaderMap::new();
@@ -337,6 +354,8 @@ mod tests {
             client_secret: "secret".into(),
             sim_workers: 1,
             trust_proxy: false,
+            afk_warn_secs: 20.0,
+            afk_kick_secs: 30.0,
         };
 
         let mut h = HeaderMap::new();

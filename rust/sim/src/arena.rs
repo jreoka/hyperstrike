@@ -1020,10 +1020,11 @@ impl ArenaShape {
             let gz = self.goal_z;
             let gd = self.gd;
             let gt = self.gt;
-            if az > gz - 4.0
-                && az < gz + gd + gt + 4.0
-                && ax < gw + gt + 4.0
-                && y < gh + gt + 4.0
+            let margin = d.max(0.0);
+            if az > gz - margin
+                && az < gz + gd + gt + margin
+                && ax < gw + gt + margin
+                && y < gh + gt + margin
             {
                 let d_side = sd_box(
                     ax - (gw + gt * 0.5),
@@ -1227,7 +1228,14 @@ impl ArenaShape {
                 return -1.0;
             }
         }
-        if t <= max_t { t } else { -1.0 }
+        if t <= max_t {
+            let s = self.dist(o.x + d.x * t, o.y + d.y * t, o.z + d.z * t);
+            if s < 0.01 {
+                let r = t + if s < 0.0 { s } else { 0.0 };
+                return if r > 0.0 { r } else { 0.0 };
+            }
+        }
+        -1.0
     }
 
     #[inline]

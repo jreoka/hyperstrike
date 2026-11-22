@@ -41,6 +41,8 @@ mod tests {
             self.broadcasts.lock().unwrap().push(msg);
         }
 
+        fn send_user(&self, _user_id: &str, _msg: Value) {}
+
         fn send_raw(&self, user_id: &str, payload: SnapshotPayload) {
             if let SnapshotPayload::Binary(b) = payload {
                 self.player_snaps
@@ -58,6 +60,7 @@ mod tests {
 
         fn on_goal(&self, _info: Value) {}
         fn on_end(&self, _score: [i32; 2], _stats: HashMap<String, MatchStatsEntry>) {}
+        fn on_afk_kick(&self, _user_id: &str) {}
         fn on_error(&self, _message: String) {}
     }
 
@@ -76,6 +79,9 @@ mod tests {
             .create_match(MatchCreateOptions {
                 settings,
                 teammate_diff: None,
+                afk_enabled: false,
+                afk_warn_s: None,
+                afk_kick_s: None,
                 players: vec![MatchPlayerSpec {
                     user_id: "u1".to_string(),
                     username: "Player1".to_string(),
