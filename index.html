@@ -90,7 +90,7 @@ button{font-family:inherit;color:inherit}
   position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;justify-content:space-between;
   padding:clamp(18px,3vh,34px) clamp(22px,4vw,56px) clamp(18px,3.2vh,34px);
   overflow:hidden;pointer-events:auto;background:#03050c;
-  opacity:1;transform:none;transition:opacity .48s cubic-bezier(.25,.9,.3,1),transform .52s cubic-bezier(.25,.9,.3,1);
+  opacity:1;transform:none;transition:opacity .22s cubic-bezier(.25,.9,.3,1),transform .24s cubic-bezier(.25,.9,.3,1);
 }
 #matchLoad.entering{opacity:0;transform:scale(1.015)}
 #matchLoad.fade{opacity:0;transform:scale(1.03);pointer-events:none}
@@ -3080,14 +3080,16 @@ class Renderer {
   }
   targetFps() { const t = +Settings.data.targetFps || 0, r = this.refreshHz * 0.97; return t > 0 ? Math.min(t, r) : r; }
   // Called once per frame BEFORE rendering so any resize/tier change never clears a finished frame.
-  // `safe` = outside live play, where heavy pipeline sync (MSAA/shadowMap size/light count/noise LOD) can run cleanly.
+  // Live adjustments (both in-match and on the menu exhibition background) always use the zero-freeze path;
+  // heavy pipeline sync (MSAA / shadowMap size / light shader count / noise LOD) only runs via syncPipelineIfDirty()
+  // while covered by a loading screen.
+  syncPipelineIfDirty() {
+    if (!this._dirtyPipeline) return;
+    this._dirtyPipeline = false;
+    this.applyQuality(this.dyn, false);
+  }
   perfTick(dt, safe, rendered = true, measure = true, canUpgrade = true) {
     const auto = this.isAuto();
-    if (this._dirtyPipeline && safe) {
-      this._dirtyPipeline = false;
-      this.applyQuality(this.dyn, false);
-      return;
-    }
     if (!auto && !Settings.data.dynRes) { if (this.dyn !== 1) { this.dyn = 1; this.updateRenderScale(); } return; }
     if (!measure || !(dt > 0) || dt >= 0.1 || document.hidden) return;
     if (this._pSkip > 0) { this._pSkip -= dt; return; }
@@ -3106,14 +3108,14 @@ class Renderer {
       } else if (auto && tier > 0) {
         // Falling back right after a tier upgrade: that tier is too heavy, be slower to retry it
         if (this._pT - this._tUpAt < 25) this._tHold = Math.min(this._tHold * 2, 240);
-        this.setTier(QUALITY_TIERS[tier - 1], 1, !safe);
+        this.setTier(QUALITY_TIERS[tier - 1], 1, true);
       }
     } else if (fps >= hi) {
       if (this.dyn < 1 - 1e-3) {
         if (++this._pGood >= this._pHold) { this.dyn = Math.min(1, this.dyn + 0.05); this._pGood = 0; this._pSince = 0; this.updateRenderScale(); }
       } else if (auto && canUpgrade && tier < QUALITY_TIERS.length - 1 && ++this._tGood >= this._tHold) {
         this._tGood = 0; this._tUpAt = this._pT;
-        this.setTier(QUALITY_TIERS[tier + 1], 0.8, !safe);
+        this.setTier(QUALITY_TIERS[tier + 1], 0.8, true);
       }
     } else { this._pGood = 0; this._tGood = 0; }
   }
@@ -10458,7 +10460,7 @@ class UIManager {
         el.classList.add('hidden');
         el.classList.remove('fade', 'entering');
       }
-    }, 520);
+    }, 250);
   }
   showArenaLoad(def, opts = {}) {
     const el = $('arenaLoad');
@@ -11813,13 +11815,17 @@ class GameEngine {
     await this._yieldFrame();
     if (seq !== this._matchLoadSeq) return;
 
+    this.renderer.syncPipelineIfDirty();
     this.newWorld(def, arenaOpts);
-    this.ui.setMatchLoadProgress(0.58, 'SPAWNING VEHICLES');
+    this.ui.setMatchLoadProgress(0.52, 'SPAWNING VEHICLES');
     await this._yieldFrame();
     if (seq !== this._matchLoadSeq) return;
 
-    // Cars are created in the server's order so indices match its snapshots
-    for (const info of msg.cars || []) {
+    // Cars are created in the server's order so indices match its snapshots; yield between cars so loading never freezes
+    const cars = msg.cars || [];
+    let lastCarYield = performance.now();
+    for (let ci = 0; ci < cars.length; ci++) {
+      const info = cars[ci];
       const isMe = !!info.userId && info.userId === meId;
       this.addCar(info.team, {
         player: isMe,
@@ -11829,6 +11835,12 @@ class GameEngine {
         netBotId: info.botId || null,
         name: info.name
       });
+      if (ci < cars.length - 1 && performance.now() - lastCarYield >= 20) {
+        this.ui.setMatchLoadProgress(0.52 + 0.16 * ((ci + 1) / cars.length), 'SPAWNING VEHICLES');
+        await this._yieldFrame();
+        if (seq !== this._matchLoadSeq) return;
+        lastCarYield = performance.now();
+      }
     }
     this.teamNames = teamNames;
     this.camera.ballCam = Settings.data.ballCamDefault;
@@ -11851,15 +11863,23 @@ class GameEngine {
       mode.serverKickoff(ek);
     }
     this.audio.setMusicMode('game');
-    this.ui.setMatchLoadProgress(0.78, 'WARMING SHADERS & LIGHTING');
+    this.ui.setMatchLoadProgress(0.7, 'WARMING SHADERS & LIGHTING');
     await this._yieldFrame();
+    if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+
+    // Compile any new arena/car/power shaders incrementally so the loading screen stays responsive
+    await this.renderer.compileShaders(p => {
+      if (seq === this._matchLoadSeq && this.mode === mode) {
+        this.ui.setMatchLoadProgress(0.7 + p * 0.16, 'WARMING SHADERS & LIGHTING');
+      }
+    });
     if (seq !== this._matchLoadSeq || this.mode !== mode) return;
 
     // Warm every mesh/FX/power PSO offscreen before telling the server we're ready for kickoff
     this.warmSceneDraw(false);
     this.renderFrame(0.016);
     this.ui.setMatchLoadProgress(0.9, 'FINALIZING MATCH');
-    const remain = Math.max(0, Math.min(950, 1050 - (performance.now() - startedAt)));
+    const remain = Math.max(0, Math.min(600, 700 - (performance.now() - startedAt)));
     if (remain > 0 && !mode.kickoffReceived) {
       await this._waitMs(remain);
       if (seq !== this._matchLoadSeq || this.mode !== mode) return;
@@ -11879,7 +11899,7 @@ class GameEngine {
         const timer = setTimeout(() => {
           if (this._kickoffWaiter && this._kickoffWaiter.mode === mode) this._kickoffWaiter = null;
           resolve();
-        }, 6200);
+        }, 16500);
         this._kickoffWaiter = { mode, resolve: () => { clearTimeout(timer); resolve(); } };
       });
       if (seq !== this._matchLoadSeq || this.mode !== mode) return;
@@ -11887,8 +11907,8 @@ class GameEngine {
 
     this.ui._mlWaiting = false;
     this.ui.setMatchLoadProgress(1, 'ENTERING ARENA', 'READY');
-    await this._yieldFrame();
-    if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+    // Render one fresh frame at kickoff positions before revealing the arena so "3" starts cleanly in view
+    this.renderFrame(0.016);
     this._matchLoading = false;
     this._loadingMid = null;
     this.ui.hideMatchLoad();
@@ -11920,6 +11940,7 @@ class GameEngine {
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     if (this.mode) { this.mode.end(); this.mode = null; }
+    this.renderer.syncPipelineIfDirty();
     this.newWorld(def, { layout: cfg.layout });
     this.ui.setMatchLoadProgress(0.58, 'SPAWNING VEHICLE');
     await this._yieldFrame();
@@ -11928,8 +11949,13 @@ class GameEngine {
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.setMode(new FreePlayMode(this, cfg)); this.audio.setMusicMode('game');
-    this.ui.setMatchLoadProgress(0.82, 'WARMING SHADERS & LIGHTING');
+    this.ui.setMatchLoadProgress(0.76, 'WARMING SHADERS & LIGHTING');
     await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
+    await this.renderer.compileShaders(p => {
+      if (seq === this._matchLoadSeq) this.ui.setMatchLoadProgress(0.76 + p * 0.16, 'WARMING SHADERS & LIGHTING');
+    });
     if (seq !== this._matchLoadSeq) return;
 
     this.warmSceneDraw(false);
@@ -11969,6 +11995,7 @@ class GameEngine {
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
     if (this.mode) { this.mode.end(); this.mode = null; }
+    this.renderer.syncPipelineIfDirty();
     this.newWorld(def, { layout: cfg.layout });
     this.ui.setMatchLoadProgress(0.58, `PREPARING ${drill.name}`);
     await this._yieldFrame();
@@ -11977,8 +12004,13 @@ class GameEngine {
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.audio.setMusicMode('game');
-    this.ui.setMatchLoadProgress(0.82, 'WARMING SHADERS & LIGHTING');
+    this.ui.setMatchLoadProgress(0.76, 'WARMING SHADERS & LIGHTING');
     await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
+    await this.renderer.compileShaders(p => {
+      if (seq === this._matchLoadSeq) this.ui.setMatchLoadProgress(0.76 + p * 0.16, 'WARMING SHADERS & LIGHTING');
+    });
     if (seq !== this._matchLoadSeq) return;
 
     this.warmSceneDraw(false);
@@ -12067,8 +12099,11 @@ class GameEngine {
     this.ui.showArenaLoad(def, { layout });
     await this._yieldFrame();
     if (seq !== this._arenaLoadSeq || this.inGame || this._matchLoading) return;
+    this.renderer.syncPipelineIfDirty();
     this.startExhibition();
     if (this.showroom) { this.exitShowroom(); this.enterShowroom(); }
+    await this.renderer.compileShaders();
+    if (seq !== this._arenaLoadSeq || this.inGame || this._matchLoading) return;
     this.renderFrame(0.016);
     await this._yieldFrame();
     if (seq !== this._arenaLoadSeq) return;
@@ -12382,11 +12417,10 @@ class GameEngine {
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000; this.last = now; if (!(dt > 0)) dt = 0.016; dt = Math.min(dt, 0.1);
     const st = this.mode && this.mode.state;
-    // Heavy pipeline sync (MSAA / shadow map size / light shader count / noise LOD) only runs outside live matches
-    const safe = !this.inGame || !this.mode || st === 'ended' || st === 'done';
-    const measure = !this.paused && !this.showroom;
-    const canUpgrade = this.inGame && !this.paused && !this.showroom && st === 'play';
-    this.renderer.perfTick(dt, safe, this._lastRendered !== false, measure, canUpgrade);
+    const loading = !!(this._matchLoading || (this.ui && this.ui.matchLoadOpen));
+    const measure = !this.paused && !this.showroom && !loading;
+    const canUpgrade = this.inGame && !this.paused && !this.showroom && !loading && st === 'play';
+    this.renderer.perfTick(dt, false, this._lastRendered !== false, measure, canUpgrade);
     try { this._lastRendered = this.update(dt); } catch (err) { console.error(err); this._lastRendered = true; }
     this.input.endFrame();
   }
@@ -12440,6 +12474,7 @@ class GameEngine {
     }
     this.updateBoostRumble();
     this._vdtAcc = (this._vdtAcc || 0) + (this.paused ? 0 : dt * ts);
+    if (this._matchLoading) return false;
     if (!this.paused && this._renderedOnce && this.renderer.gpuBusy()) return false;
     const vdt = this._vdtAcc; this._vdtAcc = 0;
     this.renderFrame(vdt);

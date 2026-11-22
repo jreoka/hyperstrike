@@ -168,9 +168,10 @@ impl MatchHandle for TokioMatchHandle {
             return;
         }
         let tx = self.tx.clone();
-        // Hold kickoff countdown at most 5s while clients finish building the arena.
+        // Hold kickoff countdown up to 15s while clients finish building the arena & compiling shaders
+        // (starts immediately as soon as every human sends match_loaded).
         self.sim_rt.spawn(async move {
-            tokio::time::sleep(Duration::from_millis(5000)).await;
+            tokio::time::sleep(Duration::from_millis(15000)).await;
             let _ = tx.send(MatchCmd::Start);
         });
     }
