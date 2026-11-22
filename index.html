@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#03050c">
+<meta name="application-name" content="HYPERSTRIKE">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HYPERSTRIKE">
 <title>HYPERSTRIKE — Rocket Car Soccer</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233ef2ff'/%3E%3Cstop offset='1' stop-color='%23ff3fd8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M32 3 57 17.5v29L32 61 7 46.5v-29z' fill='%23081024' stroke='url(%23g)' stroke-width='3' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='32' r='19' fill='none' stroke='url(%23g)' stroke-width='2' stroke-dasharray='18 7' opacity='.75'/%3E%3Cpath d='M35 13 20 35h11l-3 16 16-23H33z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:ital,wdth,wght@0,50..125,100..900;1,50..125,100..900&family=JetBrains+Mono:wght@500;700;800&display=swap">
@@ -288,6 +296,19 @@ body.pad-ui .prompts .gp{display:inline-flex}
 .sq-chip{display:flex;align-items:center;gap:8px;padding:0 14px;height:62px;font-size:10px;font-weight:800;letter-spacing:.2em;color:var(--gold);
   background:rgba(255,210,63,.08);border:1px solid rgba(255,210,63,.3);clip-path:polygon(10px 0,100% 0,100% 100%,0 100%,0 10px);white-space:nowrap}
 .sq-chip b{font-size:15px;font-style:italic;letter-spacing:.14em;color:#fff}
+.install-chip{display:inline-flex;align-items:center;gap:8px;padding:0 14px;height:40px;font-size:11px;font-weight:900;font-style:italic;letter-spacing:.16em;color:var(--accent);
+  background:linear-gradient(120deg,rgba(62,242,255,.16),rgba(12,19,40,.85));border:1px solid rgba(62,242,255,.45);cursor:pointer;white-space:nowrap;outline:none;transition:all .16s;
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+.install-chip svg{width:15px;height:15px;flex:none}
+.install-chip:hover,.install-chip:focus-visible,body.gp-nav .install-chip:focus{background:var(--accent);color:#03141c;box-shadow:0 0 22px rgba(62,242,255,.45)}
+.auth-install{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;padding:10px 14px;background:rgba(62,242,255,.08);border:1px solid rgba(62,242,255,.35);
+  color:var(--accent);font-size:11px;font-weight:800;font-style:italic;letter-spacing:.18em;cursor:pointer;transition:all .16s;outline:none}
+.auth-install svg{width:15px;height:15px;flex:none}
+.auth-install:hover,.auth-install:focus-visible{background:var(--accent);color:#03141c}
+.overlay.pwa-top{z-index:110}
+.pwa-steps{text-align:left;margin:16px 0 20px;display:flex;flex-direction:column;gap:10px}
+.pwa-step{display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid var(--line);font-size:13px;color:var(--ink)}
+.pwa-step b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;background:rgba(62,242,255,.16);border:1px solid var(--accent);color:var(--accent);font-family:var(--mono);font-size:12px}
 
 /* ============ HUD ============ */
 #hud{position:fixed;inset:0;pointer-events:none;z-index:10}
@@ -613,6 +634,8 @@ table.stats .mvp{color:#140818;background:var(--gold);font-size:9px;letter-spaci
   .pc-ava{width:34px;height:34px;font-size:16px}
   .pc-xptxt,.pc-acts .pc-btn{display:none}
   .sq-chip{height:44px}
+  .install-chip{height:34px;padding:0 10px;font-size:10px;gap:6px}
+  .install-chip span{display:none}
   .m-body{flex-direction:column}
   #menu .left{width:100%;padding:8px 14px 4px;overflow-x:auto;overflow-y:hidden;flex:none}
   #menu nav{flex-direction:row;gap:3px}
@@ -725,7 +748,7 @@ body.portrait-lock #rotateLock{display:flex}
 <div id="menu" class="hidden">
   <header class="topbar">
     <div class="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lgM2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ef2ff"/><stop offset="1" stop-color="#ff3fd8"/></linearGradient></defs><path d="M32 3 57 17.5v29L32 61 7 46.5v-29z" fill="#081024" stroke="url(#lgM2)" stroke-width="3" stroke-linejoin="round"/><g class="orbit"><circle cx="32" cy="32" r="19" fill="none" stroke="url(#lgM2)" stroke-width="2" stroke-dasharray="18 7" opacity=".75"/></g><path d="M35 13 20 35h11l-3 16 16-23H33z" fill="#fff"/></svg><div><div class="word">HYPER<b>STRIKE</b></div><div class="sub">ROCKET CAR SOCCER</div></div></div>
-    <div class="top-right"><div id="pingMenu" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
+    <div class="top-right"><button type="button" id="installAppBtn" class="install-chip hidden" title="Install Hyperstrike as an app"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>INSTALL APP</span></button><div id="pingMenu" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
   </header>
   <div class="m-body">
     <div class="left"><nav id="mainNav"></nav></div>
@@ -770,6 +793,7 @@ body.portrait-lock #rotateLock{display:flex}
       <button type="submit" class="cta auth-sub" id="authSubmit"><span id="authSubmitTxt">Sign In</span></button>
     </form>
     <div class="auth-foot">PROGRESS SAVES TO YOUR ACCOUNT</div>
+    <button type="button" id="authInstallBtn" class="auth-install hidden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>INSTALL HYPERSTRIKE APP</span></button>
   </div>
 </div>
 <div id="flash"></div>
@@ -786,6 +810,19 @@ body.portrait-lock #rotateLock{display:flex}
   <p>Rotate your device to landscape mode to play Hyperstrike.</p>
 </div>
 
+<script>
+window.__hsInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function (e) {
+  e.preventDefault();
+  window.__hsInstallPrompt = e;
+  window.dispatchEvent(new CustomEvent('hs-pwa-ready'));
+});
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  });
+}
+</script>
 <script type="module">
 // ===== 01_core.js =====
 let THREE;
@@ -9575,6 +9612,7 @@ class UIManager {
     const cd = $('countdown'); if (cd) cd.addEventListener('animationend', () => cd.classList.remove('anim'));
     const pop = $('popup'); if (pop) pop.addEventListener('animationend', () => pop.classList.remove('show'));
     this.initAuthGate();
+    this.initPWA();
     document.addEventListener('mouseover', e => { const b = e.target.closest('button,.card,.sw'); if (b && b !== this._hov) { this._hov = b; this.g.audio.ui('hover'); } });
     Events.on('pad', (on) => { if (on) this.toast('CONTROLLER CONNECTED'); });
     addEventListener('pointerdown', () => document.body.classList.remove('gp-nav'));
@@ -9629,6 +9667,81 @@ class UIManager {
     setTimeout(() => { const u = $('authUser'); if (u) u.focus(); }, 50);
   }
   hideAuthGate() { $('authGate').classList.add('hidden'); }
+  initPWA() {
+    this._pwaPrompt = window.__hsInstallPrompt || null;
+    const isStandalone = () =>
+      (window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches)) ||
+      window.navigator.standalone === true;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(navigator.userAgent);
+    const canShowIOSGuide = () => isIOS && isSafari && !isStandalone();
+
+    const updateInstallButtons = () => {
+      const show = !isStandalone() && (!!this._pwaPrompt || canShowIOSGuide());
+      const btn = $('installAppBtn');
+      const authBtn = $('authInstallBtn');
+      if (btn) btn.classList.toggle('hidden', !show);
+      if (authBtn) authBtn.classList.toggle('hidden', !show);
+    };
+
+    const triggerInstall = async () => {
+      if (this.g && this.g.audio) this.g.audio.ui('click');
+      if (this._pwaPrompt) {
+        const promptEvent = this._pwaPrompt;
+        this._pwaPrompt = null;
+        window.__hsInstallPrompt = null;
+        updateInstallButtons();
+        try {
+          await promptEvent.prompt();
+          const choice = await promptEvent.userChoice;
+          if (choice && choice.outcome !== 'accepted') {
+            this.toast('INSTALL DISMISSED');
+          }
+        } catch (_) {}
+        return;
+      }
+      if (canShowIOSGuide()) {
+        this.showOverlay(
+          `<h2>INSTALL HYPERSTRIKE</h2>
+           <p style="color:var(--ink2);font-size:13px;line-height:1.5;margin-top:8px">Install Hyperstrike to your Home Screen for full-screen play and instant launch:</p>
+           <div class="pwa-steps">
+             <div class="pwa-step"><b>1</b><span>Tap the <strong>Share</strong> button in Safari's toolbar.</span></div>
+             <div class="pwa-step"><b>2</b><span>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</span></div>
+           </div>
+           <div class="btnrow"><button type="button" class="cta" id="pwaGuideClose">GOT IT</button></div>`,
+          ''
+        );
+        $('overlay').classList.add('pwa-top');
+        const closeBtn = $('pwaGuideClose');
+        if (closeBtn) closeBtn.onclick = () => { if (this.g && this.g.audio) this.g.audio.ui('click'); this.hideOverlay(); };
+      }
+    };
+
+    const btn = $('installAppBtn');
+    const authBtn = $('authInstallBtn');
+    if (btn) btn.onclick = triggerInstall;
+    if (authBtn) authBtn.onclick = triggerInstall;
+
+    window.addEventListener('hs-pwa-ready', () => {
+      this._pwaPrompt = window.__hsInstallPrompt;
+      updateInstallButtons();
+    });
+    window.addEventListener('appinstalled', () => {
+      this._pwaPrompt = null;
+      window.__hsInstallPrompt = null;
+      updateInstallButtons();
+      this.toast('HYPERSTRIKE INSTALLED');
+    });
+    if (window.matchMedia) {
+      const dm = window.matchMedia('(display-mode: standalone)');
+      if (dm.addEventListener) dm.addEventListener('change', updateInstallButtons);
+    }
+    window.addEventListener('offline', () => this.toast('OFFLINE — RECONNECT FOR MULTIPLAYER', 3000));
+    window.addEventListener('online', () => this.toast('BACK ONLINE'));
+
+    updateInstallButtons();
+  }
   updateProfileCard() {
     const el = $('profileCard'), sqc = $('sqChip');
     if (!el) return;
@@ -10453,7 +10566,7 @@ class UIManager {
     $('overlay').classList.remove('hidden'); $('overlay').style.pointerEvents = ''; $('overlayBox').className = 'box ' + cls; $('overlayBox').innerHTML = html; this.bindOverlay();
     if (!this._sb) { const b = $('overlayBox').querySelector('button, input[type=range], input[type=text]'); b && this.focusEl(b, !!(this.g.input && this.g.input.usingPad)); }
   }
-  hideOverlay() { $('overlay').classList.add('hidden'); this._sb = false; this._inPauseSettings = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+  hideOverlay() { $('overlay').classList.add('hidden'); $('overlay').classList.remove('pwa-top'); this._sb = false; this._inPauseSettings = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
   get overlayOpen() { return !$('overlay').classList.contains('hidden'); }
   bindOverlay() { $('overlayBox').querySelectorAll('[data-act]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.uiAction(b.dataset.act); }); }
   showPause() {

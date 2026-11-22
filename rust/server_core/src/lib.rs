@@ -135,6 +135,13 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/index.html",
             get(http::index_html_get).options(http::options_handler),
         )
+        .route("/manifest.webmanifest", get(http::manifest_get))
+        .route("/sw.js", get(http::sw_get))
+        .route("/icon.svg", get(http::icon_svg_get))
+        .route("/icon-192.png", get(http::icon_192_get))
+        .route("/icon-512.png", get(http::icon_512_get))
+        .route("/icon-maskable-512.png", get(http::icon_maskable_512_get))
+        .route("/apple-touch-icon.png", get(http::apple_touch_icon_get))
         .route(
             "/api/register",
             post(http::register).options(http::options_handler),
@@ -460,6 +467,106 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         // Clean up temp dir
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
+    async fn pwa_assets_served_with_headers_and_etag() {
+        let state = test_state("pwa_assets");
+        let app = router(Arc::clone(&state));
+
+        // Manifest
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/manifest.webmanifest")
+                    .header("host", "localhost:8080")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/manifest+json; charset=utf-8"
+        );
+        let manifest_etag = resp
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let manifest = body_json(resp).await;
+        assert_eq!(manifest["short_name"], "HYPERSTRIKE");
+        assert_eq!(manifest["display"], "standalone");
+        assert!(manifest["icons"].as_array().unwrap().len() >= 3);
+
+        // Conditional GET on manifest -> 304
+        let resp304 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/manifest.webmanifest")
+                    .header("host", "localhost:8080")
+                    .header(header::IF_NONE_MATCH, &manifest_etag)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp304.status(), StatusCode::NOT_MODIFIED);
+
+        // Service Worker
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/sw.js")
+                    .header("host", "localhost:8080")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/javascript; charset=utf-8"
+        );
+        assert_eq!(resp.headers().get("service-worker-allowed").unwrap(), "/");
+
+        // Icons
+        for (uri, ct) in [
+            ("/icon.svg", "image/svg+xml"),
+            ("/icon-192.png", "image/png"),
+            ("/icon-512.png", "image/png"),
+            ("/icon-maskable-512.png", "image/png"),
+            ("/apple-touch-icon.png", "image/png"),
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header("host", "localhost:8080")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "failed for {uri}");
+            assert_eq!(
+                resp.headers().get(header::CONTENT_TYPE).unwrap(),
+                ct,
+                "wrong content-type for {uri}"
+            );
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert!(!bytes.is_empty(), "empty body for {uri}");
+        }
+
         let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 

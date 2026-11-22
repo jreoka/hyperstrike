@@ -166,6 +166,131 @@ pub async fn index_html_get(State(state): State<Arc<AppState>>, headers: HeaderM
 }
 
 const EMBEDDED_INDEX_HTML: &str = include_str!("../../../index.html");
+const EMBEDDED_MANIFEST: &[u8] = include_bytes!("../assets/manifest.webmanifest");
+const EMBEDDED_SW_JS: &[u8] = include_bytes!("../assets/sw.js");
+const EMBEDDED_ICON_SVG: &[u8] = include_bytes!("../assets/icon.svg");
+const EMBEDDED_ICON_192: &[u8] = include_bytes!("../assets/icon-192.png");
+const EMBEDDED_ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
+const EMBEDDED_ICON_MASKABLE_512: &[u8] = include_bytes!("../assets/icon-maskable-512.png");
+const EMBEDDED_APPLE_TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
+
+fn serve_static_asset(
+    state: &AppState,
+    headers: &HeaderMap,
+    bytes: &'static [u8],
+    content_type: &'static str,
+    cache_control: &'static str,
+    extra_header: Option<(header::HeaderName, &'static str)>,
+) -> Response {
+    if let Err(resp) = check_origin(state, headers) {
+        return *resp;
+    }
+    let digest = Sha256::digest(bytes);
+    let tag = format!("\"{}\"", hex::encode(&digest[..16]));
+    let etag = HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("\"0\""));
+
+    let mut resp = if etag_matches(headers, &etag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        let mut r = (StatusCode::OK, Bytes::from_static(bytes)).into_response();
+        r.headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        r
+    };
+    let h = resp.headers_mut();
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    h.insert(header::ETAG, etag);
+    if let Some((name, value)) = extra_header {
+        h.insert(name, HeaderValue::from_static(value));
+    }
+    resp
+}
+
+pub async fn manifest_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_MANIFEST,
+        "application/manifest+json; charset=utf-8",
+        "no-cache",
+        None,
+    )
+}
+
+pub async fn sw_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_SW_JS,
+        "application/javascript; charset=utf-8",
+        "no-cache",
+        Some((
+            header::HeaderName::from_static("service-worker-allowed"),
+            "/",
+        )),
+    )
+}
+
+pub async fn icon_svg_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_ICON_SVG,
+        "image/svg+xml",
+        "public, max-age=86400",
+        None,
+    )
+}
+
+pub async fn icon_192_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_ICON_192,
+        "image/png",
+        "public, max-age=86400",
+        None,
+    )
+}
+
+pub async fn icon_512_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_ICON_512,
+        "image/png",
+        "public, max-age=86400",
+        None,
+    )
+}
+
+pub async fn icon_maskable_512_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_ICON_MASKABLE_512,
+        "image/png",
+        "public, max-age=86400",
+        None,
+    )
+}
+
+pub async fn apple_touch_icon_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_APPLE_TOUCH_ICON,
+        "image/png",
+        "public, max-age=86400",
+        None,
+    )
+}
 
 fn etag_matches(headers: &HeaderMap, etag: &HeaderValue) -> bool {
     let Ok(expected) = etag.to_str() else {
