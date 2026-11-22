@@ -10618,7 +10618,7 @@ class UIManager {
   }
   multiplayerHtml() {
     const on = this.g.online, me = on.user, sq = on.squad, lb = on.lobby;
-    let h = `<div class="ph"><h2>Multiplayer</h2><span>${on.connected ? `${on.onlineCount || 1} online · anti-cheat active` : 'connecting...'}</span></div>`;
+    let h = `<div class="ph"><h2>Multiplayer</h2><span>${on.connected ? `${on.onlineCount || 1} online` : 'connecting...'}</span></div>`;
     // SQUAD BAR
     h += `<div class="mp-box"><div class="mp-head gold"><span>Squad Party</span><small>Squad members auto-join lobbies together</small></div>`;
     if (!sq) {
@@ -11375,13 +11375,15 @@ class UIManager {
     const nav = $('mainNav'), panel = $('menuPanel');
     const inNav = root === $('menu') && nav && nav.contains(cur);
     const inPanel = root === $('menu') && panel && panel.contains(cur);
-    const findBest = (pool) => {
+    const findBest = (pool, sameRow = false) => {
       const r0 = cur.getBoundingClientRect(); const cx = r0.left + r0.width / 2, cy = r0.top + r0.height / 2;
       let best = null, bs = 1e9;
       const inSetRow = !!cur.closest('.set');
       for (const e of pool) {
         if (e === cur) continue;
-        const r = e.getBoundingClientRect(); const dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
+        const r = e.getBoundingClientRect();
+        if (sameRow && (r.bottom <= r0.top + 2 || r.top >= r0.bottom - 2)) continue;
+        const dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
         const along = dir === 'up' ? -dy : dir === 'down' ? dy : dir === 'left' ? -dx : dx;
         const perp = dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy);
         if (along <= 4) continue;
@@ -11398,13 +11400,14 @@ class UIManager {
     const dockEls = dock ? panelEls.filter(e => dock.contains(e)) : [];
     const bodyEls = panelEls.filter(e => !dockEls.includes(e));
     const inDock = dockEls.includes(cur);
+    const horiz = dir === 'left' || dir === 'right';
     let best = null;
     if (inNav && (dir === 'up' || dir === 'down')) {
       best = findBest(els.filter(e => nav.contains(e)));
     } else if (inNav && dir === 'right') {
       const pr = panel.getBoundingClientRect(), limit = dock ? dock.getBoundingClientRect().top : pr.bottom;
       const visible = bodyEls.filter(e => { const r = e.getBoundingClientRect(); return r.top >= pr.top && r.bottom <= limit; });
-      best = findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || null;
+      best = findBest(visible, true) || findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || null;
     } else if (inDock) {
       if (dir === 'up') {
         // jump to the bottom-most row of content, picking the item horizontally closest to the button
@@ -11412,16 +11415,16 @@ class UIManager {
         let maxB = -1e9; for (const e of bodyEls) maxB = Math.max(maxB, e.getBoundingClientRect().bottom);
         let bd = 1e9;
         for (const e of bodyEls) { const r = e.getBoundingClientRect(); if (r.bottom < maxB - 12) continue; const d = Math.abs(r.left + r.width / 2 - cx); if (d < bd) { bd = d; best = e; } }
-      } else if (dir === 'left' || dir === 'right') {
-        best = findBest(dockEls);
+      } else if (horiz) {
+        best = findBest(dockEls, true);
         if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
       }
     } else if (inPanel) {
-      best = findBest(bodyEls);
+      best = findBest(bodyEls, horiz);
       if (!best && dir === 'down') best = dockEls[0] || null;
       if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
     } else {
-      best = findBest(els);
+      best = findBest(els, horiz);
     }
     if (best) { this.focusEl(best); this.g.audio.ui('hover'); }
   }
