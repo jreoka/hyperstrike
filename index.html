@@ -84,6 +84,177 @@ button{font-family:inherit;color:inherit}
 @keyframes startPulse{0%,100%{opacity:.75;filter:drop-shadow(0 0 0 transparent)}50%{opacity:1;filter:drop-shadow(0 0 18px rgba(62,242,255,.8))}}
 .ld-foot{position:absolute!important;bottom:22px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:.3em;color:var(--ink3);font-weight:700}
 
+/* ============ MATCH / ARENA LOADING SCREENS ============ */
+#matchLoad{
+  --ml-accent:#3ef2ff; --ml-line:#3ef2ff; --ml-wall:#2f8fff; --ml-fog:#060a18;
+  position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;justify-content:space-between;
+  padding:clamp(18px,3vh,34px) clamp(22px,4vw,56px) clamp(18px,3.2vh,34px);
+  overflow:hidden;pointer-events:auto;background:#03050c;
+  opacity:1;transform:none;transition:opacity .48s cubic-bezier(.25,.9,.3,1),transform .52s cubic-bezier(.25,.9,.3,1);
+}
+#matchLoad.entering{opacity:0;transform:scale(1.015)}
+#matchLoad.fade{opacity:0;transform:scale(1.03);pointer-events:none}
+#matchLoad .ml-bg{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+#matchLoad .ml-art{position:absolute;inset:-6%;background-size:cover;background-position:center;filter:saturate(1.18) contrast(1.08);
+  animation:mlArtDrift 14s ease-in-out infinite alternate;opacity:.72}
+@keyframes mlArtDrift{from{transform:scale(1.03) translate3d(-1.2%,0,0)}to{transform:scale(1.1) translate3d(1.2%,-1.2%,0)}}
+#matchLoad .ml-vignette{position:absolute;inset:0;
+  background:
+    radial-gradient(ellipse 75% 70% at 72% 45%,transparent 0%,rgba(3,5,12,.68) 62%,rgba(3,5,12,.96) 100%),
+    linear-gradient(90deg,rgba(3,5,12,.92) 0%,rgba(3,5,12,.72) 48%,rgba(3,5,12,.84) 100%),
+    linear-gradient(180deg,rgba(3,5,12,.84) 0%,rgba(3,5,12,.22) 26%,rgba(3,5,12,.28) 70%,rgba(3,5,12,.94) 100%)}
+#matchLoad .ml-grid{position:absolute;inset:0;opacity:.22;
+  background:
+    repeating-linear-gradient(0deg,rgba(255,255,255,.04) 0 1px,transparent 1px 4px),
+    repeating-linear-gradient(115deg,transparent 0 58px,color-mix(in srgb,var(--ml-line) 24%,transparent) 58px 59px)}
+#matchLoad .ml-glow{position:absolute;inset:0;
+  background:
+    radial-gradient(ellipse 52% 46% at 18% 72%,color-mix(in srgb,var(--ml-accent) 26%,transparent),transparent 70%),
+    radial-gradient(ellipse 46% 42% at 86% 24%,color-mix(in srgb,var(--ml-wall) 24%,transparent),transparent 70%)}
+#matchLoad::after{content:"";position:absolute;left:0;top:0;right:0;height:2px;z-index:2;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--ml-line) 28%,var(--ml-accent) 72%,transparent);box-shadow:0 0 18px var(--ml-line)}
+#matchLoad .ml-top,#matchLoad .ml-stage,#matchLoad .ml-foot{position:relative;z-index:2}
+.ml-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:1px solid rgba(140,185,255,.16)}
+.ml-brand{display:flex;align-items:center;gap:14px;min-width:0}
+.ml-brand .mark{width:34px;height:34px;flex:none;filter:drop-shadow(0 0 10px color-mix(in srgb,var(--ml-line) 60%,transparent))}
+.ml-brand .mark .orbit{transform-origin:32px 32px;animation:spin 7s linear infinite}
+.ml-mode-kicker{font-size:10px;font-weight:800;letter-spacing:.38em;color:var(--ink2);text-transform:uppercase}
+.ml-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.ml-pill{font-size:10px;font-weight:800;letter-spacing:.18em;padding:3px 9px;text-transform:uppercase;
+  background:rgba(255,255,255,.06);border:1px solid rgba(140,185,255,.26);color:#fff;
+  clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
+.ml-pill.accent{background:color-mix(in srgb,var(--ml-line) 20%,transparent);border-color:color-mix(in srgb,var(--ml-line) 65%,transparent);color:#fff}
+.ml-pill.ranked{background:rgba(255,210,63,.18);border-color:rgba(255,210,63,.55);color:var(--gold)}
+.ml-pill.mayhem{background:rgba(255,63,216,.2);border-color:rgba(255,63,216,.6);color:#ff9ceb}
+.ml-pill.labs{background:rgba(255,63,216,.18);border-color:rgba(255,63,216,.55);color:#ff9ceb}
+.ml-top-r{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.ml-sector{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.18em;color:var(--ink2);text-transform:uppercase}
+.ml-live{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.16em;
+  color:var(--ml-line);border:1px solid color-mix(in srgb,var(--ml-line) 42%,transparent);background:rgba(6,10,22,.72);text-transform:uppercase}
+.ml-live i{width:7px;height:7px;border-radius:50%;background:var(--ml-line);box-shadow:0 0 10px var(--ml-line);animation:mlPulse 1.3s ease-in-out infinite}
+@keyframes mlPulse{0%,100%{opacity:.45;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+
+.ml-stage{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.95fr);gap:clamp(18px,3.2vw,44px);align-items:center;padding:clamp(12px,2vh,24px) 0}
+.ml-hero{display:flex;flex-direction:column;gap:clamp(10px,1.5vh,18px);min-width:0;animation:mlSlideL .5s cubic-bezier(.2,.9,.2,1) both}
+@keyframes mlSlideL{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
+.ml-eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:11px;font-weight:800;letter-spacing:.36em;color:var(--ml-line);text-transform:uppercase}
+.ml-eyebrow::before{content:"";width:24px;height:2px;background:var(--ml-line);box-shadow:0 0 10px var(--ml-line)}
+.ml-title{font-size:clamp(38px,5.4vw,76px);line-height:.92;font-weight:900;font-style:italic;font-stretch:80%;letter-spacing:.01em;text-transform:uppercase;color:#fff;
+  text-shadow:0 0 36px color-mix(in srgb,var(--ml-line) 32%,transparent),0 6px 26px rgba(0,0,0,.65)}
+.ml-desc{max-width:560px;font-size:clamp(13px,1.15vw,16px);line-height:1.55;color:#cfdcf5;font-weight:500;text-shadow:0 1px 10px rgba(0,0,0,.55)}
+.ml-specs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-width:560px;margin-top:4px}
+.ml-spec{padding:10px 12px;background:rgba(7,11,24,.72);border:1px solid rgba(140,185,255,.18);border-top:2px solid color-mix(in srgb,var(--ml-line) 65%,transparent);
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);backdrop-filter:blur(10px)}
+.ml-spec span{display:block;font-size:9px;font-weight:800;letter-spacing:.26em;color:var(--ink3);text-transform:uppercase}
+.ml-spec b{display:block;margin-top:3px;font-family:var(--mono);font-size:clamp(11px,1vw,13.5px);font-weight:800;color:#fff;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.ml-side{display:flex;flex-direction:column;gap:14px;min-width:0;max-height:100%;animation:mlSlideR .55s cubic-bezier(.2,.9,.2,1) both}
+@keyframes mlSlideR{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+.ml-panel{position:relative;background:linear-gradient(155deg,rgba(16,24,52,.78),rgba(6,10,22,.9));border:1px solid rgba(140,185,255,.22);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:14px 18px;
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+.ml-panel::before{content:"";position:absolute;left:0;top:0;right:14px;height:2px;background:linear-gradient(90deg,var(--ml-line),transparent 75%);opacity:.85}
+.ml-panel-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:10px;font-weight:800;letter-spacing:.3em;color:var(--ink2);text-transform:uppercase}
+.ml-panel-h b{color:var(--ml-line);font-family:var(--mono);letter-spacing:.12em}
+
+.ml-bp-wrap{display:flex;align-items:center;gap:16px}
+.ml-bp-box{position:relative;width:clamp(116px,12vw,154px);height:clamp(116px,12vw,154px);flex:none;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--ml-line) 12%,rgba(4,8,20,.9)),rgba(3,6,16,.95));
+  border:1px solid color-mix(in srgb,var(--ml-line) 30%,transparent);overflow:hidden}
+.ml-bp-box::after{content:"";position:absolute;left:0;right:0;height:24%;top:-24%;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--ml-line) 24%,transparent),transparent);
+  animation:mlScan 3.2s linear infinite;pointer-events:none}
+@keyframes mlScan{to{top:100%}}
+.ml-bp-box svg{width:92%;height:92%;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--ml-line) 35%,transparent))}
+.ml-bp-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.ml-bp-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding-bottom:5px;border-bottom:1px solid rgba(140,185,255,.11);font-size:11px}
+.ml-bp-row:last-child{border-bottom:0;padding-bottom:0}
+.ml-bp-row span{color:var(--ink3);font-weight:700;letter-spacing:.18em;font-size:9.5px;text-transform:uppercase}
+.ml-bp-row strong{color:#fff;font-weight:800;letter-spacing:.08em;font-family:var(--mono);font-size:11.5px;text-align:right}
+.ml-bp-row strong.b{color:var(--blue)}
+.ml-bp-row strong.o{color:var(--orange)}
+
+.ml-roster{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch}
+.ml-team{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ml-team-h{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:900;font-style:italic;letter-spacing:.12em;padding-bottom:5px;text-transform:uppercase}
+.ml-team.blue .ml-team-h{color:var(--blue);border-bottom:2px solid rgba(47,143,255,.55)}
+.ml-team.orange .ml-team-h{color:var(--orange);border-bottom:2px solid rgba(255,138,31,.55);flex-direction:row-reverse}
+.ml-pl{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 8px;background:rgba(255,255,255,.04);border-left:2px solid rgba(255,255,255,.12);
+  font-size:11.5px;font-weight:700;letter-spacing:.05em;color:#dbe7ff;min-width:0}
+.ml-team.blue .ml-pl{border-left-color:rgba(47,143,255,.65)}
+.ml-team.orange .ml-pl{border-left:0;border-right:2px solid rgba(255,138,31,.65);flex-direction:row-reverse;text-align:right}
+.ml-pl.me{background:linear-gradient(90deg,rgba(62,242,255,.2),rgba(62,242,255,.06));color:#fff;box-shadow:inset 0 0 0 1px rgba(62,242,255,.35)}
+.ml-pl-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ml-pl-tags{display:inline-flex;align-items:center;gap:4px;flex-shrink:0}
+.ml-tag{font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.1em;padding:1px 5px;border-radius:2px;background:rgba(255,255,255,.08);color:var(--ink2)}
+.ml-tag.you{background:rgba(62,242,255,.22);color:var(--accent)}
+.ml-tag.rdy{background:rgba(77,255,136,.18);color:var(--good)}
+.ml-tag.wait{background:rgba(255,210,63,.16);color:var(--gold)}
+.ml-vs{display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;font-style:italic;color:var(--ink3);padding:0 2px}
+
+.ml-drill{display:flex;align-items:center;gap:14px}
+.ml-drill-ic{width:46px;height:46px;flex:none;display:flex;align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--ml-line) 16%,transparent);border:1px solid color-mix(in srgb,var(--ml-line) 48%,transparent);color:var(--ml-line)}
+.ml-drill-ic svg{width:26px;height:26px}
+.ml-drill-b{flex:1;min-width:0}
+.ml-drill-b h4{font-size:17px;font-weight:900;font-style:italic;letter-spacing:.08em;color:#fff;text-transform:uppercase}
+.ml-drill-b p{font-size:12px;line-height:1.45;color:var(--ink2);margin-top:3px}
+.ml-keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;font-size:11.5px;color:var(--ink2)}
+.ml-keys div{display:flex;align-items:center;gap:7px}
+.ml-keys kbd{font-family:var(--mono);font-size:10px;font-weight:800;padding:2px 6px;border:1px solid rgba(140,185,255,.32);background:rgba(255,255,255,.07);color:#fff;border-radius:3px}
+
+.ml-foot{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid rgba(140,185,255,.14)}
+.ml-tip{display:flex;align-items:baseline;gap:12px;font-size:12.5px;line-height:1.45;color:#c9d8f2}
+.ml-tip b{flex:none;font-size:10px;font-weight:800;letter-spacing:.26em;color:var(--gold);padding:2px 8px;background:rgba(255,210,63,.12);border:1px solid rgba(255,210,63,.32)}
+.ml-tip em{font-style:normal;color:#fff;font-weight:700}
+.ml-prog-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:11px;font-weight:800;letter-spacing:.26em;color:var(--ink2);text-transform:uppercase}
+.ml-prog-row b{font-family:var(--mono);color:var(--ml-line);font-size:13px;letter-spacing:.06em}
+.ml-bar{height:7px;background:rgba(255,255,255,.08);overflow:hidden;position:relative;clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%)}
+.ml-bar i{display:block;height:100%;width:0%;position:relative;
+  background:linear-gradient(90deg,var(--ml-wall),var(--ml-line) 65%,#fff);
+  box-shadow:0 0 18px var(--ml-line);transition:width .24s cubic-bezier(.25,.9,.3,1)}
+.ml-bar i::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(-60deg,transparent 0 8px,rgba(0,0,0,.22) 8px 12px);animation:barStripe .55s linear infinite}
+
+/* Lightweight menu arena preview transition (renders behind #menu, over canvas#gl) */
+#arenaLoad{
+  --al-line:#3ef2ff;
+  position:fixed;inset:0;z-index:16;pointer-events:none;display:flex;align-items:flex-end;justify-content:center;
+  padding:0 24px clamp(52px,8vh,84px);opacity:1;transition:opacity .32s ease;
+}
+#arenaLoad.fade{opacity:0}
+#arenaLoad .al-veil{position:absolute;inset:0;opacity:.78;filter:blur(2px) saturate(1.1);transition:opacity .32s ease}
+#arenaLoad .al-veil::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(4,7,18,.42),rgba(3,5,12,.88) 80%)}
+#arenaLoad .al-card{position:relative;z-index:1;display:flex;align-items:center;gap:14px;padding:12px 22px 14px 18px;min-width:260px;max-width:440px;
+  background:linear-gradient(155deg,rgba(12,18,40,.9),rgba(5,9,20,.94));border:1px solid color-mix(in srgb,var(--al-line) 42%,transparent);
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
+  box-shadow:0 10px 36px rgba(0,0,0,.55),0 0 24px color-mix(in srgb,var(--al-line) 18%,transparent)}
+#arenaLoad .al-spin{width:28px;height:28px;flex:none;color:var(--al-line);animation:spin 2.2s linear infinite}
+#arenaLoad .al-txt{flex:1;min-width:0}
+#arenaLoad .al-k{font-size:9px;font-weight:800;letter-spacing:.32em;color:var(--al-line);text-transform:uppercase}
+#arenaLoad .al-n{font-size:20px;line-height:1.05;font-weight:900;font-style:italic;font-stretch:82%;color:#fff;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#arenaLoad .al-s{font-size:10px;font-weight:700;letter-spacing:.2em;color:var(--ink2);margin-top:2px;text-transform:uppercase}
+#arenaLoad .al-bar{height:3px;margin-top:7px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
+#arenaLoad .al-bar i{position:absolute;inset:0;width:42%;background:linear-gradient(90deg,transparent,var(--al-line),#fff);animation:alSweep .85s ease-in-out infinite}
+@keyframes alSweep{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+
+@media (max-width:960px){
+  .ml-stage{grid-template-columns:1fr;gap:14px;align-content:center}
+  .ml-specs{max-width:none}
+  .ml-bp-box{width:96px;height:96px}
+}
+@media (max-height:560px){
+  #matchLoad{padding:12px 22px}
+  .ml-top{padding-bottom:8px}
+  .ml-stage{gap:16px;padding:8px 0}
+  .ml-title{font-size:clamp(28px,4.5vw,44px)}
+  .ml-desc{font-size:12px;line-height:1.35}
+  .ml-spec{padding:6px 9px}
+  .ml-panel{padding:10px 14px}
+  .ml-bp-box{width:88px;height:88px}
+  .ml-pl{padding:3px 7px;font-size:10.5px}
+  .ml-foot{padding-top:8px;gap:6px}
+}
+
 /* ============ MAIN MENU ============ */
 #menu{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;pointer-events:auto;
   background:
@@ -681,7 +852,7 @@ body.touch-on #camTag{left:168px;bottom:24px}
 @keyframes rotPhone{0%,20%{transform:rotate(0deg)}55%,80%{transform:rotate(-90deg)}100%{transform:rotate(0deg)}}
 @media (pointer:coarse) and (orientation:portrait){#rotateLock{display:flex}}
 body.portrait-lock #rotateLock{display:flex}
-@media (prefers-reduced-motion:reduce){.cta::after,.logo .word b,.logo .mark .orbit,#boostGauge::before,#goalBanner .strip::after,#loading .bar i::after{animation:none!important}}
+@media (prefers-reduced-motion:reduce){.cta::after,.logo .word b,.logo .mark .orbit,#boostGauge::before,#goalBanner .strip::after,#loading .bar i::after,#matchLoad .ml-art,#matchLoad .ml-bp-box::after,#matchLoad .ml-bar i::after,#matchLoad .ml-live i,#matchLoad .ml-brand .mark .orbit,#arenaLoad .al-spin,#arenaLoad .al-bar i{animation:none!important}}
 </style>
 </head>
 <body>
@@ -694,6 +865,67 @@ body.portrait-lock #rotateLock{display:flex}
   <div class="start hidden" id="startBtn">PRESS ANY KEY TO START</div>
   <div class="ld-tip" id="loadTip"></div>
   <div class="ld-foot">BOOST · FLIP · SCORE</div>
+</div>
+
+<div id="matchLoad" class="hidden" aria-live="polite">
+  <div class="ml-bg">
+    <div class="ml-art" id="mlArt"></div>
+    <div class="ml-vignette"></div>
+    <div class="ml-grid"></div>
+    <div class="ml-glow"></div>
+  </div>
+  <div class="ml-top">
+    <div class="ml-brand">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lgML" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ef2ff"/><stop offset="1" stop-color="#ff3fd8"/></linearGradient></defs><path d="M32 3 57 17.5v29L32 61 7 46.5v-29z" fill="#081024" stroke="url(#lgML)" stroke-width="3" stroke-linejoin="round"/><g class="orbit"><circle cx="32" cy="32" r="19" fill="none" stroke="url(#lgML)" stroke-width="2" stroke-dasharray="18 7" opacity=".75"/></g><path d="M35 13 20 35h11l-3 16 16-23H33z" fill="#fff"/></svg>
+      <div>
+        <div class="ml-mode-kicker" id="mlModeKicker">ENTERING ARENA</div>
+        <div class="ml-pills" id="mlPills"></div>
+      </div>
+    </div>
+    <div class="ml-top-r">
+      <div class="ml-sector" id="mlSector">ARENA 01 / 15</div>
+      <div class="ml-live"><i></i><span id="mlLiveBadge">LOADING</span></div>
+    </div>
+  </div>
+  <div class="ml-stage">
+    <div class="ml-hero">
+      <div class="ml-eyebrow" id="mlTag">NIGHT CITY</div>
+      <h1 class="ml-title" id="mlTitle">NEON NEXUS</h1>
+      <p class="ml-desc" id="mlDesc"></p>
+      <div class="ml-specs" id="mlSpecs"></div>
+    </div>
+    <div class="ml-side">
+      <div class="ml-panel">
+        <div class="ml-panel-h"><span>ARENA SCHEMATIC</span><b id="mlLayoutLbl">STANDARD</b></div>
+        <div class="ml-bp-wrap">
+          <div class="ml-bp-box" id="mlBlueprint"></div>
+          <div class="ml-bp-meta" id="mlBpMeta"></div>
+        </div>
+      </div>
+      <div class="ml-panel" id="mlContextCard">
+        <div class="ml-panel-h"><span id="mlCtxTitle">MATCHUP</span><b id="mlCtxMeta"></b></div>
+        <div id="mlCtxBody"></div>
+      </div>
+    </div>
+  </div>
+  <div class="ml-foot">
+    <div class="ml-tip" id="mlTip"></div>
+    <div class="ml-prog-row"><span id="mlStatus">INITIALIZING ARENA</span><b id="mlPct">0%</b></div>
+    <div class="ml-bar"><i id="mlBar"></i></div>
+  </div>
+</div>
+
+<div id="arenaLoad" class="hidden" aria-hidden="true">
+  <div class="al-veil" id="alVeil"></div>
+  <div class="al-card">
+    <svg class="al-spin" viewBox="0 0 40 40" fill="none"><polygon points="20,3 35,11.5 35,28.5 20,37 5,28.5 5,11.5" stroke="currentColor" stroke-width="2" opacity=".35"/><path d="M20 3L35 11.5V24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+    <div class="al-txt">
+      <div class="al-k">LOADING ARENA</div>
+      <div class="al-n" id="alName">NEON NEXUS</div>
+      <div class="al-s" id="alSub">NIGHT CITY</div>
+      <div class="al-bar"><i></i></div>
+    </div>
+  </div>
 </div>
 
 <div id="hud" class="hidden">
@@ -8542,7 +8774,7 @@ class OnlineMatchMode extends MatchMode {
     this.predFreezeSeq = 0; this.predFreezeAt = -1e9; this.prevItemBit = 0; this.liveSeq = 0; this.replaySeq = 0;
     this.pendingEvents = []; this.kickCars = null;
     this.mid = Number.isInteger(cfg.mid) ? cfg.mid : null; // server match id, tags our inputs
-    this.inputsClosed = false; this.pendingSnap = null;
+    this.inputsClosed = false; this.pendingSnap = null; this.kickoffReceived = false;
     this._tmpV = new V3(); this._tmpV2 = new V3(); this._tmpQ = new QT(); this._tmpQ2 = new QT(); this._tmpQ3 = new QT();
     this._ctlSave = makeControls(); this._liveCtl = makeControls();
     this._old = [];
@@ -8577,7 +8809,7 @@ class OnlineMatchMode extends MatchMode {
       // frames starting with an odd inTick the previous tick unpacked this.curInput into p.controls,
       // which would overwrite the player's new input and lock curInput forever on even-tick frames!
       const live = this._liveCtl;
-      if (this.state === 'ended' || this.state === 'replay' || (g.ui.overlayOpen && !g.ui._sb)) Object.assign(live, makeControls());
+      if (this.state === 'ended' || this.state === 'replay' || (g.ui.overlayOpen && !g.ui._sb) || g.ui.matchLoadOpen) Object.assign(live, makeControls());
       else g.input.controls(live);
       const packed = packControls(live);
       const seq = ++this.inSeq;
@@ -8688,15 +8920,19 @@ class OnlineMatchMode extends MatchMode {
     });
   }
   serverKickoff(msg) {
+    this.kickoffReceived = true;
     this.kickCars = Array.isArray(msg.cars) ? msg.cars : null;
     this.pendingSnap = null; // pre-kickoff state must not overwrite the kickoff placement
     this.beginKickoff();
+    if (this.game && this.game.onMatchKickoffReady) this.game.onMatchKickoffReady(this);
   }
   preUpdate(dt) {
     const g = this.game;
     this._frameDtAvg += (dt - this._frameDtAvg) * 0.08;
     ModeBase.prototype.preUpdate.call(this, dt);
     if (this.state === 'countdown') {
+      // Hold countdown visual/audio while the match loading screen is still covering the arena.
+      if (g.ui && g.ui.matchLoadOpen) return;
       // Count from the server's authoritative unfreeze tick once a snapshot gave it to us, so
       // the numbers line up with GO! under any lag; numbers only ever count down (no repeats).
       // Until then hold on "3": the server may still be waiting for other players to load, and
@@ -8839,6 +9075,10 @@ class OnlineMatchMode extends MatchMode {
     if (!w || this.endedByServer) return;
     const s = netDecodeSnapshot(buf);
     if (!s || s.nCars !== w.cars.length || s.tick < this.lastSnapTick) return;
+    if (!this.kickoffReceived) {
+      this.kickoffReceived = true;
+      if (g.onMatchKickoffReady) g.onMatchKickoffReady(this);
+    }
     this.lastSnapTick = s.tick;
     const now = performance.now(), me = g.player;
     if (me) {
@@ -9355,6 +9595,9 @@ class OnlineManager {
       this.connected = false;
       this.stopPing();
       this.g.ui.updateProfileCard();
+      if (this.g._awaitingSoloMatch || this.g._matchLoading) {
+        this.g.cancelMatchLoad();
+      }
       if (this.g.inGame && this.g.mode instanceof OnlineMatchMode && !this.g.mode.endedByServer) {
         this.g.ui.toast('CONNECTION LOST — RECONNECTING...');
       }
@@ -9395,12 +9638,14 @@ class OnlineManager {
         this.logout();
         break;
       case 'error':
+        if (g._awaitingSoloMatch) g.cancelMatchLoad();
         ui.toast(msg.text || 'SERVER ERROR');
         break;
       case 'toast':
         ui.toast(msg.text || '');
         break;
       case 'kicked':
+        g.cancelMatchLoad();
         ui.toast(msg.reason || 'DISCONNECTED');
         this.logout();
         break;
@@ -9427,6 +9672,7 @@ class OnlineManager {
       case 'lobby_left':
         this.lobby = null;
         this.chatLog = [];
+        g.cancelMatchLoad();
         if (g.inGame && g.mode instanceof OnlineMatchMode) g.exitToMenu();
         else if (!g.inGame && ui.menuScreen === 'multiplayer') { this.listLobbies(); ui.renderPanel(); }
         break;
@@ -9457,8 +9703,15 @@ class OnlineManager {
           if (msg.reward) ui.showXpReward(msg.reward);
         }
         break;
+      case 'match_load_status':
+        ui.updateMatchLoadStatus(msg);
+        break;
       case 'match_kickoff':
-        if (g.mode instanceof OnlineMatchMode) g.mode.serverKickoff(msg);
+        if (g._loadingMid !== null && (!(g.mode instanceof OnlineMatchMode) || g.mode.mid !== g._loadingMid)) {
+          g._earlyKickoff = msg;
+        } else if (g.mode instanceof OnlineMatchMode) {
+          g.mode.serverKickoff(msg);
+        }
         break;
       case 'match_overtime':
         if (g.mode instanceof OnlineMatchMode) { g.mode.overtime = true; g.mode.otTime = 0; ui.banner('OVERTIME', 'NEXT GOAL WINS', -1); g.audio.horn(0); }
@@ -9505,6 +9758,7 @@ class OnlineManager {
         ui.clearAfkWarn();
         this.lobby = null;
         this.chatLog = [];
+        g.cancelMatchLoad();
         if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
         if (g.inGame) g.exitToMenu();
         ui.toast(msg.reason || 'REMOVED FROM MATCH FOR INACTIVITY (AFK)', 4000);
@@ -9516,6 +9770,7 @@ class OnlineManager {
       case 'anticheat_kick':
         ui.clearAfkWarn();
         this.lobby = null;
+        g.cancelMatchLoad();
         if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
         if (g.inGame) g.exitToMenu();
         ui.toast(msg.reason || 'REMOVED BY ANTI-CHEAT', 4000);
@@ -9593,6 +9848,24 @@ const ARENA_ART = [
   'radial-gradient(circle at 25% 28%,rgba(88,230,255,.55),transparent 34%),radial-gradient(circle at 75% 72%,rgba(255,154,42,.55),transparent 34%),repeating-linear-gradient(45deg,transparent 0 10px,rgba(122,76,255,.22) 10px 11px),linear-gradient(160deg,#140932,#070314)'
 ];
 const RANDOM_ARENA_ART = 'radial-gradient(circle at 30% 30%,rgba(62,242,255,.45),transparent 40%),radial-gradient(circle at 75% 70%,rgba(255,63,216,.45),transparent 42%),repeating-linear-gradient(45deg,transparent 0 12px,rgba(255,255,255,.06) 12px 13px),linear-gradient(160deg,#141a34,#05060f)';
+const ARENA_TIPS = {
+  neon: 'Use the crisp curved corners of <em>Neon Nexus</em> to roll centering passes right across the goal mouth.',
+  stadium: '<em>Champions Field</em> has classic sightlines — read long aerial bounces off the open floodlit sky.',
+  foundry: '<em>Foundry 9</em> is narrow and long: fast bank shots off the side walls are lethal here.',
+  mesa: 'Wide sweeping corners in <em>Sunscorch Mesa</em> carry momentum — ride the curve for high-speed clears.',
+  orbit: '<em>Starlight Orbit</em> features an extra-high 24m ceiling and deep wall curves built for aerial plays.',
+  frost: 'Octagonal chamfered walls in <em>Frostbite Citadel</em> bounce sharply toward midfield — anticipate early.',
+  abyss: '<em>Abyssal Dome</em> curves smoothly all the way around; follow wall runs to keep possession.',
+  ruins: '<em>Verdant Ruins</em> funnels wide midfield drives into tight hexagonal goal ends — guard the pinch.',
+  rift: '<em>Cinder Rift</em> is a long capsule pitch; boost management matters on end-to-end counterattacks.',
+  sakura: 'Balanced curves in <em>Sakura Shrine</em> reward clean backboard reads and controlled wall clears.',
+  skyline: 'High 22m ceilings and crisp octagonal rebounds make <em>Skyline Citadel</em> ideal for aerial redirects.',
+  synthwave: 'Use the angled hexagonal walls of <em>Synthwave Horizon</em> to redirect shots past anchored keepers.',
+  figure8: 'In <em>Hyperloop 8</em>, control the tight midfield waist — whoever owns the choke point controls the match.',
+  standalone: 'In <em>Throwback Core</em>, you can drive completely behind either net to wrap passes out front.',
+  splitgoal: '<em>Twin Vortex</em> splits each end into two angled nets — bank off the central prow to fake defenders.'
+};
+const hexCss = n => '#' + ((n >>> 0) & 0xffffff).toString(16).padStart(6, '0');
 const resolveArena = a => {
   if (Number.isInteger(a) && ARENAS[a]) return a;
   const std = ARENAS.map((ar, i) => ar.weird ? -1 : i).filter(i => i >= 0);
@@ -9855,6 +10128,306 @@ class UIManager {
       goals = `<rect x="${(32 - gw).toFixed(1)}" y="${(32 - gz - gd).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#2f8fff"/><rect x="${(32 - gw).toFixed(1)}" y="${(32 + gz).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="#ff8a1f"/>`;
     }
     return `<svg class="shp" viewBox="0 0 64 64"><path d="${d}" fill="rgba(255,255,255,.12)" stroke="#fff" stroke-width="2"/>${goals}</svg>`;
+  }
+  blueprintSvg(def, opts = {}) {
+    const sh = new ArenaShape(def, opts);
+    const pts = sh.path(4, 0).pts;
+    const cx = 80, cy = 80;
+    const k = 62 / Math.max(sh.W, sh.L + sh.gd);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + (cx + p.x * k).toFixed(1) + ' ' + (cy + p.z * k).toFixed(1)).join(' ') + 'Z';
+    const hw = sh.halfWidthAt(0) * k;
+    const cr = 9.5 * k;
+    const lineCol = hexCss(def.c.line);
+    let goals = '';
+    if (sh.goalMode === 'standalone') {
+      const gw = sh.gw * k, gz = sh.goalZ * k, gd = sh.gd * k * 0.78;
+      goals = `<rect x="${(cx - gw).toFixed(1)}" y="${(cy - gz - gd).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="rgba(47,143,255,.65)" stroke="#6fb8ff" stroke-width="1.4"/>` +
+        `<rect x="${(cx - gw).toFixed(1)}" y="${(cy + gz).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="rgba(255,138,31,.65)" stroke="#ffb463" stroke-width="1.4"/>`;
+    } else if (sh.goalMode === 'split') {
+      const sg = sh.splitGoal, gw = sh.gw, gd = sh.gd * 0.72;
+      for (const sz of [-1, 1]) {
+        const fill = sz < 0 ? 'rgba(47,143,255,.68)' : 'rgba(255,138,31,.68)';
+        const stroke = sz < 0 ? '#6fb8ff' : '#ffb463';
+        for (const sx of [-1, 1]) {
+          const gx = sx * sg.gx, gz = sz * sg.gz, tx = sx * sg.gtx, tz = sz * sg.gtz, nx = sx * sg.gnx, nz = sz * sg.gnz;
+          const p0 = [cx + (gx - tx * gw) * k, cy + (gz - tz * gw) * k];
+          const p1 = [cx + (gx + tx * gw) * k, cy + (gz + tz * gw) * k];
+          const p2 = [cx + (gx + tx * gw + nx * gd) * k, cy + (gz + tz * gw + nz * gd) * k];
+          const p3 = [cx + (gx - tx * gw + nx * gd) * k, cy + (gz - tz * gw + nz * gd) * k];
+          goals += `<polygon points="${p0[0].toFixed(1)},${p0[1].toFixed(1)} ${p1[0].toFixed(1)},${p1[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)} ${p3[0].toFixed(1)},${p3[1].toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="1.2"/>`;
+        }
+      }
+    } else {
+      const gw = sh.gw * k, gz = sh.L * k, gd = sh.gd * k * 0.68;
+      goals = `<rect x="${(cx - gw).toFixed(1)}" y="${(cy - gz - gd).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="rgba(47,143,255,.65)" stroke="#6fb8ff" stroke-width="1.4"/>` +
+        `<rect x="${(cx - gw).toFixed(1)}" y="${(cy + gz).toFixed(1)}" width="${(gw * 2).toFixed(1)}" height="${gd.toFixed(1)}" fill="rgba(255,138,31,.65)" stroke="#ffb463" stroke-width="1.4"/>`;
+    }
+    const padSpots = [[-sh.W * 0.72, -sh.L * 0.72], [sh.W * 0.72, -sh.L * 0.72], [-sh.W * 0.72, sh.L * 0.72], [sh.W * 0.72, sh.L * 0.72], [-sh.halfWidthAt(0) * 0.84, 0], [sh.halfWidthAt(0) * 0.84, 0]];
+    const pads = padSpots.map(([px, pz]) => {
+      const v = new V3(px, 0, pz);
+      sh.pushInside(v, 3.8);
+      return `<circle cx="${(cx + v.x * k).toFixed(1)}" cy="${(cy + v.z * k).toFixed(1)}" r="2.2" fill="#ffd23f" opacity=".85"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 160 160" aria-hidden="true">
+      <g stroke="rgba(140,185,255,.12)" stroke-width="0.75">
+        <line x1="80" y1="6" x2="80" y2="154"/><line x1="6" y1="80" x2="154" y2="80"/>
+        <circle cx="80" cy="80" r="68" fill="none" stroke-dasharray="3 5"/>
+      </g>
+      <path d="${d}" fill="rgba(255,255,255,.07)" stroke="${lineCol}" stroke-width="2.2" stroke-linejoin="round"/>
+      <line x1="${(cx - hw).toFixed(1)}" y1="${cy}" x2="${(cx + hw).toFixed(1)}" y2="${cy}" stroke="${lineCol}" stroke-width="1" opacity=".45"/>
+      <circle cx="${cx}" cy="${cy}" r="${cr.toFixed(1)}" fill="none" stroke="${lineCol}" stroke-width="1.2" opacity=".6"/>
+      <circle cx="${cx}" cy="${cy}" r="2.4" fill="#fff"/>
+      ${pads}
+      ${goals}
+    </svg>`;
+  }
+  get matchLoadOpen() { return !!this._mlActive; }
+  showMatchLoad(opts = {}) {
+    const el = $('matchLoad');
+    if (!el) return;
+    clearTimeout(this._mlHideT);
+    clearInterval(this._mlTipT);
+    const wasOpen = this._mlActive && !el.classList.contains('hidden');
+    this._mlActive = true;
+    this._mlOpts = Object.assign({}, opts);
+    this._mlWaiting = false;
+    const idx = Number.isInteger(opts.arenaIdx) && ARENAS[opts.arenaIdx] ? opts.arenaIdx : 0;
+    const def = ARENAS[idx];
+    const layoutId = opts.layout || 'default';
+    const scale = opts.scale || 1;
+    const sh = new ArenaShape(def, { layout: layoutId, scale });
+
+    el.style.setProperty('--ml-accent', hexCss(def.c.accent));
+    el.style.setProperty('--ml-line', hexCss(def.c.line));
+    el.style.setProperty('--ml-wall', hexCss(def.c.wallTint));
+    el.style.setProperty('--ml-fog', hexCss(def.c.fog));
+    $('mlArt').style.background = ARENA_ART[idx] || RANDOM_ARENA_ART;
+    $('mlSector').textContent = `ARENA ${String(idx + 1).padStart(2, '0')} / ${ARENAS.length}`;
+    $('mlLiveBadge').textContent = opts.liveBadge || (opts.kind === 'match' ? 'DEPLOYING' : 'LOADING');
+    $('mlTag').textContent = def.tag;
+    $('mlTitle').textContent = def.name;
+    $('mlDesc').textContent = def.desc;
+
+    const kind = opts.kind || 'match';
+    const kicker = kind === 'training' ? 'TRAINING DRILL'
+      : kind === 'freeplay' ? 'FREE PLAY · PRACTICE'
+      : opts.tournamentRound ? `TOURNAMENT · ${opts.tournamentRound}`
+      : opts.onlineLobby ? (opts.ranked ? 'RANKED MULTIPLAYER' : 'ONLINE MULTIPLAYER')
+      : 'EXHIBITION MATCH';
+    $('mlModeKicker').textContent = kicker;
+
+    const pills = [];
+    if (kind === 'match') {
+      if (opts.teamSize) pills.push([`${opts.teamSize}V${opts.teamSize}`, 'accent']);
+      if (opts.mode === 'mayhem') pills.push(['MAYHEM · POWER-UPS', 'mayhem']);
+      else pills.push(['STANDARD', '']);
+      if (opts.ranked) pills.push(['RANKED', 'ranked']);
+      if (opts.boostMode === 'unlimited') pills.push(['UNLIMITED BOOST', 'accent']);
+      else if (opts.boostMode === 'recharge') pills.push(['RECHARGE BOOST', 'accent']);
+      if (opts.mutator === 'lowgrav') pills.push(['LOW GRAVITY', 'mayhem']);
+      else if (opts.mutator === 'fastball') pills.push(['FAST BALL', 'mayhem']);
+    } else if (kind === 'freeplay') {
+      pills.push(['OPEN ARENA', 'accent']);
+      pills.push([opts.unlimitedBoost ? 'UNLIMITED BOOST' : 'STANDARD BOOST', '']);
+    } else if (kind === 'training' && opts.drill) {
+      pills.push([opts.drill.name, 'accent']);
+      pills.push([`${opts.drill.rounds} ROUNDS`, '']);
+    }
+    if (def.weird) pills.push(['LABS', 'labs']);
+    $('mlPills').innerHTML = pills.map(([t, c]) => `<span class="ml-pill ${c}">${this.esc(t)}</span>`).join('');
+
+    const layObj = LAYOUTS.find(l => l.id === layoutId);
+    const shapeLabel = layoutId !== 'default' && layObj ? layObj.name
+      : sh.type === 'figure8' ? 'FIGURE-8'
+      : sh.type === 'standalone' ? 'FORWARD GOAL'
+      : sh.type === 'splitgoal' ? 'DUAL GOALS'
+      : sh.type === 'rect' ? (sh.Rc >= 18 ? 'CAPSULE' : 'STANDARD')
+      : sh.type.toUpperCase();
+    $('mlLayoutLbl').textContent = shapeLabel + (scale > 1.01 ? ' · EXT' : '');
+
+    const spec4 = kind === 'match'
+      ? (opts.duration === 0 ? ['CLOCK', 'UNLIMITED'] : ['CLOCK', `${Math.round((opts.duration || 300) / 60)}:00`])
+      : kind === 'training' && opts.drill
+        ? ['BEST SCORE', String(Settings.data.best[opts.drill.id] || 0)]
+        : ['BOOST', opts.unlimitedBoost ? 'UNLIMITED' : 'STANDARD'];
+    $('mlSpecs').innerHTML = [
+      ['LAYOUT', shapeLabel],
+      ['PITCH', `${Math.round(sh.W * 2)} × ${Math.round(sh.L * 2)}M`],
+      ['CEILING', `${Math.round(sh.H)}M`],
+      spec4
+    ].map(([k, v]) => `<div class="ml-spec"><span>${this.esc(k)}</span><b>${this.esc(v)}</b></div>`).join('');
+
+    $('mlBlueprint').innerHTML = this.blueprintSvg(def, { layout: layoutId, scale });
+    const goalType = sh.goalMode === 'standalone' ? 'ARMORED FORWARD' : sh.goalMode === 'split' ? 'SPLIT DUAL NETS' : 'STANDARD RECESSED';
+    $('mlBpMeta').innerHTML = `
+      <div class="ml-bp-row"><span>GOALS</span><strong>${goalType}</strong></div>
+      <div class="ml-bp-row"><span>CORNER CURVE</span><strong>${sh.Rc.toFixed(1)}M</strong></div>
+      <div class="ml-bp-row"><span>PITCH SCALE</span><strong>${Math.round(scale * 100)}%</strong></div>
+      <div class="ml-bp-row"><span>ENDS</span><strong class="b">BLUE</strong> / <strong class="o">ORANGE</strong></div>`;
+
+    this.renderMatchLoadContext(opts);
+
+    const tipPool = [];
+    if (ARENA_TIPS[def.id]) tipPool.push(['ARENA INTEL', ARENA_TIPS[def.id]]);
+    if (opts.mode === 'mayhem') tipPool.push(['MAYHEM TIP', 'Every few seconds each car receives a power-up — press <em>R</em> (or <em>L3 / D-Pad ↑</em>) to deploy it.']);
+    if (kind === 'training' && opts.drill) tipPool.push(['DRILL TIP', opts.drill.desc + ' Press <em>R</em> anytime to retry the current round.']);
+    if (kind === 'freeplay') tipPool.push(['PRACTICE TIP', 'Press <em>L</em> to launch the ball skyward for aerial drills, or <em>R</em> to reset it to midfield.']);
+    tipPool.push(
+      ['PRO TIP', 'Jump, then jump again with a direction to <em>dodge</em> — it is the fastest way to gain speed.'],
+      ['PRO TIP', 'Hit an opponent at supersonic speed to <em>demolish</em> them and clear the lane.'],
+      ['PRO TIP', 'Toggle <em>Ball Cam</em> with <em>C</em> (or <em>Y</em> on controller) to track high aerial bounces.'],
+      ['PRO TIP', 'Drive smoothly into any curved wall while holding throttle to climb and make wall clears.']
+    );
+    let tipIdx = 0;
+    const showTip = () => {
+      const t = tipPool[tipIdx % tipPool.length];
+      tipIdx++;
+      $('mlTip').innerHTML = `<b>${t[0]}</b><span>${t[1]}</span>`;
+    };
+    showTip();
+    this._mlTipT = setInterval(showTip, 4500);
+
+    if (opts.progress !== undefined || opts.status) {
+      this.setMatchLoadProgress(opts.progress !== undefined ? opts.progress : 0.08, opts.status || 'INITIALIZING ARENA');
+    }
+
+    el.classList.remove('fade');
+    if (!wasOpen) {
+      el.classList.add('entering');
+      el.classList.remove('hidden');
+      requestAnimationFrame(() => el.classList.remove('entering'));
+    } else {
+      el.classList.remove('hidden', 'entering');
+    }
+  }
+  renderMatchLoadContext(opts) {
+    const kind = opts.kind || 'match';
+    const titleEl = $('mlCtxTitle'), metaEl = $('mlCtxMeta'), bodyEl = $('mlCtxBody');
+    if (kind === 'training' && opts.drill) {
+      const d = opts.drill;
+      titleEl.textContent = 'DRILL BRIEFING';
+      metaEl.textContent = `${d.rounds} ROUNDS`;
+      bodyEl.innerHTML = `<div class="ml-drill"><div class="ml-drill-ic">${ico(d.icon, '')}</div><div class="ml-drill-b"><h4>${this.esc(d.name)}</h4><p>${this.esc(d.desc)}</p></div></div>`;
+      return;
+    }
+    if (kind === 'freeplay') {
+      titleEl.textContent = 'PRACTICE CONTROLS';
+      metaEl.textContent = opts.unlimitedBoost ? '∞ BOOST' : 'NORMAL BOOST';
+      bodyEl.innerHTML = `<div class="ml-keys">
+        <div><kbd>R</kbd><span>Reset ball</span></div>
+        <div><kbd>T</kbd><span>Reset car</span></div>
+        <div><kbd>L</kbd><span>Launch ball</span></div>
+        <div><kbd>B</kbd><span>Toggle boost</span></div>
+        <div><kbd>C</kbd><span>Ball cam</span></div>
+        <div><kbd>F</kbd><span>Rear view</span></div>
+      </div>`;
+      return;
+    }
+    const tn = Array.isArray(opts.teamNames) && opts.teamNames.length === 2 ? opts.teamNames : ['BLUE', 'ORANGE'];
+    const cars = Array.isArray(opts.cars) ? opts.cars : null;
+    const meId = this.g.online && this.g.online.user ? this.g.online.user.id : null;
+    const readySet = new Set(this._mlReadyIds && this._mlReadyMid === opts.mid ? this._mlReadyIds : []);
+    const isMp = !!opts.onlineLobby;
+    titleEl.textContent = isMp ? 'MATCH ROSTER' : 'TEAM MATCHUP';
+    const diffName = Number.isInteger(opts.difficulty) && DIFFICULTY[opts.difficulty] ? DIFFICULTY[opts.difficulty].name : '';
+    metaEl.textContent = isMp ? `${opts.teamSize || 2}V${opts.teamSize || 2} ONLINE` : (diffName ? `${opts.teamSize || 2}V${opts.teamSize || 2} · ${diffName}` : `${opts.teamSize || 2}V${opts.teamSize || 2}`);
+    if (!cars || !cars.length) {
+      bodyEl.innerHTML = `<div class="ml-roster">
+        <div class="ml-team blue"><div class="ml-team-h"><span>${this.esc(tn[0])}</span></div><div class="ml-pl"><span class="ml-pl-n">Allocating squad...</span></div></div>
+        <div class="ml-vs">VS</div>
+        <div class="ml-team orange"><div class="ml-team-h"><span>${this.esc(tn[1])}</span></div><div class="ml-pl"><span class="ml-pl-n">Allocating squad...</span></div></div>
+      </div>`;
+      return;
+    }
+    const row = c => {
+      const isMe = !!c.userId && c.userId === meId;
+      const isBot = !c.userId;
+      let tags = '';
+      if (isMe) tags += '<span class="ml-tag you">YOU</span>';
+      if (isBot) tags += '<span class="ml-tag">BOT</span>';
+      else if (isMp) {
+        const rdy = readySet.has(c.userId);
+        tags += `<span class="ml-tag ${rdy ? 'rdy' : 'wait'}" data-ml-uid="${this.esc(c.userId)}">${rdy ? 'READY' : 'LOAD'}</span>`;
+      }
+      return `<div class="ml-pl ${isMe ? 'me' : ''}"><span class="ml-pl-n">${this.esc(c.name || 'DRIVER')}</span><span class="ml-pl-tags">${tags}</span></div>`;
+    };
+    const blue = cars.filter(c => c.team === 0);
+    const orange = cars.filter(c => c.team === 1);
+    bodyEl.innerHTML = `<div class="ml-roster">
+      <div class="ml-team blue"><div class="ml-team-h"><span>${this.esc(tn[0])}</span><small>${blue.length}</small></div>${blue.map(row).join('') || '<div class="ml-pl"><span class="ml-pl-n">—</span></div>'}</div>
+      <div class="ml-vs">VS</div>
+      <div class="ml-team orange"><div class="ml-team-h"><span>${this.esc(tn[1])}</span><small>${orange.length}</small></div>${orange.map(row).join('') || '<div class="ml-pl"><span class="ml-pl-n">—</span></div>'}</div>
+    </div>`;
+  }
+  setMatchLoadProgress(p, status, liveBadge) {
+    const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+    const bar = $('mlBar'), pctEl = $('mlPct'), stEl = $('mlStatus'), lb = $('mlLiveBadge');
+    if (bar) bar.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (status && stEl) stEl.textContent = status;
+    if (liveBadge && lb) lb.textContent = liveBadge;
+  }
+  updateMatchLoadStatus(msg) {
+    if (!msg || !Number.isInteger(msg.m)) return;
+    this._mlReadyMid = msg.m;
+    this._mlReadyIds = Array.isArray(msg.readyIds) ? msg.readyIds : [];
+    this._mlReadyCount = Number(msg.loaded) || 0;
+    this._mlReadyTotal = Number(msg.total) || 0;
+    if (!this._mlActive || !this._mlOpts || this._mlOpts.mid !== msg.m) return;
+    const set = new Set(this._mlReadyIds);
+    document.querySelectorAll('#matchLoad [data-ml-uid]').forEach(el => {
+      const rdy = set.has(el.dataset.mlUid);
+      el.classList.toggle('rdy', rdy);
+      el.classList.toggle('wait', !rdy);
+      el.textContent = rdy ? 'READY' : 'LOAD';
+    });
+    if (this._mlWaiting && this._mlReadyTotal > 1) {
+      const frac = 0.9 + 0.09 * Math.min(1, this._mlReadyCount / this._mlReadyTotal);
+      this.setMatchLoadProgress(frac, `WAITING FOR PLAYERS · ${this._mlReadyCount}/${this._mlReadyTotal} READY`, 'SYNCING');
+    }
+  }
+  hideMatchLoad(immediate = false) {
+    const el = $('matchLoad');
+    clearInterval(this._mlTipT);
+    clearTimeout(this._mlHideT);
+    this._mlActive = false;
+    this._mlWaiting = false;
+    if (!el) return;
+    if (immediate) {
+      el.classList.add('hidden');
+      el.classList.remove('fade', 'entering');
+      return;
+    }
+    if (el.classList.contains('hidden')) return;
+    el.classList.add('fade');
+    this._mlHideT = setTimeout(() => {
+      if (!this._mlActive) {
+        el.classList.add('hidden');
+        el.classList.remove('fade', 'entering');
+      }
+    }, 520);
+  }
+  showArenaLoad(def, opts = {}) {
+    const el = $('arenaLoad');
+    if (!el || !def) return;
+    clearTimeout(this._alHideT);
+    const idx = Math.max(0, ARENAS.indexOf(def));
+    const layId = opts.layout || 'default';
+    const lay = layId !== 'default' ? LAYOUTS.find(l => l.id === layId) : null;
+    el.style.setProperty('--al-line', hexCss(def.c.line));
+    $('alVeil').style.background = ARENA_ART[idx] || RANDOM_ARENA_ART;
+    $('alName').textContent = def.name;
+    $('alSub').textContent = lay ? `${def.tag} · ${lay.name} LAYOUT` : def.tag;
+    el.classList.remove('hidden', 'fade');
+  }
+  hideArenaLoad(immediate = false) {
+    const el = $('arenaLoad');
+    if (!el) return;
+    clearTimeout(this._alHideT);
+    if (immediate) { el.classList.add('hidden'); el.classList.remove('fade'); return; }
+    if (el.classList.contains('hidden')) return;
+    el.classList.add('fade');
+    this._alHideT = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('fade'); }, 340);
   }
   arenaCards(key = 'arena') {
     const std = ARENAS.map((a, i) => [a, i]).filter(([a]) => !a.weird);
@@ -10870,6 +11443,34 @@ class GameEngine {
     this.time = 0; this.inGame = false; this.paused = false; this.mode = null; this.world = null; this.player = null;
     this.carVisuals = []; this.acc = 0; this.mouseSwivel = { x: 0, y: 0 }; this.lastCfg = null; this.showroom = null; this.nextId = 1;
     this.carPosV = new V3(); this.ballPosV = new V3(); this.ballQuatV = new QT(); this.showroomDrag = 0;
+    this._matchLoadSeq = 0; this._arenaLoadSeq = 0; this._loadingMid = null; this._earlyKickoff = null;
+    this._awaitingSoloMatch = false; this._matchLoading = false; this._kickoffWaiter = null;
+  }
+  _yieldFrame() {
+    return new Promise(r => {
+      let done = false;
+      const fin = () => { if (!done) { done = true; r(); } };
+      requestAnimationFrame(fin);
+      setTimeout(fin, 45);
+    });
+  }
+  _waitMs(ms) { return ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve(); }
+  cancelMatchLoad() {
+    this._matchLoadSeq++;
+    this._awaitingSoloMatch = false;
+    this._matchLoading = false;
+    this._loadingMid = null;
+    this._earlyKickoff = null;
+    clearTimeout(this._soloStartTimer);
+    if (this._kickoffWaiter) { const fn = this._kickoffWaiter.resolve; this._kickoffWaiter = null; fn(); }
+    if (this.ui) this.ui.hideMatchLoad(true);
+  }
+  onMatchKickoffReady(mode) {
+    if (this._kickoffWaiter && this._kickoffWaiter.mode === mode) {
+      const fn = this._kickoffWaiter.resolve;
+      this._kickoffWaiter = null;
+      fn();
+    }
   }
   async init() {
     const tick = () => new Promise(r => setTimeout(r, 16));
@@ -10905,7 +11506,7 @@ class GameEngine {
     this.renderFrame(0.016);
     this.ui.progress(1, 'Ready'); await tick();
     canvas.addEventListener('click', () => {
-      if (this.inGame && !this.paused && !document.pointerLockElement && canvas.requestPointerLock) {
+      if (this.inGame && !this.paused && !(this.ui && this.ui.matchLoadOpen) && !document.pointerLockElement && canvas.requestPointerLock) {
         try { Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch (e) { }
       }
     });
@@ -11070,18 +11671,90 @@ class GameEngine {
     // Restart / rematch: the old match keeps rendering until the new one arrives, but must
     // stop sending inputs (they belong to the old server match)
     if (this.mode instanceof OnlineMatchMode) this.mode.inputsClosed = true;
+    this.ui.hideOverlay();
+    this._awaitingSoloMatch = true;
+    this._matchLoading = true;
+    this._matchLoadStartedAt = performance.now();
+    this.ui.showMatchLoad({
+      arenaIdx: Number.isInteger(cfg.arena) ? cfg.arena : 0,
+      layout: cfg.layout || 'default',
+      scale: cfg.teamSize >= 4 ? 1.12 : 1,
+      kind: 'match',
+      mode: cfg.mode || 'standard',
+      teamSize: cfg.teamSize || 2,
+      duration: cfg.duration !== undefined ? cfg.duration : 300,
+      difficulty: cfg.difficulty,
+      teamNames: cfg.teamNames,
+      tournamentRound: cfg.tournament && this.tournament ? this.tournament.roundNames[this.tournament.round] : null,
+      status: 'CONNECTING TO MATCH SERVER',
+      progress: 0.12,
+      liveBadge: 'CONNECTING'
+    });
+    clearTimeout(this._soloStartTimer);
+    this._soloStartTimer = setTimeout(() => {
+      if (this._awaitingSoloMatch) {
+        this.cancelMatchLoad();
+        this.ui.toast('SERVER DID NOT RESPOND — TRY AGAIN');
+      }
+    }, 10000);
     this.online.startSoloServerMatch(cfg);
   }
-  startOnlineMatch(msg) {
+  async startOnlineMatch(msg) {
+    const seq = ++this._matchLoadSeq;
+    clearTimeout(this._soloStartTimer);
+    if (this._kickoffWaiter) { const fn = this._kickoffWaiter.resolve; this._kickoffWaiter = null; fn(); }
     const s = msg.settings;
     const isSolo = !!msg.solo;
     const meId = this.online && this.online.user ? this.online.user.id : null;
     if (!isSolo) { this.lastCfg = null; this.tournament = null; }
+    const startedAt = this.ui.matchLoadOpen && this._matchLoadStartedAt ? this._matchLoadStartedAt : performance.now();
+    this._awaitingSoloMatch = false;
+    this._matchLoading = true;
+    this._loadingMid = Number.isInteger(msg.mid) ? msg.mid : null;
+    this._earlyKickoff = null;
+    const arenaIdx = Number.isInteger(s.arena) && ARENAS[s.arena] ? s.arena : 0;
+    const def = ARENAS[arenaIdx];
+    const arenaOpts = { layout: s.layout || 'default', scale: s.teamSize >= 4 ? 1.12 : 1 };
+    const teamNames = Array.isArray(msg.teamNames) && msg.teamNames.length === 2 ? msg.teamNames : ['BLUE', 'ORANGE'];
+    this.ui.hideArenaLoad(true);
+    this.ui.showMatchLoad({
+      arenaIdx,
+      layout: arenaOpts.layout,
+      scale: arenaOpts.scale,
+      kind: 'match',
+      onlineLobby: !isSolo,
+      ranked: !!s.ranked,
+      mode: s.mode || 'standard',
+      teamSize: s.teamSize || 2,
+      duration: s.duration !== undefined ? s.duration : 300,
+      difficulty: s.botDiff,
+      boostMode: s.boostMode || 'normal',
+      mutator: s.mutator || 'normal',
+      teamNames,
+      cars: msg.cars || [],
+      tournamentRound: msg.tournament && this.tournament ? this.tournament.roundNames[this.tournament.round] : null,
+      mid: msg.mid,
+      status: `PREPARING ${def.name}`,
+      progress: 0.22,
+      liveBadge: 'LOADING'
+    });
+    this.audio.stopEngines();
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     this.inGame = true; this.paused = false;
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
-    const def = ARENAS[s.arena] || ARENAS[0];
-    this.newWorld(def, { layout: s.layout || 'default', scale: s.teamSize >= 4 ? 1.12 : 1 });
+    if (this.mode) { this.mode.end(); this.mode = null; }
+    this.ui.setMatchLoadProgress(0.34, `BUILDING ARENA · ${def.name}`);
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
+    this.newWorld(def, arenaOpts);
+    this.ui.setMatchLoadProgress(0.58, 'SPAWNING VEHICLES');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     // Cars are created in the server's order so indices match its snapshots
     for (const info of msg.cars || []) {
       const isMe = !!info.userId && info.userId === meId;
@@ -11094,11 +11767,11 @@ class GameEngine {
         name: info.name
       });
     }
-    this.teamNames = Array.isArray(msg.teamNames) && msg.teamNames.length === 2 ? msg.teamNames : ['BLUE', 'ORANGE'];
+    this.teamNames = teamNames;
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.specMode = 'broadcast';
     if (s.mode === 'mayhem') { this.world.powers = new PowerSystem(this.world, { interval: s.interval || 10 }); this.powerVis = new PowerVisuals(this); }
-    this.setMode(new OnlineMatchMode(this, {
+    const mode = new OnlineMatchMode(this, {
       teamSize: s.teamSize,
       duration: s.duration,
       mayhem: s.mode === 'mayhem',
@@ -11107,34 +11780,155 @@ class GameEngine {
       botDiff: s.botDiff || 1,
       isSolo,
       mid: msg.mid
-    }));
+    });
+    this.setMode(mode);
+    if (this._earlyKickoff) {
+      const ek = this._earlyKickoff;
+      this._earlyKickoff = null;
+      mode.serverKickoff(ek);
+    }
     this.audio.setMusicMode('game');
+    this.ui.setMatchLoadProgress(0.78, 'WARMING SHADERS & LIGHTING');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+
     // Warm every mesh/FX/power PSO offscreen before telling the server we're ready for kickoff
     this.warmSceneDraw(false);
-    const mode = this.mode;
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (this.mode === mode && this.online && Number.isInteger(msg.mid)) this.online.wsSend({ type: 'match_loaded', m: msg.mid });
-    }));
+    this.renderFrame(0.016);
+    this.ui.setMatchLoadProgress(0.9, 'FINALIZING MATCH');
+    const remain = Math.max(0, Math.min(950, 1050 - (performance.now() - startedAt)));
+    if (remain > 0 && !mode.kickoffReceived) {
+      await this._waitMs(remain);
+      if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+    }
+
+    if (this.online && Number.isInteger(msg.mid)) {
+      this.online.wsSend({ type: 'match_loaded', m: msg.mid });
+    }
+    if (!mode.kickoffReceived) {
+      this.ui._mlWaiting = true;
+      if (!isSolo && this.ui._mlReadyMid === msg.mid && this.ui._mlReadyTotal > 1) {
+        this.ui.setMatchLoadProgress(0.94, `WAITING FOR PLAYERS · ${this.ui._mlReadyCount}/${this.ui._mlReadyTotal} READY`, 'SYNCING');
+      } else {
+        this.ui.setMatchLoadProgress(0.94, isSolo ? 'STARTING KICKOFF' : 'WAITING FOR PLAYERS...', 'SYNCING');
+      }
+      await new Promise(resolve => {
+        const timer = setTimeout(() => {
+          if (this._kickoffWaiter && this._kickoffWaiter.mode === mode) this._kickoffWaiter = null;
+          resolve();
+        }, 6200);
+        this._kickoffWaiter = { mode, resolve: () => { clearTimeout(timer); resolve(); } };
+      });
+      if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+    }
+
+    this.ui._mlWaiting = false;
+    this.ui.setMatchLoadProgress(1, 'ENTERING ARENA', 'READY');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq || this.mode !== mode) return;
+    this._matchLoading = false;
+    this._loadingMid = null;
+    this.ui.hideMatchLoad();
   }
-  startFreePlay(cfg) {
-    this.lastCfg = { type: 'free', cfg }; this.inGame = true; this.paused = false; this.tournament = null;
+  async startFreePlay(cfg) {
+    const seq = ++this._matchLoadSeq;
+    const startedAt = performance.now();
+    this._awaitingSoloMatch = false;
+    this._matchLoading = true;
+    this.lastCfg = { type: 'free', cfg }; this.tournament = null;
+    const arenaIdx = Number.isInteger(cfg.arena) && ARENAS[cfg.arena] ? cfg.arena : 0;
+    const def = ARENAS[arenaIdx];
+    this.ui.hideArenaLoad(true);
+    this.ui.showMatchLoad({
+      arenaIdx,
+      layout: cfg.layout || 'default',
+      scale: 1,
+      kind: 'freeplay',
+      unlimitedBoost: !!cfg.unlimitedBoost,
+      status: `BUILDING ARENA · ${def.name}`,
+      progress: 0.2,
+      liveBadge: 'LOADING'
+    });
+    this.audio.stopEngines();
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
+    this.inGame = true; this.paused = false;
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
-    this.newWorld(ARENAS[cfg.arena] || ARENAS[0], { layout: cfg.layout });
+    if (this.mode) { this.mode.end(); this.mode = null; }
+    this.newWorld(def, { layout: cfg.layout });
+    this.ui.setMatchLoadProgress(0.58, 'SPAWNING VEHICLE');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
     this.setMode(new FreePlayMode(this, cfg)); this.audio.setMusicMode('game');
+    this.ui.setMatchLoadProgress(0.82, 'WARMING SHADERS & LIGHTING');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     this.warmSceneDraw(false);
+    this.renderFrame(0.016);
+    this.ui.setMatchLoadProgress(1, 'ENTERING ARENA', 'READY');
+    const remain = Math.max(0, 750 - (performance.now() - startedAt));
+    if (remain > 0) await this._waitMs(remain);
+    if (seq !== this._matchLoadSeq) return;
+    this._matchLoading = false;
+    this.ui.hideMatchLoad();
   }
-  startTraining(cfg) {
-    this.lastCfg = { type: 'train', cfg }; this.inGame = true; this.paused = false; this.tournament = null;
+  async startTraining(cfg) {
+    const seq = ++this._matchLoadSeq;
+    const startedAt = performance.now();
+    this._awaitingSoloMatch = false;
+    this._matchLoading = true;
+    this.lastCfg = { type: 'train', cfg }; this.tournament = null;
+    const arenaIdx = Number.isInteger(cfg.arena) && ARENAS[cfg.arena] ? cfg.arena : 0;
+    const def = ARENAS[arenaIdx];
+    const drill = DRILLS[cfg.drill] || DRILLS[0];
+    this.ui.hideArenaLoad(true);
+    this.ui.showMatchLoad({
+      arenaIdx,
+      layout: cfg.layout || 'default',
+      scale: 1,
+      kind: 'training',
+      drill,
+      status: `BUILDING ARENA · ${def.name}`,
+      progress: 0.2,
+      liveBadge: 'LOADING'
+    });
+    this.audio.stopEngines();
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
+    this.inGame = true; this.paused = false;
     this.input.lastCursorMove = performance.now() - 800;
     this.ui.hideMenu(); this.ui.hideOverlay(); this.exitShowroom();
-    this.newWorld(ARENAS[cfg.arena] || ARENAS[0], { layout: cfg.layout });
+    if (this.mode) { this.mode.end(); this.mode = null; }
+    this.newWorld(def, { layout: cfg.layout });
+    this.ui.setMatchLoadProgress(0.58, `PREPARING ${drill.name}`);
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     this.addCar(0, { player: true, name: Settings.data.playerName || 'PLAYER' });
     this.camera.ballCam = Settings.data.ballCamDefault;
-    this.setMode(new TrainingMode(this, cfg)); this.audio.setMusicMode('game');
+    this.audio.setMusicMode('game');
+    this.ui.setMatchLoadProgress(0.82, 'WARMING SHADERS & LIGHTING');
+    await this._yieldFrame();
+    if (seq !== this._matchLoadSeq) return;
+
     this.warmSceneDraw(false);
+    this.ui.setMatchLoadProgress(1, 'READY FOR DRILL', 'READY');
+    const remain = Math.max(0, 750 - (performance.now() - startedAt));
+    if (remain > 0) await this._waitMs(remain);
+    if (seq !== this._matchLoadSeq) return;
+
+    // Start TrainingMode right as the loading screen clears so round 1's 1.2s timer starts in view
+    this.setMode(new TrainingMode(this, cfg));
+    this.renderFrame(0.016);
+    this._matchLoading = false;
+    this.ui.hideMatchLoad();
   }
   startTournament(cfg) {
     this.tournament = new Tournament(cfg);
@@ -11146,6 +11940,8 @@ class GameEngine {
     this.startMatch({ teamSize: t.cfg.teamSize, side: 0, arena: t.arenaOrder[t.round], difficulty: t.opponentDifficulty(), duration: 180, tournament: true, teamNames: [t.teams[0].name, opp.name], mode: t.cfg.mode, interval: 10 });
   }
   exitToMenu() {
+    this.cancelMatchLoad();
+    this.ui.hideArenaLoad(true);
     if (this.mode instanceof OnlineMatchMode && this.mode.isSolo && this.online && !this.mode.endedByServer) this.online.leaveSoloServerMatch();
     if (this.mode) this.mode.end(); this.mode = null;
     this.inGame = false; this.paused = false;
@@ -11197,7 +11993,24 @@ class GameEngine {
     } else { this.ui.hideOverlay(); this.input.lastCursorMove = performance.now() - 800; }
   }
   onMenuScreen(screen) { if (screen === 'garage') this.enterShowroom(); else this.exitShowroom(); }
-  previewArena(i) { if (this.inGame) return; this.ui.setup.arena = i; const key = (ARENAS[i] || this.arenaDef || ARENAS[0]).id + '|' + (this.ui.setup.layout || 'default') + '|1'; if (this.arenaKey !== key) { this.startExhibition(); if (this.showroom) { this.exitShowroom(); this.enterShowroom(); } } }
+  async previewArena(i) {
+    if (this.inGame || this._matchLoading) return;
+    this.ui.setup.arena = i;
+    const def = ARENAS[i] || this.arenaDef || ARENAS[0];
+    const layout = this.ui.setup.layout || 'default';
+    const key = def.id + '|' + layout + '|1';
+    if (this.arenaKey === key) return;
+    const seq = ++this._arenaLoadSeq;
+    this.ui.showArenaLoad(def, { layout });
+    await this._yieldFrame();
+    if (seq !== this._arenaLoadSeq || this.inGame || this._matchLoading) return;
+    this.startExhibition();
+    if (this.showroom) { this.exitShowroom(); this.enterShowroom(); }
+    this.renderFrame(0.016);
+    await this._yieldFrame();
+    if (seq !== this._arenaLoadSeq) return;
+    this.ui.hideArenaLoad();
+  }
   enterShowroom() {
     if (this.showroom) return;
     const custom = Object.assign({}, Settings.data.car);
@@ -11314,6 +12127,7 @@ class GameEngine {
       if (sb && !sb.classList.contains('hidden') && (inp.padHit(0) || inp.padHit(9))) sb.click();
       return;
     }
+    if (this.ui && this.ui.matchLoadOpen) return;
     if (!this.inGame) {
       document.body.classList.toggle('pad-ui', !!inp.usingPad);
       this.handleUiNav(dt);
@@ -11529,7 +12343,7 @@ class GameEngine {
   }
   syncCursor() {
     const auth = $('authGate'), menu = $('menu');
-    const activePlay = this.inGame && !this.paused && !(this.ui.overlayOpen && !this.ui._sb) &&
+    const activePlay = this.inGame && !this.paused && !(this.ui && this.ui.matchLoadOpen) && !(this.ui.overlayOpen && !this.ui._sb) &&
       (!auth || auth.classList.contains('hidden')) && (!menu || menu.classList.contains('hidden'));
     const idle = performance.now() - this.input.lastCursorMove > 1200;
     document.body.classList.toggle('hide-cursor', !!(activePlay && (idle || this.input.pointerLocked)));
@@ -11649,7 +12463,7 @@ class GameEngine {
       this.audio.updateListener(R.camera);
       // Replays drive the engines from the recorded footage; silence pooled voices on live<->replay
       // transitions instead of tearing down and recreating ~40 WebAudio nodes every goal replay.
-      const engMode = !this.inGame || this.paused || concluded ? 0 : replaying ? 2 : 1;
+      const engMode = !this.inGame || this.paused || concluded || (this.ui && this.ui.matchLoadOpen) ? 0 : replaying ? 2 : 1;
       if (engMode !== this._engMode && this.audio.engines.size) {
         if (engMode === 0) this.audio.stopEngines();
         else this.audio.silenceEngines();

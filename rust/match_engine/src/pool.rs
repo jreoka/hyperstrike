@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use server_core::protocol::{
-    BackendStats, CreateMatchFuture, MatchBackend, MatchCreateOptions, MatchHandle,
+    BackendStats, CreateMatchFuture, MatchBackend, MatchCreateOptions, MatchEventSink, MatchHandle,
 };
 use tokio::sync::mpsc;
 
@@ -25,6 +25,7 @@ pub fn detect_worker_count() -> usize {
 }
 
 enum MatchCmd {
+    LoadProgress(Value),
     Start,
     Input {
         user_id: String,
@@ -43,6 +44,8 @@ enum MatchCmd {
 struct LoadState {
     started: bool,
     pending: Option<HashSet<String>>,
+    total: usize,
+    ready: Vec<String>,
     humans: HashMap<String, i64>,
 }
 
@@ -50,6 +53,7 @@ pub struct TokioMatchHandle {
     id: u64,
     created_at: i64,
     car_info: Value,
+    callbacks: Arc<dyn MatchEventSink>,
     stopped: AtomicBool,
     tx: mpsc::UnboundedSender<MatchCmd>,
     sim_rt: tokio::runtime::Handle,
@@ -70,6 +74,45 @@ impl TokioMatchHandle {
         st.started = true;
         st.pending = None;
         let _ = self.tx.send(MatchCmd::Start);
+    }
+
+    fn mark_loaded_inner(&self, user_id: &str, departed: bool) {
+        let (should_start, progress) = {
+            let mut st = self.load.lock().unwrap_or_else(|e| e.into_inner());
+            if st.started {
+                return;
+            }
+            let (removed, is_empty) = {
+                let Some(pending) = st.pending.as_mut() else {
+                    return;
+                };
+                (pending.remove(user_id), pending.is_empty())
+            };
+            let mut progress = None;
+            if removed {
+                if departed {
+                    st.total = st.total.saturating_sub(1);
+                } else if !st.ready.iter().any(|u| u == user_id) {
+                    st.ready.push(user_id.to_string());
+                }
+                if st.total > 1 {
+                    progress = Some((st.ready.len(), st.total, st.ready.clone()));
+                }
+            }
+            (is_empty, progress)
+        };
+        if let Some((loaded, total, ready_ids)) = progress {
+            let _ = self.tx.send(MatchCmd::LoadProgress(json!({
+                "type": "match_load_status",
+                "m": self.id,
+                "loaded": loaded,
+                "total": total,
+                "readyIds": ready_ids,
+            })));
+        }
+        if should_start {
+            self.trigger_start();
+        }
     }
 
     fn release_once(&self) {
@@ -114,6 +157,8 @@ impl MatchHandle for TokioMatchHandle {
             if pending.is_empty() {
                 true
             } else {
+                st.total = pending.len();
+                st.ready.clear();
                 st.pending = Some(pending);
                 false
             }
@@ -131,20 +176,7 @@ impl MatchHandle for TokioMatchHandle {
     }
 
     fn mark_loaded(&self, user_id: &str) {
-        let should_start = {
-            let mut st = self.load.lock().unwrap_or_else(|e| e.into_inner());
-            if st.started {
-                return;
-            }
-            let Some(pending) = st.pending.as_mut() else {
-                return;
-            };
-            pending.remove(user_id);
-            pending.is_empty()
-        };
-        if should_start {
-            self.trigger_start();
-        }
+        self.mark_loaded_inner(user_id, false);
     }
 
     fn replay_done(&self, user_id: &str) {
@@ -193,7 +225,7 @@ impl MatchHandle for TokioMatchHandle {
             let mut st = self.load.lock().unwrap_or_else(|e| e.into_inner());
             st.humans.remove(user_id);
         }
-        self.mark_loaded(user_id);
+        self.mark_loaded_inner(user_id, true);
         if !self.stopped.load(Ordering::Relaxed) {
             let _ = self.tx.send(MatchCmd::RemovePlayer {
                 user_id: user_id.to_string(),
@@ -281,6 +313,7 @@ impl MatchBackend for SimPool {
                 .iter()
                 .map(|p| (p.user_id.clone(), 0))
                 .collect();
+            let callbacks = Arc::clone(&opts.callbacks);
             let sim = ServerMatch::new(opts);
             let created_at = sim.created_at;
             let car_info = Value::Array(sim.car_info.clone());
@@ -291,12 +324,15 @@ impl MatchBackend for SimPool {
                 id,
                 created_at,
                 car_info,
+                callbacks,
                 stopped: AtomicBool::new(false),
                 tx,
                 sim_rt: sim_rt.clone(),
                 load: Mutex::new(LoadState {
                     started: false,
                     pending: None,
+                    total: 0,
+                    ready: Vec::new(),
                     humans,
                 }),
                 active_matches,
@@ -319,7 +355,7 @@ async fn run_match_loop(
     while !sim.finished {
         // Drain all immediately queued commands before stepping.
         while let Ok(cmd) = rx.try_recv() {
-            if !apply_cmd(&mut sim, cmd) {
+            if !apply_cmd(&mut sim, &handle, cmd) {
                 handle.release_once();
                 return;
             }
@@ -344,7 +380,7 @@ async fn run_match_loop(
                     maybe_cmd = rx.recv() => {
                         match maybe_cmd {
                             Some(cmd) => {
-                                if !apply_cmd(&mut sim, cmd) {
+                                if !apply_cmd(&mut sim, &handle, cmd) {
                                     break;
                                 }
                             }
@@ -356,7 +392,7 @@ async fn run_match_loop(
             } else {
                 match rx.recv().await {
                     Some(cmd) => {
-                        if !apply_cmd(&mut sim, cmd) {
+                        if !apply_cmd(&mut sim, &handle, cmd) {
                             break;
                         }
                     }
@@ -366,7 +402,7 @@ async fn run_match_loop(
         } else {
             match rx.recv().await {
                 Some(cmd) => {
-                    if !apply_cmd(&mut sim, cmd) {
+                    if !apply_cmd(&mut sim, &handle, cmd) {
                         break;
                     }
                 }
@@ -378,8 +414,14 @@ async fn run_match_loop(
     handle.release_once();
 }
 
-fn apply_cmd(sim: &mut ServerMatch, cmd: MatchCmd) -> bool {
+fn apply_cmd(sim: &mut ServerMatch, handle: &TokioMatchHandle, cmd: MatchCmd) -> bool {
     match cmd {
+        MatchCmd::LoadProgress(msg) => {
+            if !sim.running && !sim.finished {
+                handle.callbacks.broadcast(msg);
+            }
+            true
+        }
         MatchCmd::Start => {
             if !sim.running && !sim.finished {
                 sim.start();
