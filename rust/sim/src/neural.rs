@@ -7,19 +7,25 @@ use glam::DVec3;
 use serde::Deserialize;
 
 use crate::math_ext::Controls;
+use crate::powers::POWERS;
 use crate::world::World;
 
-const MAX_CARS: usize = 10;
-const OTHER_CARS: usize = MAX_CARS - 1;
-const NUM_PADS_OBS: usize = 6;
-const SELF_DIM: usize = 24;
-const BALL_DIM: usize = 16;
-const OTHER_DIM: usize = 18;
-const PAD_DIM: usize = 4;
+// Observation / action layout shared by live inference AND the RL trainer (`rust/rl_env`).
+// Keep `rl/env.py` in sync with these constants.
+pub const NEURAL_FORMAT: &str = "hyperstrike_energy_rope_v3";
+pub const MAX_CARS: usize = 10;
+pub const OTHER_CARS: usize = MAX_CARS - 1;
+pub const NUM_PADS_OBS: usize = 6;
+pub const NUM_POWERS: usize = POWERS.len(); // 14
+pub const SELF_DIM: usize = 24 + 2 + NUM_POWERS + 8; // 48
+pub const BALL_DIM: usize = 19;
+pub const OTHER_DIM: usize = 22;
+pub const PAD_DIM: usize = 4;
+pub const ACTION_DIM: usize = 9;
 const TOTAL_TOKENS: usize = 1 + 1 + OTHER_CARS + NUM_PADS_OBS; // 17
 const TICKS_PER_ACTION: u8 = 8;
 
-const ACTION_BIN_VALUES: [&[f64]; 8] = [
+pub const ACTION_BIN_VALUES: [&[f64]; ACTION_DIM] = [
     &[-1.0, 0.0, 1.0],              // throttle
     &[-1.0, -0.5, 0.0, 0.5, 1.0],   // steer
     &[-1.0, 0.0, 1.0],              // pitch
@@ -28,7 +34,37 @@ const ACTION_BIN_VALUES: [&[f64]; 8] = [
     &[0.0, 1.0],                    // jump
     &[0.0, 1.0],                    // boost
     &[0.0, 1.0],                    // handbrake
+    &[0.0, 1.0],                    // item (Mayhem power-up, rising edge triggers)
 ];
+
+/// Convert raw float actions (as produced by the trainer / this policy) into `Controls`.
+pub fn controls_from_actions(a: &[f32]) -> Controls {
+    Controls {
+        throttle: (a[0] as f64).clamp(-1.0, 1.0),
+        steer: (a[1] as f64).clamp(-1.0, 1.0),
+        pitch: (a[2] as f64).clamp(-1.0, 1.0),
+        yaw: (a[3] as f64).clamp(-1.0, 1.0),
+        roll: (a[4] as f64).clamp(-1.0, 1.0),
+        jump: a[5] > 0.5,
+        boost: a[6] > 0.5,
+        handbrake: a[7] > 0.5,
+        air_roll_free: false,
+        item: a[8] > 0.5,
+    }
+}
+
+/// Inverse of `controls_from_actions` (used to record expert actions for BC).
+pub fn actions_from_controls(c: &Controls, out: &mut [f32]) {
+    out[0] = c.throttle as f32;
+    out[1] = c.steer as f32;
+    out[2] = c.pitch as f32;
+    out[3] = c.yaw as f32;
+    out[4] = c.roll as f32;
+    out[5] = if c.jump { 1.0 } else { 0.0 };
+    out[6] = if c.boost { 1.0 } else { 0.0 };
+    out[7] = if c.handbrake { 1.0 } else { 0.0 };
+    out[8] = if c.item { 1.0 } else { 0.0 };
+}
 
 #[derive(Deserialize)]
 struct TensorDesc {
@@ -177,11 +213,11 @@ impl NeuralPolicy {
             .map_err(|e| format!("failed to read {}: {e}", json_path.display()))?;
         let manifest: Manifest = serde_json::from_str(&meta_str)
             .map_err(|e| format!("invalid manifest {}: {e}", json_path.display()))?;
-        if manifest.format != "hyperstrike_energy_rope_v2" {
+        if manifest.format != NEURAL_FORMAT {
             return Err(format!("unsupported neural format: {}", manifest.format));
         }
-        if manifest.action_n_bins.len() != 8 {
-            return Err("expected 8 action heads".to_string());
+        if manifest.action_n_bins.len() != ACTION_DIM {
+            return Err(format!("expected {ACTION_DIM} action heads"));
         }
         let raw = fs::read(bin_path)
             .map_err(|e| format!("failed to read {}: {e}", bin_path.display()))?;
@@ -261,8 +297,8 @@ impl NeuralPolicy {
             .max(temporal_block.mlp_dim)
             .max(d_model * manifest.mlp_ratio);
 
-        let mut action_heads = Vec::with_capacity(8);
-        for i in 0..8 {
+        let mut action_heads = Vec::with_capacity(ACTION_DIM);
+        for i in 0..ACTION_DIM {
             action_heads.push(load_linear(&format!("action_heads.{i}"), true)?);
         }
 
@@ -562,7 +598,7 @@ impl NeuralPolicy {
         self.final_norm
             .forward(&scratch.cur_x, &mut scratch.norm_buf);
 
-        let mut vals = [0.0_f64; 8];
+        let mut vals = [0.0_f64; ACTION_DIM];
         let mut logits = [0.0_f32; 8];
         for (k, head) in self.action_heads.iter().enumerate() {
             let nb = head.out_dim;
@@ -588,7 +624,7 @@ impl NeuralPolicy {
             boost: vals[6] > 0.5,
             handbrake: vals[7] > 0.5,
             air_roll_free: false,
-            item: false,
+            item: vals[8] > 0.5,
         }
     }
 }
@@ -674,14 +710,14 @@ impl NeuralBotState {
         }
         self.tick_accum = 1;
 
-        let (self_obs, ball_obs, other_obs, other_mask, pads_obs) = extract_obs(car_idx, w);
+        let obs = extract_obs(car_idx, w);
         let mut emb = std::mem::take(&mut self.scratch.emb);
         policy.encode_frame_into(
-            &self_obs,
-            &ball_obs,
-            &other_obs,
-            &other_mask,
-            &pads_obs,
+            &obs.self_obs,
+            &obs.ball_obs,
+            &obs.other_obs,
+            &obs.other_mask,
+            &obs.pads_obs,
             &mut self.scratch,
             &mut emb,
         );
@@ -693,16 +729,31 @@ impl NeuralBotState {
     }
 }
 
-fn extract_obs(
-    car_idx: usize,
-    w: &World,
-) -> (
-    [f32; SELF_DIM],
-    [f32; BALL_DIM],
-    [[f32; OTHER_DIM]; OTHER_CARS],
-    [bool; OTHER_CARS],
-    [[f32; PAD_DIM]; NUM_PADS_OBS],
-) {
+/// Per-car observation in the trainer's exact layout (team 1 is mirrored so every car attacks +Z).
+#[derive(Clone, Debug)]
+pub struct CarObs {
+    pub self_obs: [f32; SELF_DIM],
+    pub ball_obs: [f32; BALL_DIM],
+    pub other_obs: [[f32; OTHER_DIM]; OTHER_CARS],
+    pub other_mask: [bool; OTHER_CARS],
+    pub pads_obs: [[f32; PAD_DIM]; NUM_PADS_OBS],
+}
+
+#[inline]
+fn b2f(b: bool) -> f32 {
+    if b { 1.0 } else { 0.0 }
+}
+
+/// Build the observation for `car_idx`. This single function is used by both live inference and
+/// `rust/rl_env`, so training and deployment can never drift apart.
+///
+/// Self layout: [0..24) car state (as v2), [24] mayhem on, [25] holding item,
+/// [26..40) item one-hot (POWERS order), [40] item usable now (has valid target),
+/// [41] time until next item, [42..47) spikes/magnet/overdrive/nitro/scrambled timers,
+/// [47] ball stuck to me.
+/// Ball extras: [16] iced, [17] zero-g, [18] stuck to (+1 teammate/me, -1 enemy, 0 free).
+/// Other extras: [18] holds item, [19] spikes, [20] scrambled, [21] overdrive|nitro.
+pub fn extract_obs(car_idx: usize, w: &World) -> CarObs {
     let mut self_obs = [0.0_f32; SELF_DIM];
     let mut ball_obs = [0.0_f32; BALL_DIM];
     let mut other_obs = [[0.0_f32; OTHER_DIM]; OTHER_CARS];
@@ -715,6 +766,7 @@ fn extract_obs(
     let inv_h = 1.0 / 20.0;
     let team_size = w.cars.iter().filter(|c| c.team == car.team).count().max(1);
     let s = if car.team == 0 { 1.0 } else { -1.0 };
+    let mayhem = w.powers.is_some();
 
     let c_pos = DVec3::new(car.pos.x * s, car.pos.y, car.pos.z * s);
     let c_vel = DVec3::new(car.vel.x * s, car.vel.y, car.vel.z * s);
@@ -738,14 +790,39 @@ fn extract_obs(
     self_obs[13] = (c_ang.y / 5.5) as f32;
     self_obs[14] = (c_ang.z / 5.5) as f32;
     self_obs[15] = (car.boost / 100.0) as f32;
-    self_obs[16] = if car.on_ground { 1.0 } else { 0.0 };
-    self_obs[17] = if car.has_flip { 1.0 } else { 0.0 };
-    self_obs[18] = if car.flipping { 1.0 } else { 0.0 };
-    self_obs[19] = if car.supersonic { 1.0 } else { 0.0 };
-    self_obs[20] = if car.demolished { 1.0 } else { 0.0 };
+    self_obs[16] = b2f(car.on_ground);
+    self_obs[17] = b2f(car.has_flip);
+    self_obs[18] = b2f(car.flipping);
+    self_obs[19] = b2f(car.supersonic);
+    self_obs[20] = b2f(car.demolished);
     self_obs[21] = (team_size as f32 / 5.0).min(1.0);
-    self_obs[22] = if w.kickoff { 1.0 } else { 0.0 };
+    self_obs[22] = b2f(w.kickoff);
+    // Live matches have no fixed episode horizon, so this is a constant in training too.
     self_obs[23] = 0.5;
+
+    if mayhem {
+        self_obs[24] = 1.0;
+        if let Some(id) = car.item {
+            self_obs[25] = 1.0;
+            if let Some(pi) = POWERS.iter().position(|p| p.id == id) {
+                self_obs[26 + pi] = 1.0;
+            }
+            let usable = w
+                .powers
+                .as_ref()
+                .and_then(|ps| ps.target_for(car_idx, id, &w.cars, &w.ball))
+                .is_some();
+            self_obs[40] = b2f(usable);
+        } else {
+            self_obs[41] = (car.item_next.max(0.0) / 15.0).min(1.0) as f32;
+        }
+        self_obs[42] = (car.spike_t.max(0.0) / 8.0) as f32;
+        self_obs[43] = (car.mag_t.max(0.0) / 8.0) as f32;
+        self_obs[44] = (car.ov_t.max(0.0) / 8.0) as f32;
+        self_obs[45] = (car.nitro_t.max(0.0) / 8.0) as f32;
+        self_obs[46] = (car.scr_t.max(0.0) / 8.0) as f32;
+        self_obs[47] = b2f(w.ball.stuck_to == Some(car_idx));
+    }
 
     let b_pos = DVec3::new(w.ball.pos.x * s, w.ball.pos.y, w.ball.pos.z * s);
     let b_vel = DVec3::new(w.ball.vel.x * s, w.ball.vel.y, w.ball.vel.z * s);
@@ -769,6 +846,16 @@ fn extract_obs(
     ball_obs[13] = (rel_b_vel.y / 40.0) as f32;
     ball_obs[14] = (rel_b_vel.z / 40.0) as f32;
     ball_obs[15] = (rel_b_pos.length() / 60.0) as f32;
+    if mayhem {
+        ball_obs[16] = (w.ball.ice_t.max(0.0) / 3.2).min(1.0) as f32;
+        ball_obs[17] = (w.ball.anti_t.max(0.0) / 6.0).min(1.0) as f32;
+        ball_obs[18] = match w.ball.stuck_to {
+            Some(i) if i < w.cars.len() => {
+                if w.cars[i].team == car.team { 1.0 } else { -1.0 }
+            }
+            _ => 0.0,
+        };
+    }
 
     let mut slot = 0;
     for (oi, o) in w.cars.iter().enumerate() {
@@ -800,7 +887,13 @@ fn extract_obs(
             oo[14] = o_fwd.z as f32;
             oo[15] = (o.boost / 100.0) as f32;
             oo[16] = if o.team == car.team { 1.0 } else { -1.0 };
-            oo[17] = if o.on_ground { 1.0 } else { 0.0 };
+            oo[17] = b2f(o.on_ground);
+            if mayhem {
+                oo[18] = b2f(o.item.is_some());
+                oo[19] = b2f(o.spike_t > 0.0);
+                oo[20] = b2f(o.scr_t > 0.0);
+                oo[21] = b2f(o.ov_t > 0.0 || o.nitro_t > 0.0);
+            }
         }
         slot += 1;
     }
@@ -818,11 +911,17 @@ fn extract_obs(
         let p = &w.pads[sp[k].1];
         pads_obs[k][0] = ((p.pos.x * s - c_pos.x) / 40.0) as f32;
         pads_obs[k][1] = ((p.pos.z * s - c_pos.z) / 40.0) as f32;
-        pads_obs[k][2] = if p.big { 1.0 } else { 0.0 };
-        pads_obs[k][3] = if p.active { 1.0 } else { 0.0 };
+        pads_obs[k][2] = b2f(p.big);
+        pads_obs[k][3] = b2f(p.active);
     }
 
-    (self_obs, ball_obs, other_obs, other_mask, pads_obs)
+    CarObs {
+        self_obs,
+        ball_obs,
+        other_obs,
+        other_mask,
+        pads_obs,
+    }
 }
 
 fn candidate_checkpoint_pairs() -> Vec<(PathBuf, PathBuf)> {

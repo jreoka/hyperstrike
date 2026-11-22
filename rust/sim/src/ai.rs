@@ -504,7 +504,9 @@ impl BotAi {
 
     pub fn update(&mut self, car_idx: usize, dt: f64, w: &mut World) {
         self.update_core(car_idx, dt, w);
-        if w.powers.is_some() && !w.cars[car_idx].demolished && !w.kickoff {
+        // Neural bots drive the item button themselves (9th action head).
+        let neural_driven = self.neural_state.is_some() && neural::global_policy().is_some();
+        if !neural_driven && w.powers.is_some() && !w.cars[car_idx].demolished && !w.kickoff {
             self.use_items(car_idx, dt, w);
         }
     }

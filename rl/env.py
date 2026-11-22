@@ -10,13 +10,18 @@ import numpy as np
 MAX_CARS = 10
 OTHER_CARS = MAX_CARS - 1
 NUM_PADS_OBS = 6
-SELF_DIM = 24
-BALL_DIM = 16
-OTHER_DIM = 18
+# Must match rust/sim/src/neural.rs (checked at load time via rl_env_layout).
+SELF_DIM = 48
+BALL_DIM = 19
+OTHER_DIM = 22
 PAD_DIM = 4
-ACTION_DIM = 8
+ACTION_DIM = 9
 
-# Factored raw control bins: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+# Episode end codes written by rl_env into `dones`
+DONE_TERMINAL = 1   # goal scored
+DONE_TRUNCATED = 2  # step limit hit (value should be bootstrapped)
+
+# Factored raw control bins: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake, item]
 ACTION_BIN_VALUES = [
     np.array([-1.0, 0.0, 1.0], dtype=np.float32),          # throttle
     np.array([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=np.float32),  # steer
@@ -26,6 +31,7 @@ ACTION_BIN_VALUES = [
     np.array([0.0, 1.0], dtype=np.float32),                # jump
     np.array([0.0, 1.0], dtype=np.float32),                # boost
     np.array([0.0, 1.0], dtype=np.float32),                # handbrake
+    np.array([0.0, 1.0], dtype=np.float32),                # item (Mayhem power-up)
 ]
 ACTION_N_BINS = [len(v) for v in ACTION_BIN_VALUES]
 
@@ -49,6 +55,8 @@ class EnvConfig(ctypes.Structure):
         ("w_ball_to_goal", ctypes.c_float),
         ("w_player_to_ball", ctypes.c_float),
         ("w_boost_pickup", ctypes.c_float),
+        ("mayhem_prob", ctypes.c_float),
+        ("w_power_fail", ctypes.c_float),
     ]
 
 
@@ -60,6 +68,8 @@ class StepStats(ctypes.Structure):
         ("touches", ctypes.c_uint32),
         ("bot_games_won", ctypes.c_uint32),
         ("bot_games_lost", ctypes.c_uint32),
+        ("power_uses", ctypes.c_uint32),
+        ("mayhem_goals", ctypes.c_uint32),
     ]
 
 
@@ -75,18 +85,45 @@ def _default_lib_path() -> Path:
     return crate / "target" / "release" / name
 
 
+def _lib_is_stale(lib_path: Path) -> bool:
+    """True if any Rust source of rl_env or sim is newer than the built library."""
+    if not lib_path.exists():
+        return True
+    built = lib_path.stat().st_mtime
+    rust_root = lib_path.parents[3]
+    for crate in ("rl_env", "sim"):
+        for src in (rust_root / crate).glob("src/**/*.rs"):
+            if src.stat().st_mtime > built:
+                return True
+        toml = rust_root / crate / "Cargo.toml"
+        if toml.exists() and toml.stat().st_mtime > built:
+            return True
+    return False
+
+
 def load_rl_env_lib(auto_build: bool = True) -> ctypes.CDLL:
     lib_path = _default_lib_path()
-    if not lib_path.exists():
-        if not auto_build:
+    if _lib_is_stale(lib_path):
+        if not auto_build and not lib_path.exists():
             raise FileNotFoundError(f"Rust rl_env library not found at {lib_path}")
-        crate_toml = lib_path.parents[2] / "Cargo.toml"
-        print(f"[rl_env] Building native Rust simulator ({crate_toml})...")
-        subprocess.run(
-            ["cargo", "build", "--release", "--manifest-path", str(crate_toml)],
-            check=True,
-        )
+        if auto_build:
+            crate_toml = lib_path.parents[2] / "Cargo.toml"
+            print(f"[rl_env] Building native Rust simulator ({crate_toml})...")
+            subprocess.run(
+                ["cargo", "build", "--release", "--manifest-path", str(crate_toml)],
+                check=True,
+            )
     lib = ctypes.CDLL(str(lib_path))
+
+    if not hasattr(lib, "rl_env_layout"):
+        raise RuntimeError(f"{lib_path} is an outdated build; rebuild rust/rl_env (cargo build --release).")
+    lib.rl_env_layout.argtypes = [ctypes.POINTER(ctypes.c_uint32)]
+    lib.rl_env_layout.restype = None
+    layout = (ctypes.c_uint32 * 8)()
+    lib.rl_env_layout(layout)
+    expected = [SELF_DIM, BALL_DIM, OTHER_DIM, PAD_DIM, ACTION_DIM, MAX_CARS, NUM_PADS_OBS, ctypes.sizeof(EnvConfig)]
+    if list(layout) != expected:
+        raise RuntimeError(f"rl_env layout mismatch: rust={list(layout)} python={expected}")
 
     f32_p = ctypes.POINTER(ctypes.c_float)
     i32_p = ctypes.POINTER(ctypes.c_int32)
@@ -101,6 +138,9 @@ def load_rl_env_lib(auto_build: bool = True) -> ctypes.CDLL:
 
     lib.rl_env_set_bot_curriculum.argtypes = [void_p, ctypes.c_float, ctypes.c_uint32]
     lib.rl_env_set_bot_curriculum.restype = None
+
+    lib.rl_env_set_mayhem_prob.argtypes = [void_p, ctypes.c_float]
+    lib.rl_env_set_mayhem_prob.restype = None
 
     lib.rl_env_reset_all.argtypes = [
         void_p, f32_p, f32_p, f32_p, f32_p, f32_p, f32_p, i32_p
@@ -149,14 +189,16 @@ class HyperstrikeVecEnv:
         bot_diff: int = 4,
         num_threads: int | None = None,
         seed: int = 42,
+        mayhem_prob: float = 0.4,
         w_goal: float = 10.0,
-        w_touch: float = 0.25,
+        w_touch: float = 0.15,
         w_shot: float = 0.6,
         w_save: float = 1.0,
         w_demo: float = 0.8,
-        w_ball_to_goal: float = 0.35,
-        w_player_to_ball: float = 0.08,
+        w_ball_to_goal: float = 2.5,
+        w_player_to_ball: float = 0.15,
         w_boost_pickup: float = 0.12,
+        w_power_fail: float = 0.01,
     ):
         self.lib = load_rl_env_lib(auto_build=True)
         self.num_envs = num_envs
@@ -179,6 +221,8 @@ class HyperstrikeVecEnv:
             w_ball_to_goal=w_ball_to_goal,
             w_player_to_ball=w_player_to_ball,
             w_boost_pickup=w_boost_pickup,
+            mayhem_prob=mayhem_prob,
+            w_power_fail=w_power_fail,
         )
         self._ptr = self.lib.rl_env_create(self.cfg)
 
@@ -209,6 +253,9 @@ class HyperstrikeVecEnv:
         self.lib.rl_env_set_bot_curriculum(
             self._ptr, ctypes.c_float(bot_opponent_prob), ctypes.c_uint32(bot_diff)
         )
+
+    def set_mayhem_prob(self, mayhem_prob: float) -> None:
+        self.lib.rl_env_set_mayhem_prob(self._ptr, ctypes.c_float(mayhem_prob))
 
     def reset(self) -> Dict[str, np.ndarray]:
         self.lib.rl_env_reset_all(

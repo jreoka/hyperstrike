@@ -148,7 +148,7 @@ class RoPEHyperstrikePolicy(nn.Module):
        [SELF], [BALL], up to 9 other cars (masked for 1v1..5v5), and 6 nearest boost pads.
     2. Temporal UnifiedEnergyBlock: Causal RoPE energy refinement over the sliding history
        [e_{t-T+1}, ..., e_t] (supports exact per-step KV-caching in Rust!).
-    3. Raw Control Heads: 8 factored raw-control categorical heads + PPO value head.
+    3. Raw Control Heads: 9 factored (incl. Mayhem item button) raw-control categorical heads + PPO value head.
     """
 
     def __init__(
@@ -204,7 +204,9 @@ class RoPEHyperstrikePolicy(nn.Module):
         self.action_head = nn.Linear(d_model, sum(ACTION_N_BINS))
         self.value_head = nn.Linear(d_model, 1)
 
-        # Precompute padded [8, 5] scatter mask for vectorized single-op sampling & log_prob
+        self.n_act_heads = len(ACTION_N_BINS)
+        self.max_bins = max(ACTION_N_BINS)
+        # Precompute padded [n_heads, max_bins] scatter mask for vectorized single-op sampling & log_prob
         max_bins = max(ACTION_N_BINS)
         valid_mask = torch.zeros((len(ACTION_N_BINS), max_bins), dtype=torch.bool)
         for k, nb in enumerate(ACTION_N_BINS):
@@ -255,12 +257,13 @@ class RoPEHyperstrikePolicy(nn.Module):
     def forward_temporal(self, frame_seq: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.temporal_block(frame_seq)
         h = self.final_norm(x[:, -1])
-        raw_logits = self.action_head(h)  # [B, 23]
-        # Scatter into padded [B, 8, 5] with -inf for unused bins so sampling/eval is 1 vectorized op!
+        raw_logits = self.action_head(h)  # [B, sum(bins)]
+        # Scatter into padded [B, heads, max_bins] with -1e9 for unused bins so sampling/eval is 1 vectorized op
         B = h.shape[0]
-        padded = torch.full((B, 40), -1e9, device=h.device, dtype=raw_logits.dtype)
+        H, MB = self.n_act_heads, self.max_bins
+        padded = torch.full((B, H * MB), -1e9, device=h.device, dtype=raw_logits.dtype)
         padded[:, self._act_flat_idx] = raw_logits
-        logits = padded.view(B, 8, 5)
+        logits = padded.view(B, H, MB)
         value = self.value_head(h).squeeze(-1)
         return logits, value
 
@@ -286,7 +289,7 @@ class RoPEHyperstrikePolicy(nn.Module):
     def sample_actions(
         logits: torch.Tensor, deterministic: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # logits: [B, 8, 5] (padded with -1e9 for invalid bins)
+        # logits: [B, heads, max_bins] (padded with -1e9 for invalid bins)
         lg = logits.float()
         lp_all = F.log_softmax(lg, dim=-1)
         probs = lp_all.exp()
@@ -318,7 +321,7 @@ class RoPEHyperstrikePolicy(nn.Module):
         meta_path = out_dir / f"{stem}.json"
 
         manifest = {
-            "format": "hyperstrike_energy_rope_v2",
+            "format": "hyperstrike_energy_rope_v3",
             "d_model": self.d_model,
             "n_heads": self.n_heads,
             "mlp_ratio": self.mlp_ratio,

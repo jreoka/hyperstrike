@@ -17,6 +17,7 @@ from env import (
     ACTION_BIN_VALUES,
     ACTION_DIM,
     BALL_DIM,
+    DONE_TRUNCATED,
     MAX_CARS,
     NUM_PADS_OBS,
     OTHER_CARS,
@@ -71,6 +72,58 @@ class HistoryBuffer:
         expanded = frame_emb.unsqueeze(2).expand(-1, -1, self.seq_len, -1)
         self.buf = torch.where(is_fresh[:, :, None, None], expanded, self.buf)
         return self.buf
+
+
+class RewardNormalizer:
+    """Scales rewards by the running std of the discounted return (per env, car) so the
+    critic sees O(1) targets regardless of the goal reward magnitude."""
+
+    def __init__(self, num_envs: int, max_cars: int, gamma: float, device: torch.device):
+        self.gamma = gamma
+        self.ret = torch.zeros((num_envs, max_cars), device=device, dtype=torch.float32)
+        self.mean = torch.zeros((), device=device, dtype=torch.float64)
+        self.var = torch.ones((), device=device, dtype=torch.float64)
+        self.count = torch.full((), 1e-4, device=device, dtype=torch.float64)
+
+    def _update(self, x: torch.Tensor) -> None:
+        if x.numel() < 2:
+            return
+        x = x.double()
+        b_mean, b_var, b_n = x.mean(), x.var(unbiased=False), float(x.numel())
+        delta = b_mean - self.mean
+        tot = self.count + b_n
+        self.mean = self.mean + delta * b_n / tot
+        m2 = self.var * self.count + b_var * b_n + delta.pow(2) * self.count * b_n / tot
+        self.var = m2 / tot
+        self.count = tot
+
+    def __call__(self, rew: torch.Tensor, done: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
+        self.ret = self.ret * self.gamma + rew
+        self._update(self.ret[active > 0.5])
+        self.ret = self.ret * (1.0 - done).unsqueeze(-1)
+        scale = (self.var.sqrt() + 1e-8).float()
+        return (rew / scale).clamp_(-50.0, 50.0)
+
+    def state_dict(self) -> dict:
+        return {"mean": self.mean.item(), "var": self.var.item(), "count": self.count.item()}
+
+    def load_state_dict(self, d: dict) -> None:
+        self.mean.fill_(d["mean"])
+        self.var.fill_(d["var"])
+        self.count.fill_(d["count"])
+
+
+def check_checkpoint_compatible(model_sd: dict, policy: nn.Module, path: Path) -> None:
+    cur = policy.state_dict()
+    bad = [k for k, v in model_sd.items() if k in cur and tuple(v.shape) != tuple(cur[k].shape)]
+    missing = [k for k in cur if k not in model_sd]
+    if bad or missing:
+        raise SystemExit(
+            f"[Resume] {path} was trained with a different observation/action layout "
+            f"(mismatched: {bad[:4]}{' ...' if len(bad) > 4 else ''}; missing: {missing[:4]}).\n"
+            f"         Start a new run with --fresh (overwrites checkpoints in this dir) "
+            f"or use a new --checkpoint-dir."
+        )
 
 
 def obs_to_tensors(obs: Dict[str, np.ndarray], device: torch.device) -> Dict[str, torch.Tensor]:
@@ -177,7 +230,7 @@ def run_bc_warmstart(
                 other_list.append(t_obs["other"][active])
                 omask_list.append(t_obs["other_mask"][active])
                 pads_list.append(t_obs["pads"][active])
-                hist_list.append(win[active].to(amp_dtype).detach())
+                hist_list.append(win[active].detach().clone())
                 target_acts_list.append(
                     torch.from_numpy(expert_disc).to(device, non_blocking=True)[active]
                 )
@@ -216,7 +269,7 @@ def run_bc_warmstart(
                 e_cur = encode_fn(b_self[idx], b_ball[idx], b_other[idx], b_omask[idx], b_pads[idx])
                 seq_in = torch.cat([b_hist[idx, :-1, :].float(), e_cur.unsqueeze(1).float()], dim=1)
                 logits, _ = temporal_fn(seq_in)  # [B, 8, 5]
-                loss = F.cross_entropy(logits.reshape(-1, 5), yb.reshape(-1))
+                loss = F.cross_entropy(logits.reshape(-1, policy.max_bins).float(), yb.reshape(-1))
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
             bc_opt.step()
@@ -245,6 +298,7 @@ def train(args: argparse.Namespace) -> None:
         f"({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU'}) | "
         f"bf16={use_bf16} | envs={args.num_envs} | "
         f"team_sizes={args.min_team_size}v{args.min_team_size}..{args.max_team_size}v{args.max_team_size} | "
+        f"mayhem={args.mayhem_prob:.0%} | "
         f"opt=AdamW(lr={args.lr:.1e}->{args.lr_end:.1e})"
     )
 
@@ -256,6 +310,7 @@ def train(args: argparse.Namespace) -> None:
         max_episode_steps=args.max_episode_steps,
         bot_opponent_prob=args.bot_prob,
         bot_diff=args.bot_diff,
+        mayhem_prob=args.mayhem_prob,
         num_threads=args.threads,
         seed=args.seed,
     )
@@ -300,9 +355,14 @@ def train(args: argparse.Namespace) -> None:
     elif not args.fresh:
         resume_path = find_latest_checkpoint(ckpt_dir)
 
+    rew_norm = RewardNormalizer(args.num_envs, MAX_CARS, args.gamma, device)
+    resumed_rew_norm = None
+
     if resume_path is not None and resume_path.is_file():
         ckpt = torch.load(resume_path, map_location=device, weights_only=False)
+        check_checkpoint_compatible(ckpt["model"], policy, resume_path)
         policy.load_state_dict(ckpt["model"])
+        resumed_rew_norm = ckpt.get("reward_norm")
         optimizer.load_state_dict(ckpt["optimizer"])
         start_update = ckpt.get("update", 0) + 1
         total_env_steps = ckpt.get("total_env_steps", 0)
@@ -315,6 +375,9 @@ def train(args: argparse.Namespace) -> None:
             if best_winrate >= 0
             else f"[Auto-Resume] Loaded {resume_path} at update {start_update - 1} ({total_episodes:,} episodes)"
         )
+
+    if resumed_rew_norm is not None:
+        rew_norm.load_state_dict(resumed_rew_norm)
 
     if start_update > args.total_updates:
         print(f"[Done] Already reached update {start_update - 1} >= total_updates ({args.total_updates}).")
@@ -354,6 +417,8 @@ def train(args: argparse.Namespace) -> None:
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float32
 
     opponent_pool: deque[RoPEHyperstrikePolicy] = deque(maxlen=6)
+    # Rolling bot results across updates (a single 64-step rollout rarely has enough goals)
+    bot_window: deque = deque(maxlen=args.bot_wr_window)
 
     # Keep rollout buffers directly on GPU to eliminate CPU<->GPU ping-pong!
     buf_self = torch.zeros((R, N, C, SELF_DIM), device=device, dtype=torch.float32)
@@ -361,12 +426,14 @@ def train(args: argparse.Namespace) -> None:
     buf_other = torch.zeros((R, N, C, OTHER_CARS, OTHER_DIM), device=device, dtype=torch.float32)
     buf_omask = torch.zeros((R, N, C, OTHER_CARS), device=device, dtype=torch.float32)
     buf_pads = torch.zeros((R, N, C, NUM_PADS_OBS, PAD_DIM), device=device, dtype=torch.float32)
-    buf_hist = torch.zeros((R, N, C, T, args.d_model), device=device, dtype=amp_dtype)
+    # fp32 so the PPO re-forward sees exactly what the rollout saw (ratio == 1 at epoch 0)
+    buf_hist = torch.zeros((R, N, C, T, args.d_model), device=device, dtype=torch.float32)
     buf_actions = torch.zeros((R, N, C, ACTION_DIM), device=device, dtype=torch.int64)
     buf_logp = torch.zeros((R, N, C), device=device, dtype=torch.float32)
     buf_values = torch.zeros((R, N, C), device=device, dtype=torch.float32)
     buf_rewards = torch.zeros((R, N, C), device=device, dtype=torch.float32)
     buf_dones = torch.zeros((R, N), device=device, dtype=torch.float32)
+    buf_trunc = torch.zeros((R, N), device=device, dtype=torch.float32)
     buf_active = torch.zeros((R, N, C), device=device, dtype=torch.float32)
 
     def save_checkpoint(upd: int, is_best: bool = False) -> None:
@@ -377,6 +444,7 @@ def train(args: argparse.Namespace) -> None:
             "best_winrate": best_winrate,
             "model": policy.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "reward_norm": rew_norm.state_dict(),
             "args": vars(args),
         }
         periodic_path = ckpt_dir / f"ckpt_upd_{upd:07d}.pt"
@@ -411,6 +479,8 @@ def train(args: argparse.Namespace) -> None:
             ep_touches = 0
             ep_bot_w = 0
             ep_bot_l = 0
+            ep_power = 0
+            ep_mayhem_goals = 0
 
             past_opp = (
                 opponent_pool[np.random.randint(len(opponent_pool))]
@@ -446,7 +516,7 @@ def train(args: argparse.Namespace) -> None:
 
                     acts, logp, _ = policy.sample_actions(logits)
                     acts_nc = acts.view(N, C, ACTION_DIM)
-                    buf_hist[step].copy_(win.to(amp_dtype))
+                    buf_hist[step].copy_(win)
                     buf_actions[step].copy_(acts_nc)
                     buf_logp[step].copy_(logp.view(N, C))
                     buf_values[step].copy_(vals.view(N, C).float())
@@ -475,8 +545,11 @@ def train(args: argparse.Namespace) -> None:
                     if opp_hist is not None:
                         opp_hist.reset_envs(dones)
 
-                    buf_rewards[step].copy_(torch.from_numpy(rews), non_blocking=True)
-                    buf_dones[step].copy_(torch.from_numpy(dones.astype(np.float32)), non_blocking=True)
+                    done_f = torch.from_numpy((dones > 0).astype(np.float32)).to(device)
+                    buf_dones[step].copy_(done_f)
+                    buf_trunc[step].copy_(torch.from_numpy((dones == DONE_TRUNCATED).astype(np.float32)))
+                    rew_t = torch.from_numpy(rews).to(device)
+                    buf_rewards[step].copy_(rew_norm(rew_t, done_f, buf_active[step]))
 
                     ep_goals_b += stats.goals_blue
                     ep_goals_o += stats.goals_orange
@@ -484,6 +557,8 @@ def train(args: argparse.Namespace) -> None:
                     ep_touches += stats.touches
                     ep_bot_w += stats.bot_games_won
                     ep_bot_l += stats.bot_games_lost
+                    ep_power += stats.power_uses
+                    ep_mayhem_goals += stats.mayhem_goals
 
                 t_obs = obs_to_tensors(obs, device)
                 with torch.amp.autocast("cuda", enabled=use_bf16, dtype=amp_dtype):
@@ -506,10 +581,13 @@ def train(args: argparse.Namespace) -> None:
             # GAE advantage computation directly on GPU
             advantages = torch.zeros_like(buf_rewards)
             last_gae = torch.zeros((N, C), device=device, dtype=torch.float32)
+            # Timeouts are not real terminals: bootstrap them with V(s_t) (the post-timeout obs is
+            # already the next episode's kickoff, so V(s_t) is the best available estimate).
+            rew_boot = buf_rewards + args.gamma * buf_values * buf_trunc.unsqueeze(-1)
             for t in reversed(range(R)):
                 next_nonterminal = (1.0 - buf_dones[t]).unsqueeze(-1)
                 next_v = next_vals if t == R - 1 else buf_values[t + 1]
-                delta = buf_rewards[t] + args.gamma * next_v * next_nonterminal - buf_values[t]
+                delta = rew_boot[t] + args.gamma * next_v * next_nonterminal - buf_values[t]
                 last_gae = delta + args.gamma * args.gae_lambda * next_nonterminal * last_gae
                 advantages[t] = last_gae
             returns = advantages + buf_values
@@ -577,8 +655,12 @@ def train(args: argparse.Namespace) -> None:
                     pg2 = -mb_adv * torch.clamp(ratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef)
                     pg_loss = torch.max(pg1, pg2).mean()
 
-                    v_clipped = mb_old_val + torch.clamp(new_val.float() - mb_old_val, -args.clip_coef, args.clip_coef)
-                    v_loss = 0.5 * torch.max((new_val.float() - mb_ret) ** 2, (v_clipped - mb_ret) ** 2).mean()
+                    nv = new_val.float()
+                    if args.clip_vloss:
+                        v_clipped = mb_old_val + torch.clamp(nv - mb_old_val, -args.clip_coef, args.clip_coef)
+                        v_loss = 0.5 * torch.max((nv - mb_ret) ** 2, (v_clipped - mb_ret) ** 2).mean()
+                    else:
+                        v_loss = 0.5 * ((nv - mb_ret) ** 2).mean()
                     ent_loss = entropy.mean()
                     loss = pg_loss + args.vf_coef * v_loss - ent_coef * ent_loss
 
@@ -601,8 +683,10 @@ def train(args: argparse.Namespace) -> None:
 
             opt_sec = time.perf_counter() - t_opt
             agent_sps = M / max(1e-6, roll_sec + opt_sec)
-            bot_total = ep_bot_w + ep_bot_l
-            bot_wr = (ep_bot_w / bot_total) if bot_total > 0 else float("nan")
+            bot_window.append((ep_bot_w, ep_bot_l))
+            win_w = sum(w for w, _ in bot_window)
+            bot_total = win_w + sum(l for _, l in bot_window)
+            bot_wr = (win_w / bot_total) if bot_total > 0 else float("nan")
             last_completed_update = update
 
             vf_val = float(vf_sum / max(1, n_mb))
@@ -613,7 +697,9 @@ def train(args: argparse.Namespace) -> None:
                 eps=f"{total_episodes:,}",
                 asps=f"{agent_sps:.0f}",
                 g=ep_goals_b + ep_goals_o,
+                mg=ep_mayhem_goals,
                 t=ep_touches,
+                pu=ep_power,
                 vsBot=f"{bot_wr * 100:.0f}%" if bot_total > 0 else "n/a",
                 kl=f"{kl_val:.3f}",
                 clip=f"{clip_val:.2f}",
@@ -628,7 +714,7 @@ def train(args: argparse.Namespace) -> None:
                 opponent_pool.append(snap)
 
             if update % args.save_interval == 0 or update == args.total_updates:
-                is_best = bot_total >= 10 and bot_wr > 0.0 and bot_wr >= best_winrate
+                is_best = bot_total >= args.bot_wr_min_games and bot_wr > 0.0 and bot_wr >= best_winrate
                 if is_best:
                     best_winrate = bot_wr
                 save_checkpoint(update, is_best=is_best)
@@ -663,6 +749,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bc-lr", type=float, default=3e-3, help="AdamW learning rate for BC warmstart")
     p.add_argument("--bot-prob", type=float, default=0.25, help="Fraction of envs sparring against built-in bots")
     p.add_argument("--bot-diff", type=int, default=4, help="Sparring bot difficulty (0=Rookie..4=Champ)")
+    p.add_argument("--mayhem-prob", type=float, default=0.4, help="Fraction of episodes played in Mayhem (power-ups) mode")
+    p.add_argument("--bot-wr-window", type=int, default=50, help="Updates in the rolling vsBot win-rate window")
+    p.add_argument("--bot-wr-min-games", type=int, default=30, help="Min decided bot games in the window before best.pt can be saved")
     p.add_argument("--d-model", type=int, default=64, help="Energy Transformer hidden dimension (64 = fast Fly.io CPU)")
     p.add_argument("--n-heads", type=int, default=4, help="Attention heads")
     p.add_argument("--mlp-ratio", type=int, default=3, help="FFN expansion ratio for w_m")
@@ -679,6 +768,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--clip-coef", type=float, default=0.2, help="PPO clip ratio")
     p.add_argument("--target-kl", type=float, default=0.03, help="PPO KL early-stopping threshold (0 to disable)")
     p.add_argument("--vf-coef", type=float, default=0.5, help="Value loss weight")
+    p.add_argument("--clip-vloss", action="store_true", help="Enable PPO value clipping (off by default)")
     p.add_argument("--ent-coef-start", type=float, default=0.003, help="Initial entropy bonus")
     p.add_argument("--ent-coef-end", type=float, default=0.0005, help="Final entropy bonus")
     p.add_argument("--ppo-epochs", type=int, default=3, help="PPO epochs per update")
