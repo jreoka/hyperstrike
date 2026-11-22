@@ -10514,8 +10514,30 @@ class UIManager {
   }
   layoutSeg() { return this.seg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()])); }
   powerGrid() { return '<div class="pgrid">' + POWERS.map(pw => `<div title="${pw.desc}"><svg viewBox="0 0 24 24" style="color:${pw.color}">${pw.icon}</svg>${pw.name}</div>`).join('') + '</div>'; }
+  panelFocusSelector(el) {
+    if (!el) return null;
+    const esc = v => (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/["\\]/g, '\\$&');
+    if (el.id) return '#' + esc(el.id);
+    const d = el.dataset || {};
+    if (d.lset !== undefined) return `[data-lset="${esc(d.lset)}"][data-lval="${esc(d.lval ?? '')}"]`;
+    if (d.set !== undefined) return `[data-set="${esc(d.set)}"][data-val="${esc(d.val ?? '')}"]`;
+    if (d.car !== undefined) return `[data-car="${esc(d.car)}"][data-val="${esc(d.val ?? '')}"]`;
+    for (const k of ['lbt', 'lbkick', 'sqkick', 'joinlb', 'lbsort', 'gtab', 'stab', 'drill']) {
+      if (d[k] !== undefined) return `[data-${k}="${esc(d[k])}"]`;
+    }
+    return null;
+  }
   renderPanel(refocusSel = null) {
     const P = $('menuPanel'); const s = this.setup; P.classList.remove('wide', 'garage');
+    const viewKey = this.menuScreen === 'multiplayer' ? (this.g.online && this.g.online.lobby ? 'mp:in' : 'mp:out') : this.menuScreen;
+    const sameView = this._renderedViewKey === viewKey;
+    const prevScroll = sameView ? P.scrollTop : 0;
+    const prevEl = document.activeElement && P.contains(document.activeElement) ? document.activeElement : null;
+    const autoSel = !refocusSel && sameView && prevEl ? this.panelFocusSelector(prevEl) : null;
+    const prevIdx = !refocusSel && sameView && prevEl ? this.focusables(P).indexOf(prevEl) : -1;
+    const prevInput = sameView && prevEl && prevEl.tagName === 'INPUT' && prevEl.id
+      ? { id: prevEl.id, value: prevEl.value, start: prevEl.selectionStart, end: prevEl.selectionEnd } : null;
+    this._renderedViewKey = viewKey;
     let h = '';
     switch (this.menuScreen) {
       case 'play':
@@ -10570,7 +10592,29 @@ class UIManager {
     if (this.menuScreen === 'ranks') this.bindRanks();
     if (this.menuScreen === 'garage') this.bindGarage();
     if (this.menuScreen === 'settings') this.bindSettings();
-    if (refocusSel && document.body.classList.contains('gp-nav')) { const el = P.querySelector(refocusSel); el && this.focusEl(el); }
+    if (sameView) P.scrollTop = prevScroll;
+    if (prevInput) {
+      const inp = $(prevInput.id);
+      if (inp) {
+        inp.value = prevInput.value;
+        try { if (prevInput.start !== null) inp.setSelectionRange(prevInput.start, prevInput.end); } catch (_) {}
+      }
+    }
+    const gpNav = document.body.classList.contains('gp-nav');
+    const targetSel = refocusSel || autoSel;
+    if (targetSel && (gpNav || prevInput)) {
+      let el = null;
+      try { el = P.querySelector(targetSel); } catch (_) {}
+      if (!el && prevIdx >= 0 && gpNav) {
+        const list = this.focusables(P);
+        el = list[Math.min(prevIdx, list.length - 1)] || null;
+      }
+      if (el) this.focusEl(el, gpNav);
+    } else if (prevIdx >= 0 && gpNav) {
+      const list = this.focusables(P);
+      const el = list[Math.min(prevIdx, list.length - 1)] || null;
+      if (el) this.focusEl(el, true);
+    }
   }
   multiplayerHtml() {
     const on = this.g.online, me = on.user, sq = on.squad, lb = on.lobby;
@@ -10734,6 +10778,7 @@ class UIManager {
     P.querySelectorAll('[data-lbt]').forEach(b => b.onclick = () => on.switchTeam(b.dataset.lbt === 'random' ? 'random' : +b.dataset.lbt));
     P.querySelectorAll('[data-lbkick]').forEach(b => b.onclick = () => on.kickLobby(b.dataset.lbkick));
     P.querySelectorAll('[data-lset]').forEach(b => b.onclick = () => {
+      this.g.audio.ui('click');
       const k = b.dataset.lset, v = JSON.parse(b.dataset.lval);
       on.updateLobbySettings({ [k]: v });
     });
