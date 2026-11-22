@@ -116,7 +116,7 @@ impl SingleEnv {
         }
 
         // Place cars on kickoff spots
-        Self::place_kickoff(&mut world, team_size, &mut self.rng);
+        Self::place_kickoff(&mut world, &mut self.rng);
         self.world = world;
         self.team_size = team_size;
         self.step_count = 0;
@@ -124,7 +124,7 @@ impl SingleEnv {
         self.experts = experts;
     }
 
-    fn place_kickoff(world: &mut World, team_size: usize, rng: &mut StdRng) {
+    fn place_kickoff(world: &mut World, rng: &mut StdRng) {
         world.ball.reset(0.0, world.phys.ball_r + 0.05, 0.0);
         world.reset_pads();
         world.kickoff = true;
