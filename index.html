@@ -497,8 +497,10 @@ body.pad-ui .prompts .gp{display:inline-flex}
 .pc-acts{display:flex;flex-direction:column;align-items:stretch;gap:4px;flex:none;padding-left:10px;border-left:1px solid var(--line)}
 .pc-btn,.pc-out{display:flex;align-items:center;justify-content:center;gap:5px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:var(--ink2);font-size:9px;font-weight:800;letter-spacing:.14em;padding:4px 8px;cursor:pointer;transition:all .15s;outline:none}
 .pc-btn svg,.pc-out svg{width:11px;height:11px}
-.pc-btn:hover,.pc-btn:focus-visible,body.gp-nav .pc-btn:focus{border-color:var(--accent);color:var(--accent)}
-.pc-out:hover,.pc-out:focus-visible,body.gp-nav .pc-out:focus{border-color:var(--bad);color:var(--bad)}
+.pc-btn:hover,.pc-btn:focus-visible,body.gp-nav .pc-btn:focus{border-color:var(--accent);color:var(--accent);background:rgba(62,242,255,.14)}
+.pc-out:hover,.pc-out:focus-visible,body.gp-nav .pc-out:focus{border-color:var(--bad);color:var(--bad);background:rgba(255,75,110,.14)}
+.pc-btn:focus-visible,body.gp-nav .pc-btn:focus{box-shadow:0 0 0 1px var(--accent)}
+.pc-out:focus-visible,body.gp-nav .pc-out:focus{box-shadow:0 0 0 1px var(--bad)}
 .sq-chip{display:flex;align-items:center;gap:8px;padding:0 14px;height:62px;font-size:10px;font-weight:800;letter-spacing:.2em;color:var(--gold);
   background:rgba(255,210,63,.08);border:1px solid rgba(255,210,63,.3);clip-path:polygon(10px 0,100% 0,100% 100%,0 100%,0 10px);white-space:nowrap}
 .sq-chip b{font-size:15px;font-style:italic;letter-spacing:.14em;color:#fff}
@@ -12033,6 +12035,7 @@ class UIManager {
       if (on.squad) { sqc.classList.remove('hidden'); sqc.innerHTML = `<span>SQUAD</span><b>${this.esc(on.squad.code)}</b><span>${on.squad.members.length} ${on.squad.members.length === 1 ? 'MEMBER' : 'MEMBERS'}</span>`; }
       else sqc.classList.add('hidden');
     }
+    const focusedId = el.contains(document.activeElement) ? document.activeElement.id : '';
     const r = u.rank || { name: 'BRONZE I', color: '#cd7f32', rp: 0 };
     const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
     const ini = this.esc(String(u.username || '?').charAt(0).toUpperCase());
@@ -12049,6 +12052,7 @@ class UIManager {
     if (cp) cp.onclick = () => { this.g.audio.ui('click'); this.settingsTab = 'account'; this.showMenu('settings'); };
     const so = $('btnSignOut');
     if (so) so.onclick = () => { this.g.audio.ui('click'); this.g.online.logout(); };
+    if (focusedId) { const rf = $(focusedId); rf && rf.focus({ preventScroll: true }); }
   }
   clearHudFX() {
     const gb = $('goalBanner'); if (gb) { gb._animGen = (gb._animGen || 0) + 1; gb.className = ''; $('gbMeta').textContent = ''; }
@@ -13572,9 +13576,11 @@ class UIManager {
       if (next !== curVal) { cur.value = next; cur.dispatchEvent(new Event('input', { bubbles: true })); this.g.audio.ui('hover'); }
       return;
     }
-    const nav = $('mainNav'), panel = $('menuPanel');
+    const nav = $('mainNav'), panel = $('menuPanel'), topbar = root === $('menu') ? root.querySelector('.topbar') : null;
     const inNav = root === $('menu') && nav && nav.contains(cur);
     const inPanel = root === $('menu') && panel && panel.contains(cur);
+    const topEls = topbar ? els.filter(e => topbar.contains(e)) : [];
+    const inTop = topEls.includes(cur);
     const findBest = (pool, sameRow = false) => {
       const r0 = cur.getBoundingClientRect(); const cx = r0.left + r0.width / 2, cy = r0.top + r0.height / 2;
       let best = null, bs = 1e9;
@@ -13606,14 +13612,33 @@ class UIManager {
     const dockEls = dock ? panelEls.filter(e => dock.contains(e)) : [];
     const bodyEls = panelEls.filter(e => !dockEls.includes(e));
     const inDock = dockEls.includes(cur);
+    const visibleBodyEls = () => {
+      if (!panel) return [];
+      const pr = panel.getBoundingClientRect(), limit = dock ? dock.getBoundingClientRect().top : pr.bottom;
+      return bodyEls.filter(e => { const r = e.getBoundingClientRect(); return r.top >= pr.top && r.bottom <= limit; });
+    };
+    const activeNavBtn = () => nav && (nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn'));
     const horiz = dir === 'left' || dir === 'right';
     let best = null;
-    if (inNav && (dir === 'up' || dir === 'down')) {
+    if (inTop) {
+      if (dir === 'up') {
+        best = findBest(topEls);
+      } else if (dir === 'down') {
+        best = findBest(topEls);
+        if (!best) {
+          const visible = visibleBodyEls();
+          best = findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || activeNavBtn() || null;
+        }
+      } else if (horiz) {
+        best = findBest(topEls, true) || findBest(topEls);
+        if (!best && dir === 'left') best = activeNavBtn();
+      }
+    } else if (inNav && (dir === 'up' || dir === 'down')) {
       best = findBest(els.filter(e => nav.contains(e)));
+      if (!best && dir === 'up' && topEls.length) best = findBest(topEls) || topEls[0];
     } else if (inNav && dir === 'right') {
-      const pr = panel.getBoundingClientRect(), limit = dock ? dock.getBoundingClientRect().top : pr.bottom;
-      const visible = bodyEls.filter(e => { const r = e.getBoundingClientRect(); return r.top >= pr.top && r.bottom <= limit; });
-      best = findBest(visible, true) || findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || null;
+      const visible = visibleBodyEls();
+      best = findBest(visible, true) || findBest(visible) || visible[0] || bodyEls[0] || dockEls[0] || topEls[0] || null;
     } else if (inDock) {
       if (dir === 'up') {
         // jump to the bottom-most row of content, picking the item horizontally closest to the button
@@ -13621,14 +13646,16 @@ class UIManager {
         let maxB = -1e9; for (const e of bodyEls) maxB = Math.max(maxB, e.getBoundingClientRect().bottom);
         let bd = 1e9;
         for (const e of bodyEls) { const r = e.getBoundingClientRect(); if (r.bottom < maxB - 12) continue; const d = Math.abs(r.left + r.width / 2 - cx); if (d < bd) { bd = d; best = e; } }
+        if (!best && topEls.length) best = findBest(topEls) || topEls[0];
       } else if (horiz) {
         best = findBest(dockEls, true);
-        if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
+        if (!best && dir === 'left') best = activeNavBtn();
       }
     } else if (inPanel) {
       best = findBest(bodyEls, horiz);
+      if (!best && dir === 'up' && topEls.length) best = findBest(topEls) || topEls[0];
       if (!best && dir === 'down') best = dockEls[0] || null;
-      if (!best && dir === 'left') best = nav.querySelector('.navbtn.active') || nav.querySelector('.navbtn');
+      if (!best && dir === 'left') best = activeNavBtn();
     } else {
       best = findBest(els, horiz);
     }
@@ -14560,7 +14587,8 @@ class GameEngine {
       this.handleUiNav(dt);
       if (((!isText && inp.hit('Escape')) || inp.padHit(1)) && !this.ui.overlayOpen) {
         if (isText && ae.blur) ae.blur();
-        if (!this.showroom || $('menuPanel').contains(document.activeElement)) {
+        const topbar = document.querySelector('#menu .topbar');
+        if (!this.showroom || $('menuPanel').contains(document.activeElement) || (topbar && topbar.contains(document.activeElement))) {
           const b = document.querySelector('#mainNav .navbtn.active') || document.querySelector('#mainNav .navbtn');
           b && this.ui.focusEl(b); this.audio.ui('back');
         }
