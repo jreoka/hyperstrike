@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 use tokio::sync::Notify;
@@ -53,6 +53,8 @@ pub struct ClusterState {
     pub http: reqwest::Client,
     pub peers: RwLock<HashMap<String, PeerSnapshot>>,
     pub change_notify: Notify,
+    /// Primary only: result_id -> (applied_at_ms, response) for idempotent result submission.
+    pub applied_results: Mutex<HashMap<String, (i64, Value)>>,
 }
 
 impl Default for ClusterState {
@@ -67,6 +69,7 @@ impl Default for ClusterState {
             http,
             peers: RwLock::new(HashMap::new()),
             change_notify: Notify::new(),
+            applied_results: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -102,6 +105,12 @@ pub fn fly_replay_region(region: &str) -> Response {
 }
 
 pub fn verify_cluster_secret(state: &AppState, headers: &HeaderMap) -> bool {
+    // Peers talk over 6PN directly; anything that came through the Fly edge proxy carries
+    // Fly-Client-IP. /internal/* must never be reachable from the public internet, even with the
+    // right secret (it's the same secret that signs the hs_client cookie).
+    if state.config.trust_proxy && headers.contains_key("fly-client-ip") {
+        return false;
+    }
     let Some(given) = headers
         .get(CLUSTER_SECRET_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -281,6 +290,11 @@ pub async fn find_remote_code_region(state: &AppState, kind: &str, code: &str) -
     if !state.config.is_clustered() {
         return None;
     }
+    // Codes are short alphanumerics (see auth::random_code). Reject anything else before it
+    // turns into cross-continent lookups or gets spliced into the internal query string.
+    if code.is_empty() || code.len() > 12 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
     // 1. Check fresh peer cache first (0ms)
     for p in state.cluster.fresh_peers() {
         let found = if kind == "squad" {
@@ -409,15 +423,27 @@ pub struct PrimaryAuthResp {
     pub session: Option<Session>,
 }
 
+/// Outcome of asking the primary to validate a session token. `Rejected` means the primary
+/// answered and the token is not valid (revoked, expired, user deleted); `Unavailable` means we
+/// could not get an answer at all. Callers must only fall back to the local mirror on the latter,
+/// otherwise a revoked token keeps working on non-primary regions until the next snapshot.
+pub enum PrimaryAuth {
+    Ok(Box<User>, Box<Session>),
+    Rejected,
+    Unavailable,
+}
+
 pub async fn auth_token_via_primary(
     state: &AppState,
     token: &str,
     ip: &str,
     user_agent: &str,
-) -> Option<(User, Session)> {
-    let primary_url = state.config.primary_url()?;
+) -> PrimaryAuth {
+    let Some(primary_url) = state.config.primary_url() else {
+        return PrimaryAuth::Unavailable;
+    };
     let url = format!("{primary_url}/internal/db/auth");
-    let resp = state
+    let resp = match state
         .cluster
         .http
         .post(&url)
@@ -429,20 +455,87 @@ pub async fn auth_token_via_primary(
         }))
         .send()
         .await
-        .ok()?;
-    if !resp.status().is_success() {
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return PrimaryAuth::Unavailable,
+    };
+    let Ok(parsed) = resp.json::<PrimaryAuthResp>().await else {
+        return PrimaryAuth::Unavailable;
+    };
+    match (parsed.ok, parsed.user, parsed.session) {
+        (true, Some(u), Some(s)) => PrimaryAuth::Ok(Box::new(u), Box::new(s)),
+        _ => PrimaryAuth::Rejected,
+    }
+}
+
+/// POSTs a match result to the primary, retrying on transport failure. The `result_id` in the
+/// payload makes this idempotent: if an earlier attempt was applied but its response was lost,
+/// the primary returns the cached response instead of awarding the match twice.
+async fn post_result_with_retry<Req: Serialize, Resp: serde::de::DeserializeOwned>(
+    state: &AppState,
+    path: &str,
+    req: &Req,
+) -> Option<Resp> {
+    let primary_url = state.config.primary_url()?;
+    let url = format!("{primary_url}{path}");
+    let backoff_ms = [0u64, 400, 1200, 2500];
+    for (attempt, delay) in backoff_ms.iter().enumerate() {
+        if *delay > 0 {
+            tokio::time::sleep(Duration::from_millis(*delay)).await;
+        }
+        let res = state
+            .cluster
+            .http
+            .post(&url)
+            .header(CLUSTER_SECRET_HEADER, &state.config.client_secret)
+            .timeout(Duration::from_secs(3))
+            .json(req)
+            .send()
+            .await;
+        match res {
+            Ok(r) if r.status().is_success() => match r.json::<Resp>().await {
+                Ok(v) => return Some(v),
+                Err(err) => eprintln!("[CLUSTER] {path} parse error (attempt {}): {err}", attempt + 1),
+            },
+            // A 4xx is a deterministic rejection; retrying won't change it.
+            Ok(r) if r.status().is_client_error() => {
+                eprintln!("[CLUSTER] {path} rejected: HTTP {}", r.status());
+                return None;
+            }
+            Ok(r) => eprintln!("[CLUSTER] {path} HTTP {} (attempt {})", r.status(), attempt + 1),
+            Err(err) => eprintln!("[CLUSTER] {path} error (attempt {}): {err}", attempt + 1),
+        }
+    }
+    eprintln!("[CLUSTER] {path} failed after {} attempts; result NOT persisted", backoff_ms.len());
+    None
+}
+
+const RESULT_CACHE_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// Returns the cached response for `result_id` if this result was already applied.
+fn cached_result(state: &AppState, result_id: &str) -> Option<Value> {
+    if result_id.is_empty() {
         return None;
     }
-    let parsed: PrimaryAuthResp = resp.json().await.ok()?;
-    if !parsed.ok {
-        return None;
+    let now = now_ms();
+    let mut cache = state.cluster.applied_results.lock().unwrap();
+    cache.retain(|_, (at, _)| now - *at < RESULT_CACHE_TTL_MS);
+    cache.get(result_id).map(|(_, v)| v.clone())
+}
+
+fn remember_result(state: &AppState, result_id: &str, resp: &Value) {
+    if result_id.is_empty() {
+        return;
     }
-    Some((parsed.user?, parsed.session?))
+    let mut cache = state.cluster.applied_results.lock().unwrap();
+    cache.insert(result_id.to_string(), (now_ms(), resp.clone()));
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SoloResultRequest {
+    #[serde(default)]
+    pub result_id: String,
     pub user_id: String,
     pub username_lower: String,
     pub duration: i32,
@@ -464,26 +557,14 @@ pub async fn apply_solo_result_via_primary(
     state: &AppState,
     req: &SoloResultRequest,
 ) -> Option<SoloResultResponse> {
-    let primary_url = state.config.primary_url()?;
-    let url = format!("{primary_url}/internal/db/apply-solo-result");
-    let resp = state
-        .cluster
-        .http
-        .post(&url)
-        .header(CLUSTER_SECRET_HEADER, &state.config.client_secret)
-        .json(req)
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    resp.json::<SoloResultResponse>().await.ok()
+    post_result_with_retry(state, "/internal/db/apply-solo-result", req).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MpResultRequest {
+    #[serde(default)]
+    pub result_id: String,
     pub started_at: i64,
     pub participants: Vec<MatchParticipant>,
     pub is_ranked_setting: bool,
@@ -504,21 +585,7 @@ pub async fn apply_mp_result_via_primary(
     state: &AppState,
     req: &MpResultRequest,
 ) -> Option<MpResultResponse> {
-    let primary_url = state.config.primary_url()?;
-    let url = format!("{primary_url}/internal/db/apply-mp-result");
-    let resp = state
-        .cluster
-        .http
-        .post(&url)
-        .header(CLUSTER_SECRET_HEADER, &state.config.client_secret)
-        .json(req)
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    resp.json::<MpResultResponse>().await.ok()
+    post_result_with_retry(state, "/internal/db/apply-mp-result", req).await
 }
 
 pub fn notify_primary_ac_penalize(state: Arc<AppState>, username_lower: String, reason: String) {
@@ -547,6 +614,19 @@ pub fn notify_primary_ac_penalize(state: Arc<AppState>, username_lower: String, 
 }
 
 pub fn fanout_kick_user(state: Arc<AppState>, user_id: String, reason: String) {
+    fanout_kick_user_except(state, user_id, reason, None);
+}
+
+/// Kicks `user_id` on every peer, sparing connections that use `except_token`. Used on WS auth:
+/// the same token on another region is this same browser mid region-switch, and its old socket
+/// is already closing. Kicking it anyway races the switch and can hit the *new* socket if the
+/// user hops back quickly, which makes the client log out and revoke its own session.
+pub fn fanout_kick_user_except(
+    state: Arc<AppState>,
+    user_id: String,
+    reason: String,
+    except_token: Option<String>,
+) {
     if !state.config.is_clustered() {
         return;
     }
@@ -555,11 +635,12 @@ pub fn fanout_kick_user(state: Arc<AppState>, user_id: String, reason: String) {
         let secret = state.config.client_secret.clone();
         let uid = user_id.clone();
         let reason = reason.clone();
+        let except = except_token.clone();
         tokio::spawn(async move {
             let _ = http
                 .post(format!("{base_url}/internal/cluster/kick-user"))
                 .header(CLUSTER_SECRET_HEADER, secret)
-                .json(&json!({ "userId": uid, "reason": reason }))
+                .json(&json!({ "userId": uid, "reason": reason, "exceptToken": except }))
                 .send()
                 .await;
         });
@@ -905,8 +986,9 @@ pub async fn internal_kick_user(
         .get("reason")
         .and_then(|v| v.as_str())
         .unwrap_or("Disconnected.");
+    let except = parsed.get("exceptToken").and_then(|v| v.as_str());
     let kicked = if !uid.is_empty() {
-        crate::ws::disconnect_user(&state, uid, reason)
+        crate::ws::disconnect_user_except(&state, uid, reason, except)
     } else {
         false
     };
@@ -1072,6 +1154,10 @@ pub async fn internal_db_apply_solo_result(
     };
     let (reward, user_after) = {
         let mut db = state.db.lock().unwrap();
+        // Checked under the db lock so a retry racing the original attempt can't double-apply.
+        if let Some(cached) = cached_result(&state, &req.result_id) {
+            return json_response(&state, StatusCode::OK, &cached);
+        }
         let reward = crate::ws::apply_solo_rewards_to_db(
             &mut db,
             &req.user_id,
@@ -1084,6 +1170,7 @@ pub async fn internal_db_apply_solo_result(
             &req.player_stats,
         );
         let u = db.data.users.get(&req.username_lower).cloned();
+        remember_result(&state, &req.result_id, &json!({ "reward": reward, "user": u }));
         (reward, u)
     };
     if let Some(ref u) = user_after {
@@ -1113,6 +1200,9 @@ pub async fn internal_db_apply_mp_result(
     };
     let (rewards, ranked_void, updated_users) = {
         let mut db = state.db.lock().unwrap();
+        if let Some(cached) = cached_result(&state, &req.result_id) {
+            return json_response(&state, StatusCode::OK, &cached);
+        }
         let (rewards, ranked_void, touched) = crate::ws::apply_mp_rewards_to_db(
             &mut db,
             req.started_at,
@@ -1128,6 +1218,11 @@ pub async fn internal_db_apply_mp_result(
                 users_map.insert(key, u.clone());
             }
         }
+        remember_result(
+            &state,
+            &req.result_id,
+            &json!({ "rewards": rewards, "rankedVoid": ranked_void, "updatedUsers": users_map }),
+        );
         (rewards, ranked_void, users_map)
     };
     for (k, u) in &updated_users {

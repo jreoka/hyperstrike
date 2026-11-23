@@ -148,17 +148,27 @@ impl AppState {
             if !state_cluster.config.is_clustered() {
                 return;
             }
-            if !state_cluster.config.is_primary() {
+            let is_primary = state_cluster.config.is_primary();
+            let mut have_snapshot = is_primary;
+            if !is_primary {
                 for _ in 0..5 {
                     if cluster::pull_db_snapshot_from_primary(&state_cluster).await {
+                        have_snapshot = true;
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                if !have_snapshot {
+                    eprintln!("[CLUSTER] Starting without a DB mirror; retrying every 5s");
                 }
             }
             let mut sync_interval = tokio::time::interval(Duration::from_secs(2));
             let mut db_refresh_interval = tokio::time::interval(Duration::from_secs(60));
             db_refresh_interval.tick().await;
+            // During rolling deploys the primary is often mid-restart when peers boot. Without
+            // this, a peer would run with an empty mirror for a full minute.
+            let mut db_retry_interval = tokio::time::interval(Duration::from_secs(5));
+            db_retry_interval.tick().await;
             loop {
                 tokio::select! {
                     _ = shutdown_rx_cluster.changed() => {
@@ -173,8 +183,14 @@ impl AppState {
                         cluster::sync_peers_once(&state_cluster).await;
                     }
                     _ = db_refresh_interval.tick() => {
-                        if !state_cluster.config.is_primary() {
-                            cluster::pull_db_snapshot_from_primary(&state_cluster).await;
+                        if !is_primary {
+                            have_snapshot = cluster::pull_db_snapshot_from_primary(&state_cluster).await;
+                        }
+                    }
+                    _ = db_retry_interval.tick(), if !have_snapshot => {
+                        have_snapshot = cluster::pull_db_snapshot_from_primary(&state_cluster).await;
+                        if have_snapshot {
+                            eprintln!("[CLUSTER] DB mirror loaded from primary");
                         }
                     }
                 }

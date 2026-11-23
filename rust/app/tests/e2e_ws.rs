@@ -757,6 +757,79 @@ async fn e2e_multi_region_cluster_sync_and_cross_region_handoff() {
     }
     assert!(saw_redirect, "EU player joining US lobby should receive region_redirect");
 
+    // 6. A token revoked on the primary must be rejected on the replica, even though the replica's
+    //    mirror still holds a copy of the session (it cached it on a previous successful auth).
+    let tok_c = {
+        let mut db = state_ord.db.lock().unwrap();
+        db.create_session("euplayer")
+    };
+    let connect_fra = || {
+        let mut req = format!("ws://{addr_fra}/").into_client_request().unwrap();
+        req.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+        req.headers_mut().insert("Origin", format!("http://{addr_fra}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+    };
+    let (mut ws_c, _) = connect_fra().await.unwrap();
+    ws_c.send(Message::Text(json!({ "type": "auth", "token": tok_c }).to_string().into())).await.unwrap();
+    let mut c_ok = false;
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_c.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "auth_ok" {
+            c_ok = true;
+            break;
+        }
+    }
+    assert!(c_ok, "fresh token should auth on replica via primary");
+    assert!(state_fra.db.lock().unwrap().data.sessions.contains_key(&tok_c), "replica should mirror the session");
+    let _ = ws_c.close(None).await;
+    state_ord.db.lock().unwrap().data.sessions.shift_remove(&tok_c);
+
+    let (mut ws_d, _) = connect_fra().await.unwrap();
+    ws_d.send(Message::Text(json!({ "type": "auth", "token": tok_c }).to_string().into())).await.unwrap();
+    let mut d_result = String::new();
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_d.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "auth_ok" || v["type"] == "auth_error" {
+            d_result = v["type"].as_str().unwrap().to_string();
+            break;
+        }
+    }
+    assert_eq!(d_result, "auth_error", "revoked token must not auth via stale replica mirror");
+    assert!(!state_fra.db.lock().unwrap().data.sessions.contains_key(&tok_c), "replica should drop the revoked session");
+    let _ = ws_d.close(None).await;
+
+    // 7. Result submission is idempotent: the same result_id applied twice counts once.
+    let solo_req = server_core::cluster::SoloResultRequest {
+        result_id: "test-result-1".into(),
+        user_id: "u_fra".into(),
+        username_lower: "euplayer".into(),
+        duration: 120,
+        difficulty: 1,
+        tournament: false,
+        player_team: 0,
+        sim_score: [3, 1],
+        player_stats: std::collections::HashMap::new(),
+    };
+    let before = state_ord.db.lock().unwrap().data.users["euplayer"].stats.matches;
+    let r1 = server_core::cluster::apply_solo_result_via_primary(&state_fra, &solo_req).await;
+    let r2 = server_core::cluster::apply_solo_result_via_primary(&state_fra, &solo_req).await;
+    assert!(r1.is_some() && r2.is_some());
+    assert_eq!(r1.unwrap().reward, r2.unwrap().reward, "retry should return the cached reward");
+    let after = state_ord.db.lock().unwrap().data.users["euplayer"].stats.matches;
+    assert_eq!(after, before + 1, "duplicate result_id must not double-apply");
+
+    // 8. /internal/* must reject anything that came through the public Fly edge.
+    {
+        let mut cfg = cfg_ord.clone();
+        cfg.trust_proxy = true;
+        let st = AppState::new(cfg, Arc::new(server_core::protocol::NoopMatchBackend));
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(server_core::cluster::CLUSTER_SECRET_HEADER, secret.parse().unwrap());
+        assert!(server_core::cluster::verify_cluster_secret(&st, &h));
+        h.insert("fly-client-ip", "203.0.113.9".parse().unwrap());
+        assert!(!server_core::cluster::verify_cluster_secret(&st, &h));
+    }
+
     let _ = ws_a.close(None).await;
     let _ = ws_b.close(None).await;
     bg_ord.shutdown().await;

@@ -103,11 +103,30 @@ impl Default for RuntimeState {
 }
 
 pub fn disconnect_user(state: &AppState, user_id: &str, reason: &str) -> bool {
+    disconnect_user_except(state, user_id, reason, None)
+}
+
+/// Like `disconnect_user`, but leaves the connection alone if it authenticated with `except_token`.
+pub fn disconnect_user_except(
+    state: &AppState,
+    user_id: &str,
+    reason: &str,
+    except_token: Option<&str>,
+) -> bool {
     let mut rt = state.rt.lock().unwrap();
     let db = state.db.lock().unwrap();
     let Some(&cid) = rt.clients_by_user_id.get(user_id) else {
         return false;
     };
+    if let Some(except) = except_token.filter(|t| !t.is_empty())
+        && rt
+            .conns
+            .get(&cid)
+            .and_then(|c| c.session_token.as_deref())
+            == Some(except)
+    {
+        return false;
+    }
     send_to_conn(&rt, cid, &json!({ "type": "kicked", "reason": reason }));
     stop_solo_match(&mut rt, cid);
     leave_lobby(&mut rt, &db, cid, "kicked");
@@ -990,6 +1009,7 @@ fn finalize_solo_match(
         tokio::spawn(async move {
             let reward = if let (Some(uid), Some(ulower)) = (uid, ulower) {
                 let req = crate::cluster::SoloResultRequest {
+                    result_id: crate::auth::random_hex(16),
                     user_id: uid.clone(),
                     username_lower: ulower.clone(),
                     duration: sm.duration,
@@ -1243,6 +1263,7 @@ fn finalize_multiplayer_match(
         let code_owned = lobby_code.to_string();
         tokio::spawn(async move {
             let req = crate::cluster::MpResultRequest {
+                result_id: crate::auth::random_hex(16),
                 started_at,
                 participants: participants.clone(),
                 is_ranked_setting,
@@ -1585,31 +1606,58 @@ async fn handle_ws_message(
                 db.touch_session(token, &conn_ip, &conn_ua);
             }
             info
-        } else if let Some((user, session)) =
-            crate::cluster::auth_token_via_primary(state, token, &conn_ip, &conn_ua).await
-        {
-            let ulower = user.username.to_ascii_lowercase();
-            let info = (
-                user.id.clone(),
-                user.username.clone(),
-                ulower.clone(),
-                public_user(&user),
-            );
-            let mut db = state.db.lock().unwrap();
-            db.data.users.insert(ulower, user);
-            db.data.sessions.insert(token.to_string(), session);
-            Some(info)
         } else {
-            // Fallback to local mirror if primary is momentarily unreachable
-            let mut db = state.db.lock().unwrap();
-            db.get_user_by_token(token).map(|u| {
-                (
-                    u.id.clone(),
-                    u.username.clone(),
-                    u.username.to_ascii_lowercase(),
-                    public_user(u),
-                )
-            })
+            match crate::cluster::auth_token_via_primary(state, token, &conn_ip, &conn_ua).await {
+                crate::cluster::PrimaryAuth::Ok(user, session) => {
+                    let ulower = user.username.to_ascii_lowercase();
+                    let info = (
+                        user.id.clone(),
+                        user.username.clone(),
+                        ulower.clone(),
+                        public_user(&user),
+                    );
+                    let mut db = state.db.lock().unwrap();
+                    db.data.users.insert(ulower, *user);
+                    db.data.sessions.insert(token.to_string(), *session);
+                    Some(info)
+                }
+                crate::cluster::PrimaryAuth::Rejected => {
+                    // Primary is authoritative: drop any stale mirror copy of this session so a
+                    // revoked/expired token can't be accepted later via the fallback below.
+                    let mut db = state.db.lock().unwrap();
+                    db.data.sessions.shift_remove(token);
+                    None
+                }
+                crate::cluster::PrimaryAuth::Unavailable => {
+                    // Primary unreachable: fall back to the local mirror.
+                    let mut db = state.db.lock().unwrap();
+                    let info = db.get_user_by_token(token).map(|u| {
+                        (
+                            u.id.clone(),
+                            u.username.clone(),
+                            u.username.to_ascii_lowercase(),
+                            public_user(u),
+                        )
+                    });
+                    if info.is_none() {
+                        // Not in the mirror either (e.g. brand-new account). Don't send
+                        // auth_error: the client treats it as a revoked session and logs out.
+                        // Close instead so it reconnects and retries in a few seconds.
+                        drop(db);
+                        let rt = state.rt.lock().unwrap();
+                        send_to_conn(
+                            &rt,
+                            conn_id,
+                            &json!({ "type": "toast", "text": "SERVER BUSY, RETRYING..." }),
+                        );
+                        if let Some(c) = rt.conns.get(&conn_id) {
+                            c.close();
+                        }
+                        return;
+                    }
+                    info
+                }
+            }
         };
         let Some((uid, uname, ulower, pub_u)) = user_info else {
             let rt = state.rt.lock().unwrap();
@@ -1657,10 +1705,11 @@ async fn handle_ws_message(
         rt.clients_by_user_id.insert(uid.clone(), conn_id);
         drop(db);
         drop(rt);
-        crate::cluster::fanout_kick_user(
+        crate::cluster::fanout_kick_user_except(
             Arc::clone(state),
             uid,
             "Signed in from another tab/device.".into(),
+            Some(token.to_string()),
         );
         state.cluster.notify_changed();
         let online = crate::cluster::global_online_count(state);
