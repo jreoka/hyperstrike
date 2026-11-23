@@ -1576,6 +1576,55 @@ const Fullscreen = {
 Fullscreen.init();
 Events.on('settings', k => { if (k === 'fullscreen') Settings.data.fullscreen ? Fullscreen.enter() : Fullscreen.exit(); });
 
+/* ---------------- Haptics ---------------- */
+// One entry point for every rumble. Phones: the Vibration API (Android/Chromium) or, on iOS Safari where that
+// API doesn't exist, the system haptic tick that iOS 18+ plays when a native switch checkbox is toggled.
+// Controllers: Chromium/Safari `vibrationActuator` (dual-rumble) or the older `hapticActuators[].pulse`.
+const Haptics = {
+  _phoneUntil: 0, _iosTimers: [],
+  touchDevice() { return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches; },
+  _iosTick() {
+    try {
+      const l = document.createElement('label'); l.setAttribute('aria-hidden', 'true');
+      l.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+      const i = document.createElement('input'); i.type = 'checkbox'; i.setAttribute('switch', ''); i.tabIndex = -1;
+      const stop = e => e.stopPropagation(); l.addEventListener('click', stop); i.addEventListener('click', stop); i.addEventListener('change', stop);
+      l.appendChild(i); document.body.appendChild(l); l.click(); l.remove();
+    } catch (e) { }
+  },
+  // Phone buzz. `strength` 0..1 shortens weak effects (phones can't vary amplitude); `force` lets a short hit
+  // cut into a longer buzz already playing (otherwise weaker continuous effects like boost don't stomp impacts).
+  phone(strength, ms, force = false) {
+    if (!Settings.data.touchHaptics || !this.touchDevice()) return;
+    const now = performance.now();
+    const dur = Math.max(6, Math.round(ms * (0.3 + 0.7 * clamp(strength, 0, 1))));
+    if (!force && now < this._phoneUntil) return;
+    this._phoneUntil = Math.max(force ? 0 : this._phoneUntil, now + dur);
+    if (navigator.vibrate) { try { navigator.vibrate(dur); } catch (e) { } return; }
+    // iOS: each tick is one fixed click; long/strong effects become a short burst of ticks
+    for (const t of this._iosTimers) clearTimeout(t); this._iosTimers.length = 0;
+    const ticks = clamp(Math.round(dur / 90), 1, 6);
+    this._iosTick();
+    for (let k = 1; k < ticks; k++) this._iosTimers.push(setTimeout(() => this._iosTick(), k * 70));
+  },
+  // Controller rumble on the active pad
+  pad(pad, strong, weak, ms) {
+    if (!Settings.data.vibration || !pad) return;
+    strong = clamp(strong, 0, 1); weak = clamp(weak, 0, 1);
+    const a = pad.vibrationActuator;
+    if (a && a.playEffect) { a.playEffect('dual-rumble', { duration: ms, strongMagnitude: strong, weakMagnitude: weak }).catch(() => { }); return; }
+    const h = pad.hapticActuators && pad.hapticActuators[0];
+    if (h && h.pulse) try { const r = h.pulse(Math.max(strong, weak), ms); if (r && r.catch) r.catch(() => { }); } catch (e) { }
+  },
+  padStop(pad) {
+    if (!pad) return; const a = pad.vibrationActuator;
+    if (a && a.reset) a.reset().catch(() => { });
+    else if (a && a.playEffect) a.playEffect('dual-rumble', { duration: 1, strongMagnitude: 0, weakMagnitude: 0 }).catch(() => { });
+    else { const h = pad.hapticActuators && pad.hapticActuators[0]; if (h && h.pulse) try { const r = h.pulse(0, 1); if (r && r.catch) r.catch(() => { }); } catch (e) { } }
+  },
+  canPad(pad) { return !!(pad && ((pad.vibrationActuator && pad.vibrationActuator.playEffect) || (pad.hapticActuators && pad.hapticActuators[0] && pad.hapticActuators[0].pulse))); }
+};
+
 /* ---------------- Input ---------------- */
 class InputManager {
   constructor() {
@@ -1633,7 +1682,7 @@ class InputManager {
     const ui = $('touchUI'), zone = $('tZone'), stick = $('tStick'), knob = $('tKnob'), pad = $('tPad'), sys = $('tSys');
     if (!ui || !zone || !stick || !knob || !pad || !sys) return;
     const T = this.touch;
-    const haptic = (ms = 8) => { if (Settings.data.touchHaptics && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } };
+    const haptic = (ms = 8) => Haptics.phone(1, ms, true);
     const activate = () => {
       this.lastTouchT = performance.now(); this.usingPad = false;
       if (!T.active) { T.active = true; document.body.classList.add('touch-on'); this.applyTouchLayout(); }
@@ -2771,7 +2820,7 @@ class Car {
       angAcc.y += -PHYS.T_yaw * yin - (1 - Math.abs(yin)) * PHYS.D_yaw * _cl.y;
       acc.addScaledVector(f, PHYS.airThrottle * c.throttle);
     } else {
-      if (!wasGround && this.onGround && this.airTime > 0.25) this.events.push('land');
+      if (!wasGround && this.onGround && this.airTime > 0.25) { this.landAirTime = this.airTime; this.events.push('land'); }
       this.airTime = 0;
     }
 
@@ -11022,7 +11071,7 @@ class FreePlayMode extends ModeBase {
     const gt = w.shape.inGoal(w.ball.pos, PHYS.ballR);
     if (gt >= 0) {
       const g = this.game; const pos = w.ball.pos.clone();
-      g.fx.goalExplosion(pos, 1 - gt, Settings.data.car.explosion, tmpV.set(0, 0, gt === 0 ? 1 : -1).clone()); g.audio.goal(); g.camera.addShake(0.7);
+      g.fx.goalExplosion(pos, 1 - gt, Settings.data.car.explosion, tmpV.set(0, 0, gt === 0 ? 1 : -1).clone()); g.audio.goal(); g.camera.addShake(0.7); g.vibrate(0.85, 550);
       g.ui.goalBanner(1 - gt, 'GOAL!', Math.round(w.ball.vel.length() * 3.6) + ' KM/H');
       w.ball.frozen = true; w.ball.pos.set(0, -50, 0); g.ballVisual.mesh.visible = false; this.setState('goal');
     }
@@ -11105,7 +11154,7 @@ class TrainingMode extends ModeBase {
       const g = this.game, pos = w.ball.pos.clone(); const d = this.drill.id;
       if (d === 'goalie') { this.finishRound(false); return; }
       if (gt === 1) {
-        g.fx.goalExplosion(pos, 0, Settings.data.car.explosion, tmpV.set(0, 0, -1).clone()); g.audio.goal(); g.camera.addShake(0.6);
+        g.fx.goalExplosion(pos, 0, Settings.data.car.explosion, tmpV.set(0, 0, -1).clone()); g.audio.goal(); g.camera.addShake(0.6); g.vibrate(0.8, 500);
         if (d === 'dribble') this.gatePts += 2;
         this.finishRound(true);
       } else this.finishRound(false);
@@ -12962,6 +13011,7 @@ class UIManager {
     if (!el) return;
     el.textContent = txt;
     el.classList.toggle('go', txt === 'GO!');
+    if (txt === 'GO!') this.g.vibrate(0.6, 200); else if (/^\d$/.test(txt)) this.g.vibrate(0.2, 50);
     if (el._wa) { try { el._wa.cancel(); } catch (e) {} el._wa = null; }
     if (el.animate) {
       el.classList.remove('anim');
@@ -13269,6 +13319,11 @@ class UIManager {
   showResults(mode, isOnline = false) {
     const g = this.g; const s = mode.score; const win = s[0] > s[1] ? 0 : (s[1] > s[0] ? 1 : -1); const tn = g.teamNames || ['BLUE', 'ORANGE'];
     const pt = g.player ? g.player.team : -1; const title = win < 0 ? 'DRAW' : (pt < 0 ? `${tn[win]} WINS` : pt === win ? 'VICTORY' : 'DEFEAT');
+    // Match-end feel: a triple pulse for a win, one long low rumble for a loss, a single tap for a draw
+    if (pt >= 0) {
+      if (win === pt) { g.vibrate(0.7, 120); setTimeout(() => g.vibrate(0.7, 120), 200); setTimeout(() => g.vibrate(1, 260), 400); }
+      else if (win >= 0) g.vibrate(0.5, 500); else g.vibrate(0.4, 150);
+    }
     const t = g.tournament;
     const btns = isOnline
       ? `<button class="cta" data-act="mp_lobby"><span>Return to Lobby</span></button><button class="cta alt" data-act="menu"><span>Main Menu</span></button>`
@@ -13529,7 +13584,7 @@ class ReplayPlayer {
       this.dispatchEvents(gi); this.apply(gi, 0);
       const g = this.g, b = this.boom; this.boomT = 0;
       g.fx.goalExplosion(b.pos.clone(), b.team, b.type, b.dir.clone());
-      g.audio.goal(); g.camera.addShake(0.8); g.ui.flash(0.5);
+      g.audio.goal(); g.camera.addShake(0.8); g.ui.flash(0.5); g.vibrate(0.85, 550);
       g.ballVisual.mesh.visible = false;
     }
     const i = Math.floor(fi); this.dispatchEvents(i); this.apply(i, fi - i);
@@ -14236,12 +14291,14 @@ class GameEngine {
     this.showroom = null; for (const v of this.carVisuals) v.setVisible(true); this.ballVisual.mesh.visible = true;
     if (!this.inGame) this.camera.mode = 'orbit';
   }
-  previewExplosion() { this.fx.goalExplosion(new V3(0, 1.5, 4), 0, Settings.data.car.explosion, new V3(0, 0, -1)); this.audio.goal(); this.camera.addShake(0.4); }
+  previewExplosion() { this.fx.goalExplosion(new V3(0, 1.5, 4), 0, Settings.data.car.explosion, new V3(0, 0, -1)); this.audio.goal(); this.camera.addShake(0.4); this.vibrate(0.6, 350); }
   visualPos(car) { const v = this.carVisuals.find(v => v.car === car); return v ? v.visPos : car.pos; }
-  vibrate(strength, ms) {
-    if (!Settings.data.vibration || !this.input.pad) return; const a = this.input.pad.vibrationActuator;
+  // Impact rumble: controller (any browser with gamepad haptics) + phone vibration on touch devices
+  vibrate(strength, ms, phone = true) {
+    if (phone) Haptics.phone(strength, ms, true);
+    if (!Settings.data.vibration || !this.input.pad) return;
     this._rumbleUntil = Math.max(this._rumbleUntil || 0, performance.now() + ms);
-    if (a && a.playEffect) a.playEffect('dual-rumble', { duration: ms, strongMagnitude: clamp(strength, 0, 1), weakMagnitude: clamp(strength * 0.6, 0, 1) }).catch(() => { });
+    Haptics.pad(this.input.pad, strength, strength * 0.6, ms);
   }
   stopDrivingState() {
     if (this.world && this.world.cars) {
@@ -14259,22 +14316,22 @@ class GameEngine {
     this.updateBoostRumble();
   }
   updateBoostRumble() {
-    const a = Settings.data.vibration && this.input.pad ? this.input.pad.vibrationActuator : null;
+    const pad = Settings.data.vibration && Haptics.canPad(this.input.pad) ? this.input.pad : null;
+    const phone = Settings.data.touchHaptics && Haptics.touchDevice();
     const concluded = !!(this.mode && (this.mode.state === 'ended' || this.mode.state === 'done'));
-    const active = !!(a && a.playEffect && this.inGame && !this.paused && !this.showroom && !concluded && !(this.ui && this.ui.overlayOpen && !this.ui._sb) && !(this.replay && this.replay.active && this.mode && this.mode.state === 'replay') && this.player && this.player.isBoosting && !this.player.demolished);
+    const active = !!((pad || phone) && this.inGame && !this.paused && !this.showroom && !concluded && !(this.ui && this.ui.overlayOpen && !this.ui._sb) && !(this.replay && this.replay.active && this.mode && this.mode.state === 'replay') && this.player && this.player.isBoosting && !this.player.demolished);
     const now = performance.now();
     if (active) {
-      if (now >= (this._rumbleUntil || 0) && now - (this._boostRumbleAt || 0) >= 50) {
+      if (pad && now >= (this._rumbleUntil || 0) && now - (this._boostRumbleAt || 0) >= 50) {
         this._boostRumbleAt = now;
         this._boostRumbling = true;
-        a.playEffect('dual-rumble', { duration: 80, strongMagnitude: 0.08, weakMagnitude: 0.22 }).catch(() => { });
+        Haptics.pad(pad, 0.08, 0.22, 80);
       }
+      // Phones: a light steady patter while boosting (won't cut into an impact buzz already playing)
+      if (phone && now - (this._boostPhoneAt || 0) >= 110) { this._boostPhoneAt = now; Haptics.phone(0.2, 30); }
     } else if (this._boostRumbling) {
       this._boostRumbling = false;
-      if (a && now >= (this._rumbleUntil || 0)) {
-        if (a.reset) a.reset().catch(() => { });
-        else if (a.playEffect) a.playEffect('dual-rumble', { duration: 1, strongMagnitude: 0, weakMagnitude: 0 }).catch(() => { });
-      }
+      if (pad && now >= (this._rumbleUntil || 0)) Haptics.padStop(pad);
     }
   }
   handleUiNav(dt) {
@@ -14421,22 +14478,24 @@ class GameEngine {
           const c = e.car; const pos = c === p ? null : c.pos;
           if (e.kind === 'jump') au.jump(pos); else if (e.kind === 'djump') au.djump(pos);
           else if (e.kind === 'flip') au.flip(pos);
-          else if (e.kind === 'sonic') { au.sonic(pos); fx.wave(c.pos, c.basis.f, TEAM_GLOW[c.team], 2.2, 0.32); }
-          else if (e.kind === 'land') { au.land(pos, clamp(c.airTime + 0.4, 0.3, 1)); fx.dust(c.pos, 8, dustCol, 0.8, 0.8); if (c === p) this.vibrate(0.25, 80); }
-          else if (e.kind === 'crash') { au.wallHit(8, c.pos); fx.sparks(c.pos, 12, 0xffc070, 5, null, 0.4, 0.05); if (c === p) this.camera.addShake(0.15); }
+          else if (e.kind === 'sonic') { au.sonic(pos); fx.wave(c.pos, c.basis.f, TEAM_GLOW[c.team], 2.2, 0.32); if (c === p) this.vibrate(0.4, 120); }
+          else if (e.kind === 'land') { au.land(pos, clamp(c.airTime + 0.4, 0.3, 1)); fx.dust(c.pos, 8, dustCol, 0.8, 0.8); if (c === p) this.vibrate(clamp(0.15 + (c.landAirTime || 0) * 0.15, 0.2, 0.5), 80, (c.landAirTime || 0) > 0.6); } // phones skip tiny hops so driving over bumps doesn't buzz constantly
+          else if (e.kind === 'crash') { au.wallHit(8, c.pos); fx.sparks(c.pos, 12, 0xffc070, 5, null, 0.4, 0.05); if (c === p) { this.camera.addShake(0.15); this.vibrate(0.55, 140); } }
           break;
         }
         case 'demo': {
           fx.demolition(e.pos, e.victim.team); au.demo(e.pos); this.camera.addShake(e.victim === p || e.attacker === p ? 0.6 : 0.2);
           if (!isEx) { this.ui.feed(`${e.attacker.name} ⚡ ${e.victim.name}`, e.attacker.team); e.attacker.stats.score += 25; }
           if (e.victim === p) { this.ui.popup('DEMOLISHED', '#ff5b5b'); this.vibrate(1, 400); }
-          if (e.attacker === p) this.ui.popup('DEMOLITION!', '#ffd23f');
+          if (e.attacker === p) { this.ui.popup('DEMOLITION!', '#ffd23f'); this.vibrate(0.75, 250); }
+          else if (e.victim !== p && this.player && this.player.pos.distanceTo(e.pos) < 20) this.vibrate(0.3, 90);
           break;
         }
-        case 'bump': au.wallHit(e.strength, e.b.pos); fx.sparks(e.b.pos, 10, 0xffffff, 5, null, 0.3, 0.05); if (e.a === p || e.b === p) this.camera.addShake(0.2); break;
+        case 'bump': au.wallHit(e.strength, e.b.pos); fx.sparks(e.b.pos, 10, 0xffffff, 5, null, 0.3, 0.05); if (e.a === p || e.b === p) { this.camera.addShake(0.2); this.vibrate(clamp(e.strength / 40, 0.3, 0.85), e.b === p ? 180 : 130); } break;
         case 'pickup': {
           const near = e.car === p || this.renderer.camera.position.distanceTo(e.pad.pos) < 25;
           if (near) au.pickup(e.pad.big, e.car === p ? null : e.pad.pos);
+          if (e.car === p) this.vibrate(e.pad.big ? 0.45 : 0.15, e.pad.big ? 110 : 40);
           fx.pickup(e.pad.pos, e.pad.big); break;
         }
         case 'respawn': fx.sparks(e.car.pos, 40, TEAM_GLOW[e.car.team], 6, null, 0.6, 0.08); break;
@@ -14448,7 +14507,7 @@ class GameEngine {
     const p = this.player, au = this.audio, ui = this.ui; if (this.powerVis) this.powerVis.onEvent(e);
     const P = e.id ? POWER_BY_ID[e.id] : null; const at = (c) => c && c !== p ? c.pos : null;
     switch (e.kind) {
-      case 'get': if (e.car === p) { au.power('get'); ui.itemGot(); } break;
+      case 'get': if (e.car === p) { au.power('get'); ui.itemGot(); this.vibrate(0.3, 70); } break;
       case 'fail': if (e.car === p) { au.power('fail'); ui.toast('NO TARGET IN RANGE'); } break;
       case 'use':
         if (e.id !== 'freeze' && e.id !== 'shock') au.power(e.id === 'swap' ? 'swapCharge' : e.id, at(e.car));
@@ -14456,22 +14515,26 @@ class GameEngine {
         if (e.car === p) this.vibrate(0.3, 100);
         if (e.target === p && e.id === 'swap') ui.popup('SWAP INCOMING!', '#d07aff');
         break;
-      case 'freeze': au.power('freeze', this.world.ball.pos); break;
-      case 'shatter': au.power('shatter', e.pos); if (e.car === p) ui.popup('ICE BREAKER!', '#9fe8ff'); break;
+      case 'freeze': au.power('freeze', this.world.ball.pos); if (e.car === p) this.vibrate(0.45, 160); break;
+      case 'shatter': au.power('shatter', e.pos); if (e.car === p) { ui.popup('ICE BREAKER!', '#9fe8ff'); this.vibrate(0.6, 180); } break;
       case 'thaw': au.power('thaw', e.pos); break;
-      case 'attach': au.power('attach', e.pos); if (e.car === p) ui.popup('BALL STUCK · PRESS AGAIN TO LAUNCH', '#ffd23f'); break;
-      case 'release': au.power('release', e.pos); break;
-      case 'punchHit': au.power('punchHit', e.pos); break;
+      case 'attach': au.power('attach', e.pos); if (e.car === p) { ui.popup('BALL STUCK · PRESS AGAIN TO LAUNCH', '#ffd23f'); this.vibrate(0.4, 120); } break;
+      case 'release': au.power('release', e.pos); if (e.car === p && e.launch) this.vibrate(0.65, 160); break;
+      case 'punchHit': au.power('punchHit', e.pos); if (e.car === p) this.vibrate(0.8, 200); break;
       case 'bootHit': au.power('bootHit', e.pos); if (e.target === p) { ui.popup('BOOTED!', '#ffb04a'); this.vibrate(0.8, 300); this.camera.addShake(0.4); } break;
-      case 'hook': au.power('hook', e.pos); break;
-      case 'shock': au.power('shock', at(e.car)); break;
+      case 'hook': au.power('hook', e.pos); if (e.car === p) this.vibrate(0.35, 90); break;
+      case 'shock':
+        au.power('shock', at(e.car));
+        if (e.car === p) this.vibrate(0.7, 220);
+        else if (p && e.car && e.car.team !== p.team && !p.demolished && e.pos && p.pos.distanceTo(e.pos) < 16) { this.vibrate(0.85, 300); this.camera.addShake(0.35); }
+        break;
       case 'swap':
         au.power('swap', e.car === p || e.target === p ? null : e.to);
-        if (e.target === p) ui.popup('SWAPPED!', '#d07aff');
+        if (e.target === p) { ui.popup('SWAPPED!', '#d07aff'); this.vibrate(0.6, 200); } else if (e.car === p) this.vibrate(0.4, 120);
         if (e.car === p || e.target === p) this.camera.snap();
         break;
       case 'scrambled': if (e.car === p) { ui.popup('SCRAMBLED!', '#5aff9a'); au.power('scramble'); this.vibrate(0.6, 400); } break;
-      case 'ovHit': au.power('ovHit', e.pos); break;
+      case 'ovHit': au.power('ovHit', e.pos); if (e.car === p) this.vibrate(0.6, 140); break;
     }
   }
   replayEvent(e) {
