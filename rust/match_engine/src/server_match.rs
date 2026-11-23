@@ -770,12 +770,23 @@ impl ServerMatch {
                         .keys()
                         .all(|uid| self.replay_done.contains(uid));
                     if all_done || self.state_t > GOAL_PAUSE_S + REPLAY_MAX_S {
-                        self.begin_kickoff();
+                        if self.clock_expired() {
+                            // A post-buzzer goal tied the game: go straight to the overtime
+                            // kickoff instead of replaying a regulation kickoff at 0:00.
+                            self.time_up();
+                        } else {
+                            self.begin_kickoff();
+                        }
                     }
                 }
             }
             MatchState::Idle | MatchState::Ended => {}
         }
+    }
+
+    /// Regulation clock has run out (but overtime has not started yet).
+    fn clock_expired(&self) -> bool {
+        !self.unlimited && !self.overtime && self.time_left <= 0.0
     }
 
     fn time_up(&mut self) {
@@ -987,7 +998,9 @@ impl ServerMatch {
         self.set_state(MatchState::Goal);
         self.world.kickoff = false;
         self.replay_done.clear();
-        if self.overtime {
+        if self.overtime || (self.clock_expired() && self.score[0] != self.score[1]) {
+            // Overtime goal, or a goal scored after 0:00 while the ball was still airborne at
+            // the buzzer that leaves a winner: the match ends after the goal pause.
             self.match_over = true;
         }
         self.stats_dirty = true;
@@ -1563,6 +1576,40 @@ mod tests {
         assert!(sink.user_msgs.lock().unwrap().is_empty());
         assert!(sink.afk_kicks.lock().unwrap().is_empty());
         assert!(m.world.cars[1].bot.is_none());
+    }
+
+    fn score_post_buzzer_goal(m: &mut ServerMatch, goal_team: usize) {
+        m.time_left = 0.0;
+        m.timer_running = true;
+        m.on_goal(goal_team);
+        assert_eq!(m.state, MatchState::Goal);
+        // Run past the goal pause and the replay timeout.
+        for _ in 0..((GOAL_PAUSE_S + REPLAY_MAX_S + 1.0) / m.slot_sec) as usize {
+            if m.finished || m.state != MatchState::Goal {
+                break;
+            }
+            m.run_slot();
+        }
+    }
+
+    #[test]
+    fn post_buzzer_goal_that_breaks_tie_ends_match() {
+        let mut m = make_test_match();
+        m.score = [1, 1];
+        score_post_buzzer_goal(&mut m, 1); // team 0 scores -> 2:1
+        assert!(m.finished, "post-buzzer winning goal must end the match, state={:?}", m.state);
+        assert_eq!(m.state, MatchState::Ended);
+        assert!(!m.overtime);
+    }
+
+    #[test]
+    fn post_buzzer_goal_that_ties_goes_straight_to_overtime() {
+        let mut m = make_test_match();
+        m.score = [0, 1];
+        score_post_buzzer_goal(&mut m, 1); // team 0 scores -> 1:1
+        assert!(!m.finished);
+        assert!(m.overtime, "tying post-buzzer goal must start overtime directly");
+        assert_eq!(m.state, MatchState::Countdown);
     }
 
     #[test]

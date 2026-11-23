@@ -1790,8 +1790,9 @@ class ArenaShape {
           if (ex <= 0 && ey <= 0) {
             let d = -ex; if (-ey < d) d = -ey; if (y < d) d = y; const back = this.gd - v; if (back < d) d = back; return d;
           }
-          const ox = ex > 0 ? ex : 0, oy = ey > 0 ? ey : 0;
-          const dOut = Math.sqrt(ox * ox + oy * oy);
+          // distance to the goal box (opening AND back wall), so solid behind the net is measured correctly
+          const ox = ex > 0 ? ex : 0, oy = ey > 0 ? ey : 0, ob = v > this.gd ? v - this.gd : 0;
+          const dOut = Math.sqrt(ox * ox + oy * oy + ob * ob);
           return -(dOut < v ? dOut : v);
         }
         if (au < gw && y < gh) {
@@ -1808,8 +1809,9 @@ class ArenaShape {
         if (ex <= 0 && ey <= 0) {
           let d = -ex; if (-ey < d) d = -ey; if (y < d) d = y; const back = L + this.gd - az; if (back < d) d = back; return d;
         }
-        const ox = ex > 0 ? ex : 0, oy = ey > 0 ? ey : 0;
-        const dOut = Math.sqrt(ox * ox + oy * oy); const dz = az - L;
+        // distance to the goal box (opening AND back wall), so solid behind the net is measured correctly
+        const ox = ex > 0 ? ex : 0, oy = ey > 0 ? ey : 0, ob = az > L + this.gd ? az - L - this.gd : 0;
+        const dOut = Math.sqrt(ox * ox + oy * oy + ob * ob); const dz = az - L;
         return -(dOut < dz ? dOut : dz);
       }
       if (ax < gw && y < gh) {
@@ -8931,13 +8933,17 @@ class MatchMode extends ModeBase {
       if (this.stateT > (this.exhibition ? 2.4 : 3.4)) {
         if (this.matchOver) { this.finish(); return; }
         if (Settings.data.replays && !this.exhibition && this.replayFrames && this.replayFrames.length > 30) this.startReplay();
-        else this.beginKickoff();
+        else this.kickoffAfterGoal();
       }
     } else if (this.state === 'replay') {
       const done = g.replay.update(dt);
-      if (done || g.input.hit('Space') || g.input.hit('Enter') || g.input.padHit(0) || g.input.hit('Mouse1')) { g.replay.stop(); g.ui.replayTag(false); this.beginKickoff(); }
+      if (done || g.input.hit('Space') || g.input.hit('Enter') || g.input.padHit(0) || g.input.hit('Mouse1')) { g.replay.stop(); g.ui.replayTag(false); this.kickoffAfterGoal(); }
     }
   }
+  // Regulation clock has run out (but overtime has not started yet)
+  get clockExpired() { return !this.unlimited && !this.exhibition && !this.overtime && this.timeLeft <= 0; }
+  // A post-buzzer goal that tied the game goes straight to the overtime kickoff
+  kickoffAfterGoal() { if (this.clockExpired) this.timeUp(); else this.beginKickoff(); }
   get simRunning() { return this.state !== 'replay' && this.state !== 'ended'; }
   timeUp() {
     if (this.score[0] === this.score[1]) {
@@ -8989,7 +8995,8 @@ class MatchMode extends ModeBase {
       g.ui.updateScore(this.score, scoringTeam);
       g.ui.goalBanner(scoringTeam, scorer ? scorer.name : (own ? 'OWN GOAL' : ''), `${speed} KM/H${assist ? ' · ASSIST ' + assist.name : ''}`);
       g.ui.feed(`${scorer ? scorer.name : (scoringTeam === 0 ? 'BLUE' : 'ORANGE')} SCORED${own && !scorer ? ' (OWN GOAL)' : ''}`, scoringTeam);
-      if (this.overtime) this.matchOver = true;
+      // Overtime goal, or a post-buzzer goal (ball airborne at 0:00) that leaves a winner, ends the match
+      if (this.overtime || (this.clockExpired && this.score[0] !== this.score[1])) this.matchOver = true;
       if (g.player) g.camera.mode = 'car';
     }
   }

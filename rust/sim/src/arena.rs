@@ -1085,9 +1085,12 @@ impl ArenaShape {
                         }
                         return d;
                     }
+                    // Distance to the goal box (opening AND back wall), so solid behind the
+                    // net is measured correctly instead of as a shallow hit with an upward normal.
                     let ox = if ex > 0.0 { ex } else { 0.0 };
                     let oy = if ey > 0.0 { ey } else { 0.0 };
-                    let d_out = (ox * ox + oy * oy).sqrt();
+                    let ob = if v > self.gd { v - self.gd } else { 0.0 };
+                    let d_out = (ox * ox + oy * oy + ob * ob).sqrt();
                     return -(if d_out < v { d_out } else { v });
                 }
                 if au < gw && y < gh {
@@ -1120,9 +1123,11 @@ impl ArenaShape {
                     }
                     return d;
                 }
+                // Distance to the goal box (opening AND back wall), see split-goal branch above.
                 let ox = if ex > 0.0 { ex } else { 0.0 };
                 let oy = if ey > 0.0 { ey } else { 0.0 };
-                let d_out = (ox * ox + oy * oy).sqrt();
+                let ob = if az > l + self.gd { az - l - self.gd } else { 0.0 };
+                let d_out = (ox * ox + oy * oy + ob * ob).sqrt();
                 let dz = az - l;
                 return -(if d_out < dz { d_out } else { dz });
             }

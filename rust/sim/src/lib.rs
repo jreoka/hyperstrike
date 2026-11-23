@@ -364,6 +364,42 @@ mod tests {
     }
 
     #[test]
+    fn goal_pocket_sdf_measures_back_wall_behind_net() {
+        // Solid just behind a goal's back wall and above the crossbar must report its true depth
+        // (through the back wall), not a shallow hit with an upward normal that pushes deeper.
+        for arena in ARENAS.iter() {
+            let shape = ArenaShape::new(arena, &ArenaOpts::default());
+            let (base, nrm, tan) = match shape.goal_mode {
+                GoalMode::Standalone => continue,
+                GoalMode::Standard => (
+                    DVec3::new(0.0, 0.0, shape.l + shape.gd),
+                    DVec3::Z,
+                    DVec3::X,
+                ),
+                GoalMode::Split => {
+                    let sg = shape.split_goal.unwrap();
+                    (
+                        DVec3::new(sg.gx + sg.gnx * shape.gd, 0.0, sg.gz + sg.gnz * shape.gd),
+                        DVec3::new(sg.gnx, 0.0, sg.gnz),
+                        DVec3::new(sg.gtx, 0.0, sg.gtz),
+                    )
+                }
+            };
+            let behind = 0.45;
+            let p = base + nrm * behind + tan * (shape.gw * 0.7) + DVec3::Y * (shape.gh + 0.02);
+            let d = shape.dist(p.x, p.y, p.z);
+            assert!(
+                d <= -behind + 1e-6,
+                "{}: point {behind}m behind back wall reports d={d}",
+                arena.id
+            );
+            // Normal must point back toward the goal interior, not up into more solid.
+            let n = shape.normal(p.x, p.y, p.z);
+            assert!(n.dot(nrm) < -0.5, "{}: bad normal {n:?}", arena.id);
+        }
+    }
+
+    #[test]
     fn ball_physics_rest_rolling_magnus_and_fastball_no_tunneling() {
         let shape = ArenaShape::new(&ARENAS[0], &ArenaOpts::default());
         let phys = PhysConfig::default();
