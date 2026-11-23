@@ -3225,11 +3225,18 @@ class Renderer {
 }
 
 const TexGen = {
-  canvas(w, h, fn) { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); fn(g, w, h); return c; },
+  // Max anisotropic filtering (set once the renderer exists) and the supersample factor for canvas-drawn signage.
+  // Draw callbacks keep working in logical w x h units; the backing canvas is scale x larger for crisper text.
+  aniso: 4, canvasScale: 1,
+  canvas(w, h, fn, scale = this.canvasScale) {
+    const c = document.createElement('canvas'); c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    const g = c.getContext('2d'); if (scale !== 1) g.scale(scale, scale); fn(g, w, h); return c;
+  },
   data(w, h, fn, srgb = true) {
     const d = new Uint8Array(w * h * 4);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; const c = fn(x / w, y / h, x, y); d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = c[3] === undefined ? 255 : c[3]; }
     const t = new THREE.DataTexture(d, w, h); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true;
+    t.anisotropy = this.aniso;
     if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; return t;
   },
   normalFromHeight(w, h, hf, strength = 2) {
@@ -3243,34 +3250,97 @@ const TexGen = {
   },
   carbon() {
     if (this._carbon) return this._carbon;
-    this._carbon = this.data(128, 128, (u, v, x, y) => {
-      const cx = Math.floor(x / 8), cy = Math.floor(y / 8); const fx = (x % 8) / 8, fy = (y % 8) / 8;
+    // 512^2 twill weave: same 16-tow repeat as before, now with individual filament striations and tow-edge shading
+    this._carbon = this.data(512, 512, (u, v, x, y) => {
+      const C = 32, cx = Math.floor(x / C), cy = Math.floor(y / C); const fx = (x % C) / C, fy = (y % C) / C;
       const dir = (cx + cy) % 2; const t = dir ? fx : fy; const across = dir ? fy : fx;
-      const s = 0.55 + 0.45 * Math.sin(t * PI) * (0.7 + 0.3 * Math.sin(across * PI * 4));
-      const c = 18 + s * 38; return [c, c, c + 4];
+      const fil = 0.82 + 0.18 * Math.sin(across * PI * 22 + Noise.hash2(cx, cy) * 6) * (0.6 + 0.4 * Math.sin(t * PI * 3 + across * 7));
+      const edge = Math.pow(Math.sin(t * PI), 0.6) * (0.75 + 0.25 * Math.sin(across * PI));
+      const s = (0.5 + 0.5 * edge) * fil * (0.92 + 0.08 * Noise.hash2(x * 7 + 1, y * 3 + 2));
+      const c = 14 + s * 46; return [c, c, c + 4];
     });
     return this._carbon;
   },
   brakeDisc() {
     if (this._disc) return this._disc;
-    this._disc = this.data(128, 128, (u, v) => {
+    this._disc = this.data(256, 256, (u, v) => {
       const x = u * 2 - 1, y = v * 2 - 1, rr = Math.hypot(x, y), a = Math.atan2(y, x);
       if (rr < 0.55) return [70, 72, 76];
       const hole = [0.68, 0.8, 0.92].some((ring, k) => { const n = 18; const aa = (a / TAU * n + k * 0.33) % 1; const da = (aa < 0 ? aa + 1 : aa) - 0.5; return Math.hypot(da * TAU / n * ring, rr - ring) < 0.028; });
       const groove = Math.abs(Math.sin(rr * 90 + a * 2)) < 0.06 ? 0.8 : 1;
-      const c = hole ? 20 : (165 + 30 * Math.sin(rr * 220)) * groove; return [c, c, c + 3];
+      const heat = rr > 0.55 ? Math.max(0, 1 - Math.abs(rr - 0.8) * 5) * 0.12 : 0; // faint blued heat band on the swept face
+      const c = hole ? 20 : (165 + 30 * Math.sin(rr * 220) + 10 * Math.sin(rr * 900 + a * 0.5)) * groove; return [c * (1 - heat * 0.6), c * (1 - heat * 0.3), c + 3 + heat * 60];
     });
     return this._disc;
   },
   tread() {
     if (this._tread) return this._tread;
-    this._tread = this.normalFromHeight(64, 256, (u, v) => {
-      const g = Math.abs(((v * 24 + (u > 0.5 ? 0.5 : 0)) % 1) - 0.5) < 0.12 ? 0 : 1; const c = Math.abs(u - 0.5) < 0.04 ? 0 : 1;
-      return g * c * 0.6 + Noise.hash2(Math.floor(u * 64), Math.floor(v * 256)) * 0.05;
+    // 4x the texels of the old 64x256 map: chamfered blocks, sipes across each block and fine rubber grain
+    this._tread = this.normalFromHeight(128, 512, (u, v) => {
+      const bv = (v * 24 + (u > 0.5 ? 0.5 : 0)) % 1, gd = Math.abs(bv - 0.5), cd = Math.abs(u - 0.5);
+      const g = Math.min(1, Math.max(0, (gd - 0.1) / 0.04)); const c = Math.min(1, Math.max(0, (cd - 0.035) / 0.02));
+      const sipe = Math.abs(((bv * 3) % 1) - 0.5) < 0.05 && Math.abs(((u * 2) % 1) - 0.5) < 0.35 ? 0.65 : 1;
+      return g * c * sipe * 0.6 + Noise.hash2(Math.floor(u * 128), Math.floor(v * 512)) * 0.04;
     }, 3);
     return this._tread;
   }
 };
+
+// Shared, tileable micro-surface detail map (generated once on the GPU, reused by every arena):
+//   R = fine height (6-octave periodic value-noise fbm), G/B = that height's slope d/du, d/dv (encoded 0.5 +/- ),
+//   A = mid-frequency smudge/blotch mask. Slopes are stored pre-computed so the floor/wall shaders get correct
+//   micro-normals from a single filtered fetch; mip-mapping averages the slopes toward flat with distance (no shimmer).
+const DETAIL_GEN_FRAG = `varying vec2 vUv; uniform float uSize;
+float ph(vec2 i, float P){ i = mod(i, P); vec3 p3 = fract(vec3(i.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float pn(vec2 p, float P){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(ph(i, P), ph(i + vec2(1,0), P), u.x), mix(ph(i + vec2(0,1), P), ph(i + vec2(1,1), P), u.x), u.y); }
+float pfbm(vec2 uv, float P, float o){ float s = 0.0, a = 0.5, n = 0.0; for(int k = 0; k < 6; k++){ s += a * pn(uv * P + o, P); n += a; P *= 2.0; a *= 0.5; o *= 1.7; } return s / n; }
+float hgt(vec2 uv){ float b = pfbm(uv, 8.0, 0.0); float f = pfbm(uv, 32.0, 11.0); float r = 1.0 - abs(pfbm(uv, 4.0, 23.0) * 2.0 - 1.0);
+  return b * 0.5 + f * 0.35 + r * r * 0.15; }
+void main(){
+  vec2 uv = vUv; float e = 1.0 / uSize;
+  float h = hgt(uv);
+  vec2 g = vec2(hgt(uv + vec2(e, 0.0)) - hgt(uv - vec2(e, 0.0)), hgt(uv + vec2(0.0, e)) - hgt(uv - vec2(0.0, e))) / (2.0 * e);
+  g = g / (6.0 + length(g)) * 0.9;  // soft-compress the slope range into [-0.45, 0.45]
+  h = clamp(0.5 + (h - 0.54) * 3.0, 0.0, 1.0); // normalise height contrast to roughly 0.5 +/- 0.25
+  float sm = smoothstep(0.3, 0.75, pfbm(uv, 3.0, 41.0) * 0.7 + pfbm(uv, 12.0, 7.0) * 0.3);
+  gl_FragColor = vec4(h, clamp(g * 0.5 + 0.5, 0.0, 1.0), sm);
+}`;
+function detailTexture(R) {
+  if (R._detailTex) return R._detailTex;
+  let tex = null;
+  try {
+    if (R.pass && R.r.capabilities.isWebGL2) {
+      const N = 1024;
+      const rt = new THREE.WebGLRenderTarget(N, N, { type: THREE.UnsignedByteType, depthBuffer: false, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+        minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
+      rt.texture.anisotropy = TexGen.aniso;
+      const m = new THREE.ShaderMaterial({ uniforms: { uSize: { value: N } }, vertexShader: FS_VERT, fragmentShader: DETAIL_GEN_FRAG, depthTest: false, depthWrite: false });
+      const prev = R.r.getRenderTarget(); R.pass(m, rt); R.r.setRenderTarget(prev); R.quad.material = null; m.dispose();
+      tex = rt.texture; R._detailRT = rt;
+    }
+  } catch (e) { console.warn('Detail texture generation failed', e); tex = null; }
+  if (!tex) { // neutral fallback: mid height, flat slope, no smudge
+    tex = new THREE.DataTexture(new Uint8Array([128, 128, 128, 0]), 1, 1); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.needsUpdate = true;
+  }
+  return (R._detailTex = tex);
+}
+// Per floor type: [scaleU, scaleV, scale2, normal, albedo, rough, weathering]. scaleU/V = detail tiles per metre for
+// the fine layer (unequal = stretched grain, e.g. wood); scale2 = tiles per metre for the rotated coarse layer.
+const FLOOR_DETAIL = [
+  [0.9, 0.9, 0.23, 0.45, 0.06, 0.20, 0.12],   // 0 neon hex deck
+  [1.3, 1.3, 0.31, 0.60, 0.22, 0.10, 0.40],   // 1 stadium grass
+  [0.7, 0.7, 0.19, 0.70, 0.22, 0.34, 1.00],   // 2 foundry plate
+  [1.6, 1.6, 0.40, 0.85, 0.16, 0.08, 0.50],   // 3 mesa sand
+  [0.5, 0.5, 0.13, 0.10, 0.03, 0.12, 0.00],   // 4 orbit glass
+  [0.45, 0.45, 0.12, 0.22, 0.05, 0.24, 0.15], // 5 frost ice
+  [1.2, 1.2, 0.30, 0.65, 0.16, 0.10, 0.35],   // 6 abyss seabed
+  [0.8, 0.8, 0.21, 1.00, 0.24, 0.20, 0.85],   // 7 ruins stone
+  [0.9, 0.9, 0.23, 1.00, 0.20, 0.20, 0.40],   // 8 rift basalt
+  [1.8, 0.15, 0.28, 0.40, 0.20, 0.16, 0.40],  // 9 sakura planks (grain runs along the plank length)
+  [0.4, 0.4, 0.11, 0.08, 0.07, 0.10, 0.18],   // 10 skyline marble
+  [0.5, 0.5, 0.13, 0.08, 0.03, 0.12, 0.05]    // 11 synthwave obsidian
+];
 
 function buildEnvMap(renderer, def, skyMat) {
   const pm = new THREE.PMREMGenerator(renderer.r);
@@ -3565,12 +3635,23 @@ float sdArena(vec2 p){ vec2 a = abs(p);
   float best = 1e9;
   for(int i=0;i<15;i++){ if(i >= uPolyN - 1) break; vec2 e = uPoly[i+1] - uPoly[i]; vec2 q = a - uPoly[i]; float t = clamp(dot(q, e) / dot(e, e), 0.0, 1.0); best = min(best, length(q - e * t)); }
   return best - uRc; }
+float cavLn(float h){ return smoothstep(0.55, 0.3, h); }
 float lmask(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
 // Static (time- and view-independent) floor fields. Baked once per arena into tFloorA/B (see ArenaVisual.bakeFloor);
 // computed live only as a fallback. A.x is always the arena distance field; the rest depends on the floor type.
 // Voronoi crack edges stay live: their distance fields have a sharp crease that texture filtering would round off.
-uniform sampler2D tFloorA; uniform vec2 uBakeMin, uBakeSize;
+uniform sampler2D tFloorA, tFloorB; uniform vec2 uBakeMin, uBakeSize;
 #define FSA(p) texture2D(tFloorA, ((p) - uBakeMin) / uBakeSize)
+#define FSB(p) texture2D(tFloorB, ((p) - uBakeMin) / uBakeSize)
+uniform sampler2D tDetail; uniform vec3 uDtlS; uniform vec4 uDtl;
+// Baked-only weathering fields (too costly live; the unbaked fallback uses flat values):
+// B.x = large-scale grime, B.y = mid mottling, B.z = dirt drifted against the walls, B.w = fine scuffing
+void floorStaticB(vec2 fp, float sd, out vec4 B){
+  B.x = fbm(fp * 0.022 + 13.0);
+  B.y = fbm(fp * 0.11 + 21.0);
+  B.z = clamp(smoothstep(6.5, 0.3, -sd) * (0.35 + 1.1 * fbm(fp * 0.32 + 4.0)) - 0.15, 0.0, 1.0);
+  B.w = fbm(vec2(fp.x * 0.9, fp.y * 0.35) + 30.0) * 0.6 + fbm(fp * 1.7 + 50.0) * 0.4;
+}
 void floorStatic(vec2 fp, out vec4 A){
   A = vec4(sdArena(fp), 0.0, 0.0, 0.0);
   if(uType == 0){ A.y = fbm(fp * 0.07); A.z = fbm(fp * 0.045 + 3.0); }
@@ -3596,10 +3677,19 @@ float NdotV = clamp(Vw.y, 0.02, 1.0);
 
 #ifdef FLOOR_BAKED
 vec4 fA = FSA(fp);
+vec4 fB = FSB(fp);
 #else
 vec4 fA; floorStatic(fp, fA);
+vec4 fB = vec4(0.5, 0.5, smoothstep(6.5, 0.3, -fA.x) * 0.6, 0.5);
 #endif
 float d2 = fA.x;
+// Micro-surface detail: fine layer (optionally stretched for grain) + rotated coarse layer to break up tiling
+vec4 dt1 = texture2D(tDetail, fp * uDtlS.xy);
+vec2 fpR = vec2(0.8 * fp.x - 0.6 * fp.y, 0.6 * fp.x + 0.8 * fp.y);
+vec4 dt2 = texture2D(tDetail, fpR * uDtlS.z + 0.37);
+float dH = dt1.r * 0.6 + dt2.r * 0.4;
+vec2 g2r = dt2.gb - 0.5; // rotate the coarse layer's slope back into floor space
+vec2 dGr = (dt1.gb - 0.5) * 0.65 + vec2(0.8 * g2r.x + 0.6 * g2r.y, -0.6 * g2r.x + 0.8 * g2r.y) * 0.35;
 vec3 teamCol = fp.y < 0.0 ? uBlue : uOrange;
 float endT = smoothstep(0.25, 1.0, abs(fp.y) / uL);
 if(uType == 0){
@@ -3637,7 +3727,8 @@ if(uType == 0){
   float bump = 1.0 - smoothstep(0.04, 0.11, length(vec2(rd.x * 0.32, rd.y * 1.0)));
   float grime = fA.y; float rust = smoothstep(0.58, 0.85, fA.z);
   float oil = smoothstep(0.66, 0.78, fA.w) * (1.0 - rust);
-  base = mix(uBase1, uBase2, bump * 0.75) * (0.76 + 0.44 * grime);
+  // Metal albedo is the specular F0; the palette greys are far too dark for steel, so lift them into a believable range
+  base = mix(uBase1, uBase2, bump * 0.75) * (0.76 + 0.44 * grime) * 3.4;
   base = mix(base, vec3(0.32, 0.13, 0.04), rust * 0.7);
   base *= 1.0 - oil * 0.45;
   vec2 pl = abs(fract(fp / 6.0) - 0.5); float seam = smoothstep(0.485, 0.495, max(pl.x, pl.y));
@@ -3784,6 +3875,19 @@ if(uType == 0){
   fEmis += gridCol * (gl1 * 0.22 * sweep + gl2 * 0.55);
   fRough = 0.07 + n * 0.05; fMetal = 0.58;
 }
+// ---- Micro detail & weathering (strengths per floor type from FLOOR_DETAIL) ----
+{
+  float cav = smoothstep(0.62, 0.3, dH);                          // low spots collect dirt
+  base *= 1.0 + (dH - 0.5) * uDtl.y * 1.6 - cav * uDtl.y * 0.35;
+  fPert += vec3(-dGr.x, 0.0, -dGr.y) * uDtl.x * 2.0 * smoothstep(0.03, 0.22, fRough); // puddles/oil/polish stay smooth
+  fRough = clamp(fRough + (dt2.a - 0.35) * uDtl.z * 0.6 + cav * uDtl.z * 0.25, 0.03, 0.98);
+  float grime = smoothstep(0.42, 0.8, fB.x * 0.65 + fB.y * 0.35) * uDtl.w;
+  float drift = fB.z * uDtl.w;
+  base = mix(base, base * vec3(0.78, 0.74, 0.7), grime * 0.45);
+  base *= 1.0 - drift * 0.32 + (fB.y - 0.5) * 0.12 * uDtl.w;
+  fRough = mix(fRough, max(fRough, 0.7), clamp(grime * 0.35 + drift * 0.55, 0.0, 1.0));
+  fPert *= 1.0 - drift * 0.4;
+}
 base = mix(base, base * (0.55 + teamCol * 0.9), endT * 0.35);
 float lw = 0.13; float ln = 0.0;
 ln += lmask(fp.y, lw) * step(uRf + 0.6, -d2);
@@ -3802,6 +3906,8 @@ if(uGoalMode == 2){
 }
 ln += lmask(d2 + uRf + 0.7, lw * 1.2);
 ln = clamp(ln, 0.0, 1.0);
+// Scuffed, slightly patchy line paint
+ln *= 1.0 - (smoothstep(0.5, 0.82, fB.w) * 0.4 + cavLn(dH) * 0.25) * uDtl.w;
 vec3 lc = mix(uLine, teamCol * 1.3 + 0.2, step(uGoalZ - 10.5, abs(fp.y)) * 0.6);
 if(uType == 1 || uType == 3 || uType == 7 || uType == 10){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.68, ln); }
 else { base = mix(base, lc * 0.72, ln * 0.88); fRough = mix(fRough, 0.55, ln); fEmis += lc * ln * uGlow * 0.4; }
@@ -3825,6 +3931,7 @@ diffuseColor.rgb = base;
 
 const WALL_FRAG = `
 uniform float uL, uRf, uH, uTime, uGlassA, uPadH; uniform vec3 uWall, uGlass, uBlue, uOrange, uLine; uniform int uType; uniform vec2 uPulse;
+uniform sampler2D tDetail; uniform vec2 uWDtl;
 varying vec2 vWuv;
 float lmask2(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
 `;
@@ -3868,6 +3975,28 @@ if(uType == 10){ vec2 gl = abs(fract(vec2(w.x / 4.0, h / 4.0)) - 0.5); float mul
 if(uType == 11){ float scan = smoothstep(0.42, 0.5, abs(fract(h * 1.4 - uTime * 0.35) - 0.5));
   vec3 sc2 = mix(vec3(1.0, 0.18, 0.72), vec3(0.18, 0.95, 1.0), 0.5 + 0.5 * sin(w.x * 0.12 + uTime));
   fEmis += sc2 * (scan * 0.32 + edge * 0.38) * (1.0 - pad); base = mix(base, vec3(0.06, 0.02, 0.12), pad * 0.65); }
+// ---- Wall surface detail: panelled, micro-bumped, grimy lower band; dusty/smudged glass above ----
+{
+  vec2 wp = vec2(w.x, h);
+  vec4 wd = texture2D(tDetail, wp * 0.75);
+  vec4 wd2 = texture2D(tDetail, wp * vec2(0.13, 0.21) + 0.53);
+  float sx = (fract(w.x / 4.0 + 0.5) - 0.5) * 4.0;                       // signed distance to a vertical panel seam
+  float sy = h - (uPadH - 0.55);                                         // horizontal seam across the band
+  float seam = max(lmask2(sx, 0.025), lmask2(sy, 0.02));
+  vec2 bolt = vec2(sx, (fract((h - (uPadH - 0.55)) / 1.1 + 0.5) - 0.5) * 1.1);
+  float bolts = (1.0 - smoothstep(0.035, 0.05, length(bolt - vec2(sign(sx) * 0.13, 0.0)))) * step(abs(sx), 0.3) * step(0.35, h);
+  float grimeW = smoothstep(1.6, 0.05, h) * (0.45 + 0.8 * wd2.a);
+  float padK = pad * uWDtl.x;
+  base *= 1.0 + ((wd.r - 0.5) * 0.35 + (wd2.r - 0.5) * 0.25) * padK;
+  base *= 1.0 - (seam * 0.5 + grimeW * 0.3) * padK;
+  base = mix(base, base * 1.35 + 0.03, bolts * padK * 0.6);
+  fRough = clamp(fRough + ((wd.a - 0.4) * 0.22 + grimeW * 0.25 + seam * 0.15) * padK, 0.02, 0.98);
+  fMetal = mix(fMetal, 0.85, bolts * padK);
+  wBevel += ((wd.gb - 0.5) * 1.1 + vec2(sign(sx) * lmask2(sx, 0.05), sign(sy) * lmask2(sy, 0.045)) * 0.8) * padK;
+  float smudge = smoothstep(0.45, 0.85, wd2.a) * (1.0 - pad) * uWDtl.y;
+  fRough = mix(fRough, fRough + 0.2, smudge);
+  alpha = clamp(alpha + smudge * 0.035 + (wd.r - 0.5) * 0.02 * (1.0 - pad) * uWDtl.y, 0.0, 1.0);
+}
 float strip = lmask2(h - uPadH, 0.07); float strip2 = lmask2(h - (uH - uRf * 0.5), 0.05);
 vec3 sc = mix(uLine, teamCol, 0.35 + endT * 0.65);
 float pulse = 0.6 + 0.4 * sin(uTime * 2.0 - w.x * 0.08);
@@ -3887,6 +4016,7 @@ class ArenaVisual {
     this.uniforms = { uTime: { value: 0 }, uPulse: { value: new THREE.Vector2() } };
     this.blue = new THREE.Color(0x2f8fff); this.orange = new THREE.Color(0xff8a1f);
     this.renderer = renderer;
+    TexGen.canvasScale = renderer.quality === 'low' ? 1 : 2; // supersampled signage/billboard canvases
     this.refl = { tex: { value: renderer.blackTex() }, mat: { value: new THREE.Matrix4() }, on: { value: 0 }, strength: { value: def.reflect || 0 } };
     this.build();
   }
@@ -3929,6 +4059,7 @@ class ArenaVisual {
     const poly = []; for (let i = 0; i < 16; i++) { const v = s.I[Math.min(i, s.I.length - 1)]; poly.push(new THREE.Vector2(v[0], v[1])); }
     const f8 = s.fig8 || { Zc: 36, Rl: 39, Kf: 10, Rc: 8 };
     const sg = s.splitGoal || { gx: 0, gz: L, gnx: 0, gnz: 1 };
+    const dt = FLOOR_DETAIL[d.floor] || FLOOR_DETAIL[0];
     const U = {
       uW: { value: W }, uL: { value: L }, uRc: { value: Rc }, uRf: { value: s.Rf }, uGW: { value: gw }, uGD: { value: gd }, uTime: this.uniforms.uTime, uPulse: this.uniforms.uPulse,
       uGoalZ: { value: s.goalMode === 'standalone' ? s.goalZ : L },
@@ -3939,7 +4070,8 @@ class ArenaVisual {
       uPoly: { value: poly }, uPolyN: { value: s.I.length },
       tRefl: this.refl.tex, uReflMat: this.refl.mat, uReflOn: this.refl.on, uReflect: this.refl.strength,
       uType: { value: d.floor }, uBase1: { value: new THREE.Color(d.c.base1) }, uBase2: { value: new THREE.Color(d.c.base2) }, uLine: { value: new THREE.Color(d.c.line) },
-      uBlue: { value: this.blue }, uOrange: { value: this.orange }, uGrid: { value: new THREE.Color(d.grid) }, uGlow: { value: d.floorGlow !== undefined ? d.floorGlow : (d.floor === 0 || d.floor === 4 ? 1.6 : 0.5) }
+      uBlue: { value: this.blue }, uOrange: { value: this.orange }, uGrid: { value: new THREE.Color(d.grid) }, uGlow: { value: d.floorGlow !== undefined ? d.floorGlow : (d.floor === 0 || d.floor === 4 ? 1.6 : 0.5) },
+      tDetail: { value: detailTexture(this.renderer) }, uDtlS: { value: new THREE.Vector3(dt[0], dt[1], dt[2]) }, uDtl: { value: new THREE.Vector4(dt[3], dt[4], dt[5], dt[6]) }
     };
     injectStandard(mat, 'floor' + d.id, U, {
       fragDecl: FLOOR_FRAG, mapFrag: FLOOR_MAP,
@@ -3964,11 +4096,11 @@ class ArenaVisual {
     try {
       g.computeBoundingBox(); const bb = g.boundingBox, M = 6; // margin covers the parallax/refraction look-ups
       const minX = bb.min.x - M, minZ = bb.min.z - M, sx = bb.max.x - bb.min.x + 2 * M, sz = bb.max.z - bb.min.z + 2 * M;
-      const texel = R.quality === 'low' ? 0.1 : 0.07;
+      const texel = R.quality === 'low' ? 0.1 : R.quality === 'medium' ? 0.07 : 0.055;
       const w = Math.min(2048, Math.ceil(sx / texel)), h = Math.min(2048, Math.ceil(sz / texel));
       const mk = () => { const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true });
-        rt.texture.anisotropy = Math.min(8, R.r.capabilities.getMaxAnisotropy()); return rt; };
-      const A = mk();
+        rt.texture.anisotropy = TexGen.aniso; return rt; };
+      const A = mk(), B = mk();
       const bakeMin = { value: new THREE.Vector2(minX, minZ) }, bakeSize = { value: new THREE.Vector2(sx, sz) };
       const bm = new THREE.ShaderMaterial({
         uniforms: Object.assign({}, U, { uBakeMin: bakeMin, uBakeSize: bakeSize }),
@@ -3977,11 +4109,17 @@ class ArenaVisual {
           'void main(){ vec4 a; floorStatic(uBakeMin + vUv * uBakeSize, a); gl_FragColor = a; }'
       });
       const prev = R.r.getRenderTarget();
-      R.pass(bm, A);
-      R.r.setRenderTarget(prev); R.quad.material = null; bm.dispose();
-      Object.assign(U, { tFloorA: { value: A.texture }, uBakeMin: bakeMin, uBakeSize: bakeSize });
+      const bmB = new THREE.ShaderMaterial({
+        uniforms: Object.assign({}, U, { uBakeMin: bakeMin, uBakeSize: bakeSize }),
+        vertexShader: FS_VERT, depthTest: false, depthWrite: false,
+        fragmentShader: 'varying vec2 vUv;' + GLSL_NOISE + FLOOR_FRAG +
+          'void main(){ vec2 fp = uBakeMin + vUv * uBakeSize; vec4 b; floorStaticB(fp, sdArena(fp), b); gl_FragColor = b; }'
+      });
+      R.pass(bm, A); R.pass(bmB, B);
+      R.r.setRenderTarget(prev); R.quad.material = null; bm.dispose(); bmB.dispose();
+      Object.assign(U, { tFloorA: { value: A.texture }, tFloorB: { value: B.texture }, uBakeMin: bakeMin, uBakeSize: bakeSize });
       mat.defines = Object.assign(mat.defines || {}, { FLOOR_BAKED: 1 });
-      this.floorBake = [A];
+      this.floorBake = [A, B];
     } catch (e) { console.warn('Floor bake failed, using live floor shader', e); }
   }
   wallProfile(y0, includeFloorFillet) {
@@ -4110,7 +4248,10 @@ class ArenaVisual {
       uL: { value: s.L }, uRf: { value: s.Rf }, uH: { value: s.H }, uTime: this.uniforms.uTime, uPulse: this.uniforms.uPulse, uType: { value: d.wall },
       uWall: { value: new THREE.Color(d.c.base2).lerp(new THREE.Color(d.c.wallTint), 0.25) }, uGlass: { value: new THREE.Color(d.c.glass) },
       uBlue: { value: this.blue }, uOrange: { value: this.orange }, uLine: { value: new THREE.Color(d.c.wallTint) },
-      uGlassA: { value: d.glassA !== undefined ? d.glassA : [0.18, 0.1, 0.32, 0.16, 0.12][d.wall] }, uPadH: { value: s.Rf + 1.3 }
+      uGlassA: { value: d.glassA !== undefined ? d.glassA : [0.18, 0.1, 0.32, 0.16, 0.12][d.wall] }, uPadH: { value: s.Rf + 1.3 },
+      tDetail: { value: detailTexture(this.renderer) },
+      // [solid-band detail, glass smudge] — dialled down on the polished/emissive wall styles
+      uWDtl: { value: new THREE.Vector2(...([[0.8, 0.8], [0.9, 1], [1, 1], [1, 0.8], [0.5, 0.6], [0.6, 0.7], [0.8, 0.8], [1, 1], [1, 0.7], [0.8, 0.8], [0.6, 0.7], [0.4, 0.5]][d.wall] || [0.8, 0.8])) }
     };
     const wallShader = {
       vertexDecl: 'attribute vec2 wuv; varying vec2 vWuv;', vertexMain: 'vWuv = wuv;', fragDecl: WALL_FRAG, mapFrag: WALL_MAP,
@@ -4493,7 +4634,7 @@ class ArenaVisual {
         g.fillText(sponsors[i], i * bw + bw / 2, h * 0.52, bw * 0.9);
       }
     });
-    const tex = new THREE.CanvasTexture(tc); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = 4;
+    const tex = new THREE.CanvasTexture(tc); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = TexGen.aniso;
     const path = s.path(1.0, 0.6).pts;
     const prof = [{ d: 0, y: s.H + 0.4, nd: -1, ny: 0 }, { d: 0, y: s.H + 2.4, nd: -1, ny: 0 }];
     const g = sweepGeometry(path, prof); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 64, uv.getY(i) / 2); fixWinding(g);
@@ -4534,7 +4675,7 @@ class ArenaVisual {
     const jpFont = '"Yu Gothic UI", "Meiryo", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Segoe UI", sans-serif';
     const mkTex = (w, h, fn, repeatS = false) => {
       const t = new THREE.CanvasTexture(TexGen.canvas(w, h, fn));
-      t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+      t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = TexGen.aniso;
       if (repeatS) t.wrapS = THREE.RepeatWrapping;
       return t;
     };
@@ -12047,6 +12188,7 @@ class GameEngine {
     this.ui.progress(0.05, 'Starting renderer'); await tick();
     const canvas = document.createElement('canvas'); canvas.id = 'gl'; document.body.prepend(canvas); canvas.tabIndex = 0;
     this.renderer = new Renderer(canvas);
+    TexGen.aniso = Math.max(1, Math.min(16, this.renderer.r.capabilities.getMaxAnisotropy()));
     this.renderer.onTierState = () => {
       this.applyLightBudget();
       const av = this.arenaVisual;
