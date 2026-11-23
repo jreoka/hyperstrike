@@ -8,8 +8,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-pub const STANDARD_ARENA_COUNT: i32 = 12;
-pub const ARENA_COUNT: i32 = 15;
+pub const STANDARD_ARENA_COUNT: i32 = 18;
+pub const ARENA_COUNT: i32 = 21;
 
 pub const AC_KICK_STRIKES: u32 = 12;
 pub const AC_WARN_STRIKES: u32 = 6;

@@ -1563,6 +1563,66 @@ const ARENAS = [
     dust: 0xff50c8, dusty: false, indoor: false, crowdBase: 0.06
   },
   {
+    id: 'clockwork', name: 'CLOCKWORK BASTION', tag: 'STEAMPUNK · OCTAGON', desc: 'A brass fortress-engine wreathed in steam. Riveted deck plates with turning gear inlays, colossal meshing cogs, a ticking clock tower and drifting airships.',
+    shape: { type: 'octagon', W: 42, L: 53, Rc: 5, ch: 14 }, H: 20, Rf: 3.8, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 12, sky: 12, wall: 12,
+    c: { base1: 0x6a4820, base2: 0xb88a44, line: 0xffd890, wallTint: 0xffb050, accent: 0xff8a2a, fog: 0x3a2a1c, glass: 0x8a6a40 },
+    light: { hemiSky: 0xffd2a0, hemiGround: 0x2a1a0c, hemi: 0.72, sun: 0xffc080, sunI: 2.4, sunDir: [0.55, 0.55, -0.45] },
+    grade: { exposure: 1.0, contrast: 1.1, sat: 1.02, tint: [1.07, 0.99, 0.88], bloom: 0.78, thresh: 0.9 },
+    fogDensity: 0.0046, reverb: 2.2, ambient: 'steam', grid: 0xffb040, glassA: 0.2, capA: 0.015, floorGlow: 0.7, reflect: 0.4,
+    dust: 0x8a7a68, dusty: false, indoor: false, crowdBase: 0.06
+  },
+  {
+    id: 'nightfall', name: 'NIGHTFALL CATHEDRAL', tag: 'GOTHIC · BLOOD MOON', desc: 'A haunted cathedral courtyard beneath a swollen blood moon. Moonlit flagstones, stained-glass walls, crooked graves, jack-o\'-lanterns and circling bats.',
+    W: 41, L: 52, H: 21, Rc: 12, Rf: 3.6, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 13, sky: 13, wall: 13,
+    c: { base1: 0x3e3a48, base2: 0x6a6276, line: 0xd8c8ff, wallTint: 0xb04aff, accent: 0xff3a3a, fog: 0x160c1c, glass: 0x3a1a4a },
+    light: { hemiSky: 0x9a80d0, hemiGround: 0x1a0a14, hemi: 0.78, sun: 0xffa098, sunI: 1.8, sunDir: [0.45, 0.42, -0.6] },
+    grade: { exposure: 1.02, contrast: 1.12, sat: 1.06, tint: [1.04, 0.95, 1.06], bloom: 0.85, thresh: 0.86 },
+    fogDensity: 0.0052, reverb: 3.0, ambient: 'wisps', grid: 0x9a5aff, glassA: 0.2, capA: 0.0, floorGlow: 0.9, reflect: 0.25,
+    dust: 0x4a4250, dusty: true, indoor: false, crowdBase: 0.05
+  },
+  {
+    id: 'candy', name: 'SUGAR RUSH', tag: 'CANDY · ROUND', desc: 'A frosted candy bowl in a cotton-candy sky. Sprinkle-dusted icing tiles, giant swirl lollipops, candy canes, a chocolate river and floating donuts.',
+    shape: { type: 'round', W: 46, L: 51, Rc: 7, A: 17, N: 9 }, H: 20, Rf: 4.4, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 14, sky: 14, wall: 14,
+    c: { base1: 0xf2a6c8, base2: 0x9ee8d4, line: 0xffffff, wallTint: 0xff7ab8, accent: 0x6ae0ff, fog: 0xf6c8e0, glass: 0xffb8dc },
+    light: { hemiSky: 0xffe0f0, hemiGround: 0xa86a8a, hemi: 0.95, sun: 0xfff0e0, sunI: 2.9, sunDir: [-0.5, 0.78, 0.38] },
+    grade: { exposure: 1.02, contrast: 1.02, sat: 1.14, tint: [1.03, 0.99, 1.02], bloom: 0.6, thresh: 1.05 },
+    fogDensity: 0.0024, reverb: 1.3, ambient: 'sprinkles', grid: 0xffffff, glassA: 0.16, capA: 0.0, floorGlow: 0.35, reflect: 0.3,
+    dust: 0xffd8ec, dusty: true, indoor: false, crowdBase: 0.08
+  },
+  {
+    id: 'grotto', name: 'MYCELIUM GROTTO', tag: 'BIOLUME · HEXAGON', desc: 'A hexagonal arena on an island in a vast underground lake. Pulsing mycelium veins, towering glow-mushrooms, glowworm ceilings and drifting spores.',
+    shape: { type: 'hexagon', W: 44, L: 53, Rc: 8, A: 19 }, H: 19, Rf: 3.8, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 15, sky: 15, wall: 15,
+    c: { base1: 0x161c18, base2: 0x2c3a2e, line: 0x7affe0, wallTint: 0x3affc8, accent: 0xd86aff, fog: 0x04120e, glass: 0x1a4a40 },
+    light: { hemiSky: 0x5affd8, hemiGround: 0x1a0a2a, hemi: 0.62, sun: 0xa8ffe8, sunI: 1.5, sunDir: [0.2, 1, 0.3] },
+    grade: { exposure: 1.02, contrast: 1.1, sat: 1.2, tint: [0.94, 1.03, 1.05], bloom: 0.95, thresh: 0.8 },
+    fogDensity: 0.0055, reverb: 3.8, ambient: 'spores', grid: 0x3affc8, glassA: 0.16, capA: 0.0, floorGlow: 1.2, reflect: 0.3,
+    dust: 0x2a3a2a, dusty: true, indoor: true, crowdBase: 0.04
+  },
+  {
+    id: 'tempest', name: 'TEMPEST SPIRE', tag: 'STORM · CAPSULE', desc: 'A long capsule pitch atop a sea-cliff spire in a raging thunderstorm. Rain-slick slate, crackling tesla coils, lightning strikes and a churning sea far below.',
+    shape: { type: 'rect', W: 38, L: 57, Rc: 17 }, H: 20, Rf: 3.6, gw: 8.9, gh: 6.4, gd: 8.8,
+    floor: 16, sky: 16, wall: 16,
+    c: { base1: 0x2a333c, base2: 0x4a5664, line: 0xa8e0ff, wallTint: 0x5ab8ff, accent: 0x8a9aff, fog: 0x1a2230, glass: 0x3a4a60 },
+    light: { hemiSky: 0x8aa8d0, hemiGround: 0x141a22, hemi: 0.7, sun: 0xc8d8ff, sunI: 1.6, sunDir: [-0.4, 0.8, 0.45] },
+    grade: { exposure: 1.02, contrast: 1.1, sat: 0.92, tint: [0.96, 1.0, 1.06], bloom: 0.85, thresh: 0.88 },
+    fogDensity: 0.005, reverb: 2.4, ambient: 'storm', grid: 0x6ac8ff, glassA: 0.2, capA: 0.015, floorGlow: 1.0, reflect: 0.62,
+    dust: 0x2a3038, dusty: false, indoor: false, crowdBase: 0.06
+  },
+  {
+    id: 'horizon', name: 'EVENT HORIZON', tag: 'BLACK HOLE · SKY-HIGH', desc: 'A research ring orbiting a supermassive black hole. A blazing lensed accretion disk, a spiraling gravity-well pitch, a 25m ceiling and debris torn into the void.',
+    W: 41, L: 52, H: 25, Rc: 15, Rf: 6.0, gw: 8.9, gh: 6.6, gd: 8.8,
+    floor: 17, sky: 17, wall: 17,
+    c: { base1: 0x06050a, base2: 0x120c1a, line: 0xffc070, wallTint: 0xff9a3a, accent: 0xb060ff, fog: 0x050308, glass: 0x2a1a30 },
+    light: { hemiSky: 0xffb070, hemiGround: 0x1a0a2a, hemi: 0.6, sun: 0xffc890, sunI: 2.1, sunDir: [0.0, 0.3, -0.95] },
+    grade: { exposure: 1.0, contrast: 1.12, sat: 1.12, tint: [1.05, 0.98, 1.0], bloom: 0.92, thresh: 0.82 },
+    fogDensity: 0.0018, reverb: 3.4, ambient: 'hawking', grid: 0xff9a3a, glassA: 0.16, capA: 0.0, floorGlow: 1.4, reflect: 0.55,
+    dust: 0x40304a, dusty: false, indoor: false, crowdBase: 0.03
+  },
+  {
     id: 'figure8', name: 'HYPERLOOP 8', tag: 'LABS · FIGURE-8', weird: true,
     desc: 'A pinched figure-8 orbital arena where two wide bowls funnel through a tight midfield waist. Chaos at the choke point.',
     shape: { type: 'figure8', W: 39, L: 62, Rc: 8, Zc: 36, Rl: 39, Kf: 10 }, H: 21, Rf: 3.6, gw: 8.9, gh: 6.4, gd: 8.8,
@@ -3353,10 +3413,19 @@ function injectStandard(mat, key, uniforms, { vertexDecl = '', vertexMain = '', 
 }
 
 // ===== 05_arena_build.js =====
-const SKY_FRAG = `uniform vec3 uTop, uHor, uBot, uSunDir, uSunCol; uniform float uTime, uStars, uClouds, uNebula, uSunSize, uCloudDark, uAurora, uWater, uLava; varying vec3 vDir;
+const SKY_FRAG = `uniform vec3 uTop, uHor, uBot, uSunDir, uSunCol; uniform float uTime, uStars, uClouds, uNebula, uSunSize, uCloudDark, uAurora, uWater, uLava, uMoon, uHole, uFlash; uniform vec3 uNeb1, uNeb2; varying vec3 vDir;
 ${GLSL_NOISE}
 void main(){
-  vec3 d = normalize(vDir); float h = d.y;
+  vec3 d = normalize(vDir);
+  // Supermassive black hole (at the sun direction): bend background rays around the shadow (weak-field lensing)
+  vec3 hd = normalize(uSunDir); float hTh = 0.0; vec3 hPerp = vec3(0.0);
+  if(uHole > 0.0){
+    float cth = clamp(dot(d, hd), -1.0, 1.0); hTh = acos(cth);
+    hPerp = d - hd * cth; float pl = length(hPerp); hPerp = pl > 1e-5 ? hPerp / pl : vec3(1.0, 0.0, 0.0);
+    float thw = hTh + uHole * uHole * 1.6 / max(hTh, uHole * 0.6);
+    d = normalize(hd * cos(thw) + hPerp * sin(thw));
+  }
+  float h = d.y;
   // Physical-inspired Rayleigh zenith gradient + warm/cool atmospheric horizon haze
   float zenith = pow(clamp(h, 0.0, 1.0), 0.48);
   vec3 col = mix(uHor, uTop, zenith);
@@ -3378,7 +3447,7 @@ void main(){
     col += (st * 3.2 + st2 * 1.4) * uStars * starCol * smoothstep(-0.08, 0.08, h);
   }
   if(uNebula > 0.0){ float n = fbm3(d * 2.2 + vec3(0.0, uTime * 0.004, 0.0)); float n2 = fbm3(d * 4.5 + 11.0);
-    vec3 nc = mix(vec3(0.45, 0.08, 0.65), vec3(0.05, 0.48, 0.85), n2); col += nc * pow(n, 2.8) * uNebula * 2.8;
+    vec3 nc = mix(uNeb1, uNeb2, n2); col += nc * pow(n, 2.8) * uNebula * 2.8;
     col += vec3(0.85, 0.25, 0.55) * pow(fbm3(d * 1.3 + 5.0), 4.8) * uNebula * 3.2; }
   // Volumetric-lit clouds with directional sun self-shadowing & silver lining
   if(uClouds > 0.0 && h > 0.0){
@@ -3394,7 +3463,21 @@ void main(){
     vec3 cc = mix(cloudShadowCol, cloudLightCol, selfShade);
     cc = mix(cc, uTop * 0.35 + uSunCol * silverLining * 0.35, uCloudDark);
     float distFade = smoothstep(0.0, 0.16, h);
+    cc += vec3(0.62, 0.72, 1.0) * uFlash * (0.35 + selfShade * 1.4) * (0.6 + 0.4 * fbm(cp * 2.3 + uTime * 3.0));
     col = mix(col, cc, c * uClouds * distFade);
+  }
+  col += vec3(0.42, 0.5, 0.78) * uFlash * 0.22 * smoothstep(-0.1, 0.3, h);
+  // Huge textured moon (blood moon) with crater shading, limb darkening and a hazy halo
+  if(uMoon > 0.0){
+    float md = acos(clamp(dot(d, sdir), -1.0, 1.0)); float mr = md / uMoon;
+    vec3 mt = normalize(cross(sdir, vec3(0.0, 1.0, 0.0)) + 1e-4); vec3 mb = cross(mt, sdir);
+    vec2 mp = vec2(dot(d, mt), dot(d, mb)) / uMoon;
+    float cr = fbm(mp * 3.0 + 4.0) * 0.6 + fbm(mp * 9.0) * 0.4; vec3 cv = voronoi(mp * 4.5 + 2.0);
+    float crater = smoothstep(0.12, 0.0, cv.x) * 0.35;
+    float limb = sqrt(max(0.0, 1.0 - mr * mr));
+    vec3 moonC = uSunCol * (0.5 + 0.75 * cr - crater) * (0.35 + 0.65 * limb) * 2.2;
+    col = mix(col, moonC, smoothstep(1.0, 0.985, mr));
+    col += uSunCol * (exp(-max(mr - 1.0, 0.0) * 2.2) * 0.35 + exp(-max(mr - 1.0, 0.0) * 0.45) * 0.16) * step(1.0, mr);
   }
   if(uAurora > 0.0 && h > 0.0){
     for(int k=0;k<3;k++){ float fk = float(k);
@@ -3420,6 +3503,29 @@ void main(){
     float smoke = fbm(d.xz / (abs(h) + 0.2) * 1.2 + vec2(uTime * 0.01, -uTime * 0.008));
     col += vec3(1.0, 0.35, 0.08) * pow(smoke, 2.8) * smoothstep(0.5, 0.0, h) * 1.55 * uLava;
   }
+  // Black hole shadow, photon ring, Doppler-beamed accretion disk (front pass + lensed back arc) and polar jets
+  if(uHole > 0.0){
+    vec3 ht = normalize(cross(hd, vec3(0.0, 1.0, 0.0)) + 1e-4); vec3 hb = cross(ht, hd);
+    vec3 d0 = normalize(vDir); vec2 q = vec2(dot(d0, ht), dot(d0, hb)) / uHole;
+    float r = length(q);
+    float shadow = smoothstep(1.0, 1.06, r);
+    col *= shadow;
+    float ring = exp(-pow((r - 1.1) / 0.035, 2.0)) * 2.6 + exp(-pow((r - 1.1) / 0.14, 2.0)) * 0.55;
+    vec2 qd = vec2(q.x, q.y / 0.2); float rd = length(qd);
+    float ang = atan(qd.y, qd.x);
+    float swirl = fbm(vec2(ang * 3.0 - uTime * 0.55 + rd * 1.3, rd * 2.4)) * 0.7 + fbm(vec2(ang * 9.0 - uTime * 0.9, rd * 6.0)) * 0.3;
+    float disk = smoothstep(1.35, 1.9, rd) * smoothstep(6.5, 2.6, rd) * (0.45 + 0.9 * swirl);
+    float front = step(q.y, 0.0) + step(0.0, q.y) * step(1.08, r);
+    float dopp = clamp(1.0 - q.x * 0.16, 0.35, 1.8);
+    vec3 hot = mix(vec3(1.0, 0.42, 0.12), vec3(1.0, 0.93, 0.78), smoothstep(5.0, 1.6, rd));
+    col += hot * disk * front * dopp * 2.2;
+    float arc = step(0.0, q.y) * smoothstep(1.12, 1.3, r) * smoothstep(2.6, 1.5, r) * smoothstep(0.0, 0.6, q.y / max(r, 1e-3));
+    col += hot * arc * (0.5 + 0.8 * fbm(vec2(atan(q.y, q.x) * 6.0 + uTime * 0.6, r * 4.0))) * 1.6 * dopp;
+    col += mix(vec3(1.0, 0.78, 0.5), vec3(1.0), 0.4) * ring * dopp;
+    float jet = exp(-abs(q.x) * 9.0) * smoothstep(1.1, 2.2, abs(q.y)) * exp(-abs(q.y) * 0.12) * (0.6 + 0.4 * sin(abs(q.y) * 2.0 - uTime * 4.0));
+    col += vec3(0.6, 0.45, 1.0) * jet * 0.9;
+    col += vec3(1.0, 0.55, 0.25) * exp(-max(r - 1.0, 0.0) * 0.35) * 0.08;
+  }
   gl_FragColor = vec4(col, 1.0);
 }`;
 const SKY_PRESETS = [
@@ -3434,7 +3540,13 @@ const SKY_PRESETS = [
   { top: 0x0e0504, hor: 0x5a1a08, bot: 0x2a0802, sun: 0xff6020, sunSize: 0, stars: 0, clouds: 0.9, nebula: 0, dark: 0.85, lava: 1.0 },
   { top: 0x201842, hor: 0xf092a8, bot: 0x3a1c2e, sun: 0xffc8a0, sunSize: 0.0022, stars: 0.35, clouds: 0.55, nebula: 0.12, dark: 0.05 },
   { top: 0x1c6ad4, hor: 0xdcf0ff, bot: 0x9ec4e8, sun: 0xfff6d8, sunSize: 0.002, stars: 0, clouds: 0.9, nebula: 0, dark: 0 },
-  { top: 0x050114, hor: 0x9c1268, bot: 0x140424, sun: 0xff5a38, sunSize: 0, stars: 1.15, clouds: 0, nebula: 0.55, dark: 0 }
+  { top: 0x050114, hor: 0x9c1268, bot: 0x140424, sun: 0xff5a38, sunSize: 0, stars: 1.15, clouds: 0, nebula: 0.55, dark: 0 },
+  { top: 0x2a1e18, hor: 0xd08a48, bot: 0x2a1a10, sun: 0xffb060, sunSize: 0.0022, stars: 0, clouds: 0.8, nebula: 0, dark: 0.45 },
+  { top: 0x05030c, hor: 0x3a1028, bot: 0x08040a, sun: 0xff5040, sunSize: 0, stars: 0.9, clouds: 0.45, nebula: 0.18, dark: 0.85, moon: 0.16, neb1: 0x6a0a2a, neb2: 0x2a0a5a },
+  { top: 0xff9ac8, hor: 0xfff0f6, bot: 0xf8c8e0, sun: 0xfff6e0, sunSize: 0.0025, stars: 0, clouds: 0.85, nebula: 0, dark: 0 },
+  { top: 0x010604, hor: 0x06281e, bot: 0x010403, sun: 0x9affe0, sunSize: 0, stars: 1.4, clouds: 0, nebula: 0.7, dark: 0, neb1: 0x0a6a4a, neb2: 0x6a1a9a },
+  { top: 0x0a0e16, hor: 0x3a4658, bot: 0x0c1014, sun: 0xb8c8e8, sunSize: 0, stars: 0, clouds: 1.0, nebula: 0, dark: 0.82 },
+  { top: 0x010103, hor: 0x0a0612, bot: 0x010102, sun: 0xffb070, sunSize: 0, stars: 1.5, clouds: 0, nebula: 0.5, dark: 0, hole: 0.075, neb1: 0x5a1a2a, neb2: 0x1a2a6a }
 ];
 function makeSkyMaterial(def) {
   const p = SKY_PRESETS[def.sky];
@@ -3443,7 +3555,9 @@ function makeSkyMaterial(def) {
       uTop: { value: new THREE.Color(p.top) }, uHor: { value: new THREE.Color(p.hor) }, uBot: { value: new THREE.Color(p.bot) },
       uSunDir: { value: new V3(...def.light.sunDir).normalize() }, uSunCol: { value: new THREE.Color(p.sun) }, uTime: { value: 0 },
       uStars: { value: p.stars }, uClouds: { value: p.clouds }, uNebula: { value: p.nebula }, uSunSize: { value: p.sunSize }, uCloudDark: { value: p.dark },
-      uAurora: { value: p.aurora || 0 }, uWater: { value: p.water || 0 }, uLava: { value: p.lava || 0 }
+      uAurora: { value: p.aurora || 0 }, uWater: { value: p.water || 0 }, uLava: { value: p.lava || 0 },
+      uMoon: { value: p.moon || 0 }, uHole: { value: p.hole || 0 }, uFlash: { value: 0 },
+      uNeb1: { value: p.neb1 !== undefined ? new THREE.Color(p.neb1) : new THREE.Color().setRGB(0.45, 0.08, 0.65) }, uNeb2: { value: p.neb2 !== undefined ? new THREE.Color(p.neb2) : new THREE.Color().setRGB(0.05, 0.48, 0.85) }
     },
     vertexShader: `varying vec3 vDir; void main(){ vDir = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`,
     fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false
@@ -3566,6 +3680,7 @@ float sdArena(vec2 p){ vec2 a = abs(p);
   for(int i=0;i<15;i++){ if(i >= uPolyN - 1) break; vec2 e = uPoly[i+1] - uPoly[i]; vec2 q = a - uPoly[i]; float t = clamp(dot(q, e) / dot(e, e), 0.0, 1.0); best = min(best, length(q - e * t)); }
   return best - uRc; }
 float lmask(float d, float w){ float aa = fwidth(d) * 1.2 + 0.002; return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
+float gearD(vec2 p, float R, float n, float rot){ float t = smoothstep(-0.25, 0.25, sin((atan(p.y, p.x) + rot) * n)); return length(p) - (R + t * 0.55); }
 // Static (time- and view-independent) floor fields. Baked once per arena into tFloorA/B (see ArenaVisual.bakeFloor);
 // computed live only as a fallback. A.x is always the arena distance field; the rest depends on the floor type.
 // Voronoi crack edges stay live: their distance fields have a sharp crease that texture filtering would round off.
@@ -3586,6 +3701,11 @@ void floorStatic(vec2 fp, out vec4 A){
   else if(uType == 9){ vec2 q = fp / vec2(2.6, 5.2); vec2 cell = floor(vec2(q.x, q.y + 0.5 * mod(floor(q.x), 2.0)));
     A.y = fbm(vec2(fp.x * 1.4, fp.y * 0.18 + hash12(cell) * 10.0)); }
   else if(uType == 10){ A.y = fbm(fp * 0.18 + fbm(fp * 0.09) * 2.2); }
+  else if(uType == 12){ A.y = fbm(fp * 0.18); A.z = fbm(fp * 0.07 + 6.0); }
+  else if(uType == 13){ A.y = fbm(fp * 0.4); A.z = fbm(fp * 0.1 + 3.0); }
+  else if(uType == 14){ A.y = fbm(fp * 0.5); }
+  else if(uType == 15){ A.y = fbm(fp * 0.15); A.z = fbm(fp * 0.09 + 4.0); A.w = fbm(fp * 0.05 + 8.0); }
+  else if(uType == 16){ A.y = fbm(fp * 0.6); A.z = fbm(fp * 0.07 + 2.0); }
   else { A.y = fbm(fp * 0.08); }
 }
 `;
@@ -3773,7 +3893,7 @@ if(uType == 0){
   base = mix(mCol, vec3(0.92, 0.76, 0.34), gold * 0.88);
   fRough = mix(0.16 + vein * 0.08, 0.26, gold); fMetal = mix(0.06, 0.88, gold);
   fPert = vec3(tf.x - 0.5, 0.0, tf.y - 0.5) * gold * 0.28;
-} else {
+} else if(uType == 11){
   // Synthwave obsidian mirror-grid with pulsing magenta/cyan laser lines
   vec2 g1 = abs(fract(fp / 3.0) - 0.5); float gl1 = smoothstep(0.465, 0.495, max(g1.x, g1.y));
   vec2 g2 = abs(fract(fp / 12.0) - 0.5); float gl2 = smoothstep(0.482, 0.498, max(g2.x, g2.y));
@@ -3783,6 +3903,122 @@ if(uType == 0){
   vec3 gridCol = mix(uGrid, uLine, smoothstep(0.2, 0.8, 0.5 + 0.5 * sin(fp.x * 0.08 + uTime * 0.8)));
   fEmis += gridCol * (gl1 * 0.22 * sweep + gl2 * 0.55);
   fRough = 0.07 + n * 0.05; fMetal = 0.58;
+} else if(uType == 12){
+  // Riveted brass & copper deck plates with verdigris patina and slowly turning engraved gear inlays
+  vec2 tq = fp / 4.0; vec2 tc = floor(tq); vec2 tf = fract(tq) - 0.5;
+  float seam = smoothstep(0.468, 0.494, max(abs(tf.x), abs(tf.y)));
+  float rivet = 1.0 - smoothstep(0.022, 0.04, length(abs(tf) - 0.405));
+  float hh = hash12(tc); float copper = step(0.8, hh);
+  float brush = vnoise(fp * 3.0 + hh * 9.0);
+  vec3 brass = mix(uBase1, uBase2, hh * 0.45 + fA.y * 0.55) * (0.95 + 0.08 * brush);
+  brass = mix(brass, vec3(0.55, 0.24, 0.12) * (0.8 + 0.3 * brush), copper * 0.85);
+  float patina = smoothstep(0.6, 0.82, fA.z) * (1.0 - copper * 0.5);
+  base = mix(brass, vec3(0.2, 0.42, 0.34) * (0.8 + 0.3 * fA.y), patina * 0.7);
+  base *= 1.0 - seam * 0.7; base = mix(base, uBase2 * 1.25, rivet * 0.6);
+  float gr = length(fp), ga = atan(fp.y, fp.x) + uTime * 0.12;
+  float g1 = gearD(fp, 7.2, 24.0, uTime * 0.12);
+  vec2 gp = vec2(abs(fp.x) - 21.0, abs(fp.y) - 25.0);
+  float g2 = gearD(gp, 4.4, 15.0, -uTime * 0.192 * sign(fp.x * fp.y + 1e-4));
+  float spokes = (1.0 - smoothstep(0.18, 0.32, abs(sin(ga * 3.0)) * gr)) * step(1.6, gr) * step(gr, 4.6);
+  float inl = clamp(lmask(g1, 0.1) + lmask(gr - 4.6, 0.08) + lmask(gr - 1.4, 0.08) + spokes * 0.8 + lmask(g2, 0.09) + lmask(length(gp) - 2.6, 0.07) + lmask(length(gp) - 0.7, 0.07), 0.0, 1.0);
+  base = mix(base, vec3(1.0, 0.78, 0.42) * 0.85, inl * 0.55);
+  fEmis += vec3(1.0, 0.62, 0.22) * inl * (0.22 + 0.12 * sin(uTime * 1.5));
+  fMetal = mix(0.88, 0.25, patina); fRough = clamp(0.3 + brush * 0.04 + patina * 0.45 - inl * 0.12, 0.12, 0.9);
+  fPert = vec3(tf.x, 0.0, tf.y) * (seam * 0.9 + rivet * 1.6) + vec3(fA.y - 0.5, 0.0, fA.z - 0.5) * 0.12;
+} else if(uType == 13){
+  // Moonlit cathedral flagstones: irregular slabs, mossy mortar, a carved crescent-moon sigil ring and creeping graveyard mist
+  vec3 v = voronoi(fp * 0.3); float e = v.y - v.x;
+  float mortar = 1.0 - smoothstep(0.03, 0.09, e);
+  vec3 stone = mix(uBase1, uBase2, v.z * 0.55 + fA.y * 0.45) * (0.78 + 0.3 * vnoise(fp * 5.0));
+  float worn = smoothstep(0.55, 0.8, fA.z);
+  stone = mix(stone, stone * vec3(0.8, 0.74, 0.9), worn * 0.5);
+  base = mix(stone, vec3(0.06, 0.08, 0.05), mortar * 0.85);
+  float rr = length(fp); float ang = atan(fp.y, fp.x);
+  float seg = fract(ang * 6.0 / 3.14159265);
+  vec2 cp = vec2((seg - 0.5) * 7.67, rr - 14.65);
+  float cres = (1.0 - smoothstep(0.62, 0.72, length(cp))) * smoothstep(0.42, 0.52, length(cp - vec2(0.28, 0.0)));
+  float sig = clamp(lmask(rr - 13.5, 0.14) + lmask(rr - 15.8, 0.1) + cres, 0.0, 1.0);
+  float mist = smoothstep(0.42, 0.85, fbm(fp * 0.07 + vec2(uTime * 0.035, uTime * 0.022)) * 0.6 + fbm(fp * 0.19 - vec2(uTime * 0.05, 0.0)) * 0.4);
+  float flick = 0.7 + 0.3 * sin(uTime * 1.1 + rr * 0.2);
+  base *= 1.0 - sig * 0.4;
+  base = mix(base, base + vec3(0.12, 0.16, 0.18), mist * 0.35);
+  fEmis += vec3(0.62, 0.32, 1.0) * sig * 0.75 * flick + vec3(0.32, 0.62, 0.55) * mist * 0.1;
+  fRough = clamp(mix(0.62, 0.3, worn) + mortar * 0.3, 0.2, 0.95); fMetal = 0.04;
+  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * mortar * 0.9 + vec3(fA.y - 0.5, 0.0, 0.0) * 0.3;
+} else if(uType == 14){
+  // Glossy pastel icing tiles with piped frosting seams, scattered rainbow sprinkles and a candy swirl at centre
+  vec2 tq = fp / 5.0; vec2 tc = floor(tq); vec2 tf = fract(tq) - 0.5;
+  float chk = mod(tc.x + tc.y, 2.0);
+  float pipe = smoothstep(0.43, 0.49, max(abs(tf.x), abs(tf.y)));
+  float bead = 0.5 + 0.5 * sin((abs(tf.x) > abs(tf.y) ? tf.y : tf.x) * 62.83);
+  vec3 icing = mix(uBase1, uBase2, chk) * (0.94 + 0.1 * fA.y);
+  base = mix(icing, vec3(1.0, 0.98, 0.96), pipe * (0.8 + 0.2 * bead));
+  vec2 sp = fp * 1.7; vec2 sc = floor(sp); vec2 sf = fract(sp) - 0.5; float h1 = hash12(sc), h2 = hash12(sc + 7.3), h3 = hash12(sc + 3.1);
+  float sa = h1 * 6.2831; vec2 sq = vec2(sf.x * cos(sa) - sf.y * sin(sa), sf.x * sin(sa) + sf.y * cos(sa)) + (vec2(h2, h3) - 0.5) * 0.4;
+  float sd = length(vec2(max(abs(sq.x) - 0.13, 0.0), sq.y)) - 0.045;
+  float spr = step(0.5, h2) * (1.0 - smoothstep(-0.01, 0.01, sd)) * (1.0 - pipe);
+  vec3 sprC = 0.55 + 0.45 * cos(6.2831 * (h3 + vec3(0.0, 0.33, 0.67)));
+  base = mix(base, sprC, spr);
+  float rr = length(fp); float sw = sin(atan(fp.y, fp.x) * 5.0 + rr * 0.9 - uTime * 0.6);
+  float swirl = smoothstep(0.2, 0.5, sw) * smoothstep(7.6, 6.8, rr) * step(0.8, rr);
+  base = mix(base, vec3(1.0, 0.3, 0.55), swirl * 0.8);
+  fRough = clamp(0.2 + spr * 0.25 + pipe * 0.25 + fA.y * 0.06, 0.12, 0.8); fMetal = 0.0;
+  fPert = vec3(tf.x, 0.0, tf.y) * pipe * 0.8 + vec3(sq.x, 0.0, sq.y) * spr * 1.2;
+  fEmis += sprC * spr * 0.04;
+} else if(uType == 15){
+  // Damp cave loam & moss with pulsing bioluminescent mycelium networks, sprouting glow-caps and luminous pools
+  vec3 v = voronoi(fp * 0.2); float vein = 1.0 - smoothstep(0.0, 0.04, v.y - v.x);
+  vec3 v2 = voronoi(fp * 0.65 + 3.0); float vein2 = (1.0 - smoothstep(0.0, 0.03, v2.y - v2.x)) * smoothstep(0.35, 0.65, fA.z);
+  float soil = fA.y;
+  base = mix(uBase1, uBase2, soil) * (0.7 + 0.45 * vnoise(fp * 6.0));
+  float moss = smoothstep(0.5, 0.75, fA.z);
+  base = mix(base, vec3(0.08, 0.2, 0.1) * (0.7 + 0.5 * vnoise(fp * 11.0)), moss * 0.7);
+  float pool = smoothstep(0.66, 0.72, fA.w) * smoothstep(3.0, 8.0, -d2);
+  float rr = length(fp);
+  float pulse = 0.5 + 0.5 * sin(uTime * 1.7 - rr * 0.32 + v.z * 6.2831);
+  vec3 vc = mix(vec3(0.1, 1.0, 0.78), vec3(0.78, 0.35, 1.0), step(0.62, v.z));
+  fEmis += vc * (vein * (0.25 + 1.1 * pulse * pulse) + vein2 * 0.35 * (0.6 + 0.4 * pulse));
+  vec2 mq = fp * 1.3; vec2 mc = floor(mq); vec2 mf = fract(mq) - 0.5; float mh = hash12(mc);
+  float cap = step(0.86, mh) * step(0.5, fA.z) * (1.0 - smoothstep(0.08, 0.14, length(mf - (hash22(mc) - 0.5) * 0.5)));
+  base = mix(base, vec3(0.9, 0.6, 1.0), cap * 0.5);
+  fEmis += mix(vec3(0.4, 1.0, 0.9), vec3(1.0, 0.45, 0.9), hash12(mc + 1.0)) * cap * 0.9;
+  base = mix(base, vec3(0.01, 0.05, 0.05), pool * 0.85);
+  fEmis += vec3(0.05, 0.5, 0.45) * pool * (0.35 + 0.25 * sin(uTime * 0.8 + fp.x * 0.4 + fp.y * 0.3));
+  fRough = clamp(mix(mix(0.85, 0.55, moss * 0.3), 0.04, pool) - vein * 0.2, 0.04, 0.95); fMetal = 0.0;
+  fPert = vec3(v.x - 0.5, 0.0, v.y - 0.5) * vein * 0.6 + vec3(soil - 0.5, 0.0, moss - 0.5) * 0.4 * (1.0 - pool);
+} else if(uType == 16){
+  // Rain-lashed slate slabs: standing water sheets, live raindrop ripples and storm-charged conductor channels
+  vec2 q = fp / vec2(3.2, 2.2); vec2 row = vec2(q.x + 0.5 * mod(floor(q.y), 2.0), q.y); vec2 cell = floor(row); vec2 f = fract(row);
+  float e = min(min(f.x, 1.0 - f.x) * 3.2, min(f.y, 1.0 - f.y) * 2.2); float gap = 1.0 - smoothstep(0.03, 0.09, e);
+  vec3 slate = mix(uBase1, uBase2, hash12(cell) * 0.5 + fA.y * 0.5) * (0.82 + 0.24 * vnoise(fp * 7.0));
+  float wet = smoothstep(0.38, 0.6, fA.z);
+  base = mix(slate, slate * 0.55, wet) * (1.0 - gap * 0.5);
+  vec2 rq = fp * 0.9; vec2 rc = floor(rq); vec2 rf = fract(rq) - 0.5;
+  vec2 rip = vec2(0.0); float rings = 0.0;
+  for(int k = 0; k < 2; k++){ float fk = float(k); vec2 o = hash22(rc + fk * 17.0) - 0.5; float ph = fract(uTime * (0.9 + 0.3 * fk) + hash12(rc + fk * 5.0));
+    vec2 dv = rf - o * 0.6; float dr = length(dv); float ring = (1.0 - smoothstep(0.0, 0.05, abs(dr - ph * 0.45))) * (1.0 - ph);
+    rings += ring; rip += dv / max(dr, 1e-3) * ring; }
+  vec2 cg = abs(fract(fp / 9.0 + 0.5) - 0.5) * 9.0; float chan = max(lmask(cg.x, 0.06), lmask(cg.y, 0.06));
+  float zap = pow(0.5 + 0.5 * sin((fp.x + fp.y) * 0.35 - uTime * 7.0), 12.0);
+  float fl = step(0.94, hash12(vec2(floor(uTime * 12.0), floor(fp.x / 9.0) + floor(fp.y / 9.0) * 7.0)));
+  base = mix(base, vec3(0.1, 0.12, 0.14), chan * 0.6) + rings * 0.03;
+  fEmis += vec3(0.45, 0.75, 1.0) * chan * (0.12 + zap * 1.3 + fl * 0.8);
+  fRough = clamp(mix(0.58, 0.05, wet) + gap * 0.25, 0.04, 0.9); fMetal = mix(0.08, 0.6, chan);
+  fPert = vec3(rip.x, 0.0, rip.y) * 0.9 + vec3(f.x - 0.5, 0.0, f.y - 0.5) * gap * 0.8;
+} else if(uType == 17){
+  // Obsidian gravity-well deck: warped spacetime grid, infalling spiral arms, inward gravity waves and a starfield beneath the glass
+  float rr = length(fp); float ang = atan(fp.y, fp.x);
+  vec2 wp = fp * (1.0 - 6.0 / (rr + 7.0));
+  vec2 gq = abs(fract(wp / 3.5) - 0.5); float grid = smoothstep(0.465, 0.495, max(gq.x, gq.y));
+  float arms = pow(0.5 + 0.5 * sin(ang * 2.0 + log(rr + 1.0) * 4.0 - uTime * 0.45), 5.0) * smoothstep(34.0, 3.0, rr);
+  vec2 fd = fp - Vw.xz / max(NdotV, 0.25) * 1.6;
+  float star = pow(hash12(floor(fd * 4.0)), 60.0) * smoothstep(0.4, 0.0, length(fract(fd * 4.0) - 0.5));
+  vec3 armC = mix(vec3(1.0, 0.68, 0.28), vec3(0.6, 0.25, 1.0), smoothstep(3.0, 26.0, rr));
+  float wave = pow(fract(rr / 12.0 + uTime * 0.18), 18.0) * smoothstep(40.0, 4.0, rr);
+  base = mix(uBase1, uBase2, fA.y * 0.8) + armC * arms * 0.05;
+  fEmis += armC * arms * 0.55 + mix(uGrid, uLine, 0.4) * grid * (0.06 + 0.1 * smoothstep(20.0, 2.0, rr)) + vec3(star) * 1.4 + armC * wave * 0.35;
+  fRough = 0.06 + fA.y * 0.04; fMetal = 0.45;
+  fPert = vec3(fp.x, 0.0, fp.y) / max(rr, 1.0) * wave * 0.6;
 }
 base = mix(base, base * (0.55 + teamCol * 0.9), endT * 0.35);
 float lw = 0.13; float ln = 0.0;
@@ -3803,7 +4039,7 @@ if(uGoalMode == 2){
 ln += lmask(d2 + uRf + 0.7, lw * 1.2);
 ln = clamp(ln, 0.0, 1.0);
 vec3 lc = mix(uLine, teamCol * 1.3 + 0.2, step(uGoalZ - 10.5, abs(fp.y)) * 0.6);
-if(uType == 1 || uType == 3 || uType == 7 || uType == 10){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.68, ln); }
+if(uType == 1 || uType == 3 || uType == 7 || uType == 10 || uType == 14){ base = mix(base, lc * 0.95, ln * 0.92); fRough = mix(fRough, 0.68, ln); }
 else { base = mix(base, lc * 0.72, ln * 0.88); fRough = mix(fRough, 0.55, ln); fEmis += lc * ln * uGlow * 0.4; }
 float inGoalFloor = 0.0;
 if(uGoalMode == 0) inGoalFloor = step(uL, abs(fp.y));
@@ -3819,7 +4055,7 @@ float aaRough = clamp(length(fwidth(fp)) * 0.22, 0.0, 0.38);
 fRough = clamp(max(mix(fRough, 1.0, 0.22), aaRough), 0.14, 0.98);
 // Perimeter & wall-fillet ambient occlusion
 float ao = smoothstep(0.0, 3.6, -d2 - uRf + 0.45); base *= mix(0.42, 1.0, ao);
-float cring = lmask(length(fp) - 9.5, 0.6) * (uType == 0 || uType == 4 || uType == 5 || uType == 8 || uType == 9 || uType == 11 ? 1.0 : 0.0); fEmis += mix(uGrid, uLine, 0.5) * cring * 0.025 * (1.0 + sin(uTime * 2.0));
+float cring = lmask(length(fp) - 9.5, 0.6) * (uType == 0 || uType == 4 || uType == 5 || uType == 8 || uType == 9 || uType == 11 || uType == 12 || uType == 13 || uType == 15 || uType == 17 ? 1.0 : 0.0); fEmis += mix(uGrid, uLine, 0.5) * cring * 0.025 * (1.0 + sin(uTime * 2.0));
 diffuseColor.rgb = base;
 `;
 
@@ -3868,6 +4104,48 @@ if(uType == 10){ vec2 gl = abs(fract(vec2(w.x / 4.0, h / 4.0)) - 0.5); float mul
 if(uType == 11){ float scan = smoothstep(0.42, 0.5, abs(fract(h * 1.4 - uTime * 0.35) - 0.5));
   vec3 sc2 = mix(vec3(1.0, 0.18, 0.72), vec3(0.18, 0.95, 1.0), 0.5 + 0.5 * sin(w.x * 0.12 + uTime));
   fEmis += sc2 * (scan * 0.32 + edge * 0.38) * (1.0 - pad); base = mix(base, vec3(0.06, 0.02, 0.12), pad * 0.65); }
+if(uType == 12){ vec2 rv = abs(fract(vec2(w.x / 3.6, h / 3.6)) - 0.5); float rib = smoothstep(0.45, 0.485, max(rv.x, rv.y));
+  float riv = 1.0 - smoothstep(0.03, 0.07, length(abs(fract(vec2(w.x / 1.2, h / 3.6)) - 0.5) - vec2(0.0, 0.47)));
+  base = mix(base, vec3(0.62, 0.42, 0.16), rib * 0.85); base = mix(base, vec3(0.32, 0.2, 0.1), pad * 0.6);
+  fMetal = mix(fMetal, 0.9, max(rib, pad)); fRough = mix(fRough, 0.3, rib);
+  alpha = mix(alpha, 0.95, rib * (1.0 - pad) * 0.8);
+  fEmis += vec3(1.0, 0.6, 0.2) * riv * rib * (1.0 - pad) * 0.6; }
+if(uType == 13){ float cw = 4.2; float hx = (fract(w.x / cw) - 0.5) * cw; float a = 1.55, R = 3.1; float spring = uH - uRf - 4.2;
+  float inside = (h < spring ? step(abs(hx), a) : step(length(vec2(abs(hx) + (R - a), h - spring)), R)) * step(uPadH + 0.6, h);
+  vec3 gv = voronoi(vec2(w.x, h) * 1.1); float lead = 1.0 - smoothstep(0.02, 0.06, gv.y - gv.x);
+  vec3 jewel = 0.5 + 0.5 * cos(6.2831 * (gv.z * 0.8 + vec3(0.0, 0.33, 0.67))); jewel = mix(jewel, vec3(0.8, 0.08, 0.22), step(0.7, gv.z) * 0.6);
+  float up = 1.0 - pad; float glassM = inside * (1.0 - lead) * up;
+  base = mix(base, jewel * 0.7, glassM * 0.6); base = mix(base, vec3(0.12, 0.1, 0.14), (1.0 - inside) * up);
+  alpha = mix(alpha, 0.72, (1.0 - inside) * up); alpha = mix(alpha, 0.85, lead * inside * up); alpha = clamp(alpha + glassM * 0.1, 0.0, 1.0);
+  fEmis += jewel * glassM * (0.16 + 0.06 * sin(uTime * 0.7 + gv.z * 6.0));
+  vec2 bq = vec2(w.x / 1.6 + 0.5 * mod(floor(h / 0.8), 2.0), h / 0.8); float mort = smoothstep(0.44, 0.49, max(abs(fract(bq.x) - 0.5), abs(fract(bq.y) - 0.5)));
+  base = mix(base, mix(vec3(0.2, 0.18, 0.22), vec3(0.05), mort), pad * 0.85); fRough = mix(fRough, 0.82, pad); fMetal = mix(fMetal, 0.02, pad); }
+if(uType == 14){ float st = step(0.5, fract((w.x + h) / 1.6));
+  base = mix(base, mix(vec3(1.0, 0.97, 0.97), vec3(0.95, 0.12, 0.25), st), pad * 0.92); fRough = mix(fRough, 0.16, pad); fMetal = mix(fMetal, 0.0, pad);
+  vec2 bp = vec2(w.x * 0.8, h * 0.8 - uTime * 0.25); vec2 bc = floor(bp); float bub = (1.0 - smoothstep(0.1, 0.16, length(fract(bp) - 0.5 - (hash22(bc) - 0.5) * 0.5))) * step(0.82, hash12(bc));
+  base = mix(base, vec3(1.0, 0.7, 0.85), (1.0 - pad) * 0.4);
+  fEmis += vec3(1.0, 0.75, 0.9) * bub * (1.0 - pad) * 0.35; alpha = clamp(alpha + bub * 0.25 * (1.0 - pad), 0.0, 1.0); }
+if(uType == 15){ float gx = fract(w.x * 0.9); float gill = smoothstep(0.42, 0.5, abs(gx - 0.5));
+  float colm = floor(w.x * 0.9); float yy = h * 0.3 - uTime * 0.25 + hash12(vec2(colm, 1.0)) * 7.0;
+  float spo = (1.0 - smoothstep(0.05, 0.12, length(vec2(gx - 0.5, (fract(yy) - 0.5) * 0.5)))) * step(0.6, hash12(vec2(colm, floor(yy))));
+  vec3 mv = voronoi(vec2(w.x, h) * 0.5); float mvein = 1.0 - smoothstep(0.0, 0.05, mv.y - mv.x);
+  base = mix(base, vec3(0.06, 0.14, 0.09) * (0.8 + 0.4 * n), pad * 0.8);
+  fEmis += vec3(0.2, 1.0, 0.8) * (spo * 0.9 + gill * 0.05) * (1.0 - pad) + mix(vec3(0.1, 1.0, 0.75), vec3(0.8, 0.35, 1.0), mv.z) * mvein * pad * (0.5 + 0.4 * sin(uTime * 1.7 + mv.z * 6.0));
+  alpha = clamp(alpha + spo * 0.2 * (1.0 - pad), 0.0, 1.0); fRough = mix(fRough, 0.9, pad); }
+if(uType == 16){ float colm = floor(w.x * 3.0); float sp = 0.7 + hash12(vec2(colm, 3.0)) * 0.8;
+  float yy = h * 0.35 + uTime * sp + hash12(vec2(colm, 7.0)) * 10.0;
+  float drop = smoothstep(0.38, 0.0, abs(fract(w.x * 3.0) - 0.5)) * pow(1.0 - fract(yy), 6.0) * step(0.45, hash12(vec2(colm, floor(yy)))) * (1.0 - pad);
+  alpha = clamp(alpha + drop * 0.35, 0.0, 1.0); fEmis += vec3(0.6, 0.8, 1.0) * drop * 0.3;
+  float arcF = step(0.965, hash12(vec2(floor(uTime * 15.0), floor(w.x / 6.0))));
+  float zig = abs(fract(w.x * 1.5 + floor(uTime * 20.0) * 0.37) - 0.5) * 0.8;
+  float arc = (1.0 - smoothstep(0.0, 0.06, abs(h - (uPadH + 1.2 + zig)))) * arcF * (1.0 - pad);
+  fEmis += vec3(0.6, 0.85, 1.0) * arc * 3.0;
+  base = mix(base, base * 0.6, pad); fRough = mix(fRough, 0.12, pad); }
+if(uType == 17){ float row = floor(h * 2.0);
+  float streak = pow(fract(w.x * 0.05 - uTime * 0.4 + hash12(vec2(row, 1.0)) * 5.0), 14.0) * step(0.7, hash12(vec2(row, 3.0))) * (1.0 - smoothstep(0.0, 0.14, abs(fract(h * 2.0) - 0.5)));
+  vec3 shift = mix(vec3(1.0, 0.55, 0.2), vec3(0.55, 0.3, 1.0), smoothstep(uPadH, uH, h));
+  fEmis += shift * (streak * 0.9 + 0.04) * (1.0 - pad);
+  base = mix(base, vec3(0.02, 0.01, 0.03), pad * 0.8); fEmis += vec3(1.0, 0.5, 0.15) * lmask2(h - uPadH * 0.55, 0.12) * pad * 1.2; fMetal = mix(fMetal, 0.6, pad); fRough = mix(fRough, 0.15, pad); }
 float strip = lmask2(h - uPadH, 0.07); float strip2 = lmask2(h - (uH - uRf * 0.5), 0.05);
 vec3 sc = mix(uLine, teamCol, 0.35 + endT * 0.65);
 float pulse = 0.6 + 0.4 * sin(uTime * 2.0 - w.x * 0.08);
@@ -3896,7 +4174,7 @@ class ArenaVisual {
     this.skyMat = makeSkyMaterial(d);
     const sky = new THREE.Mesh(new THREE.SphereGeometry(1800, 48, 24), this.skyMat); sky.frustumCulled = false; sky.renderOrder = 1e6; this.add(sky); // drawn last among opaques: depth test skips every pixel already covered
     this.buildFloor(); this.buildWalls(); this.buildGoals(); this.buildLights();
-    const deco = [this.decoNeon, this.decoStadium, this.decoFoundry, this.decoMesa, this.decoOrbit, this.decoFrost, this.decoAbyss, this.decoRuins, this.decoRift, this.decoSakura, this.decoSkyline, this.decoSynthwave][d.floor];
+    const deco = [this.decoNeon, this.decoStadium, this.decoFoundry, this.decoMesa, this.decoOrbit, this.decoFrost, this.decoAbyss, this.decoRuins, this.decoRift, this.decoSakura, this.decoSkyline, this.decoSynthwave, this.decoClockwork, this.decoNightfall, this.decoCandy, this.decoGrotto, this.decoTempest, this.decoHorizon][d.floor];
     deco.call(this);
     this.buildBanners();
   }
@@ -5893,6 +6171,598 @@ class ArenaVisual {
     // Outside weather: electric synthwave neon digital rain & glowing retro laser sparks
     this.outerRain({ count: 780, rMin: 64, rMax: 225, yMin: -1, yMax: 120, clearance: 14, seed: 1301, speed: 52, slantX: 0.04, slantZ: 0.02, len: 5.2, width: 0.14, col1: 0x3ef2ff, col2: 0xff36b8, opacity: 0.34, additive: true });
   }
+  // ---- Shared helpers for the newer themed arenas ----
+  gearGeo(R, n, depth, t = 2.0) {
+    const sh = new THREE.Shape(), p = TAU / n;
+    for (let i = 0; i < n; i++) {
+      const a0 = i * p;
+      [[R, a0], [R + t, a0 + 0.12 * p], [R + t, a0 + 0.42 * p], [R, a0 + 0.54 * p]].forEach(([r, a], k) => {
+        const x = Math.cos(a) * r, y = Math.sin(a) * r; if (i === 0 && k === 0) sh.moveTo(x, y); else sh.lineTo(x, y);
+      });
+    }
+    sh.closePath();
+    for (let k = 0; k < 6; k++) { const a = k / 6 * TAU, hole = new THREE.Path(); hole.absarc(Math.cos(a) * R * 0.56, Math.sin(a) * R * 0.56, R * 0.2, 0, TAU, true); sh.holes.push(hole); }
+    const axle = new THREE.Path(); axle.absarc(0, 0, R * 0.1, 0, TAU, true); sh.holes.push(axle);
+    const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: true, bevelThickness: depth * 0.12, bevelSize: Math.min(0.4, R * 0.015), bevelSegments: 1, curveSegments: 10 });
+    g.translate(0, 0, -depth / 2);
+    return g;
+  }
+  // Unlit-toon candy shader: `frag` sets vec3 c (albedo) and float gloss; vUv/vP (local)/vW (world)/N available
+  candyMat(frag, extra = {}) {
+    const decl = Object.keys(extra).map(k => (extra[k].value && extra[k].value.isColor ? 'uniform vec3 ' : 'uniform float ') + k + ';').join(' ');
+    return new THREE.ShaderMaterial({
+      uniforms: Object.assign({ uTime: this.uniforms.uTime, uSun: { value: new V3(...this.def.light.sunDir).normalize() } }, extra),
+      vertexShader: `varying vec2 vUv; varying vec3 vN, vP, vW; void main(){ vUv = uv; vP = position; vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+      fragmentShader: `uniform float uTime; uniform vec3 uSun; ${decl} varying vec2 vUv; varying vec3 vN, vP, vW; ${GLSL_NOISE}
+        void main(){ vec3 N = normalize(vN); vec3 V = normalize(cameraPosition - vW); vec3 c = vec3(1.0); float gloss = 0.6;
+          ${frag}
+          float dif = 0.5 + 0.55 * max(dot(N, uSun), 0.0) + 0.15 * N.y;
+          float spec = pow(max(dot(reflect(-uSun, N), V), 0.0), 40.0) * gloss;
+          float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.25;
+          gl_FragColor = vec4(c * dif + vec3(spec + rim), 1.0); }`
+    });
+  }
+  waterShader(frag, extra = {}) {
+    return new THREE.ShaderMaterial({
+      uniforms: Object.assign({ uTime: this.uniforms.uTime }, this.fogShader(), extra),
+      vertexShader: `varying vec3 vW; varying float vDist; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; vec4 mv = viewMatrix*w; vDist = -mv.z; gl_Position = projectionMatrix*mv; }`,
+      fragmentShader: `uniform float uTime; uniform vec3 uFog; uniform float uFogD; ${Object.keys(extra).map(k => 'uniform float ' + k + ';').join(' ')} varying vec3 vW; varying float vDist; ${GLSL_NOISE}
+        void main(){ vec3 col = vec3(0.0); float fogK = 0.85; ${frag}
+          float f = 1.0 - exp(-uFogD * uFogD * vDist * vDist); gl_FragColor = vec4(mix(col, uFog, f * fogK), 1.0); }`
+    });
+  }
+  decoClockwork() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 5, rise: 1.15, run: 2.0, color: 0x3a2a1c, seat: 0x7a3418, density: 0.85, base: 2.4, parapet: 0.8, style: 'sides', span: 0.54 });
+    const gp = new THREE.Mesh(new THREE.CircleGeometry(1100, 64), new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 0.95 })); gp.rotation.x = -PI / 2; gp.position.y = -0.6; this.add(gp);
+    this.terrainRing(240, 900, 130, 0x24180e, 0x6a4a28, 83, 10);
+    const brass = new THREE.MeshStandardMaterial({ color: 0xc08a34, roughness: 0.3, metalness: 0.92 });
+    const copper = new THREE.MeshStandardMaterial({ color: 0xb0623a, roughness: 0.36, metalness: 0.9 });
+    const iron = new THREE.MeshStandardMaterial({ color: 0x3a342e, roughness: 0.55, metalness: 0.8 });
+    const brick = new THREE.MeshStandardMaterial({ color: 0x6a3a28, roughness: 0.9 });
+    injectStandard(brick, 'cwBrick', {}, { mapFrag: `{ vec2 bq = vec2((vWPos.x + vWPos.z) / 1.2 + 0.5 * mod(floor(vWPos.y / 0.5), 2.0), vWPos.y / 0.5); float m = smoothstep(0.42, 0.48, max(abs(fract(bq.x) - 0.5), abs(fract(bq.y) - 0.5))); diffuseColor.rgb *= (1.0 - m * 0.55) * (0.8 + 0.35 * hash12(floor(bq))); }` });
+    const glowAmber = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.68, 0.3).multiplyScalar(3.0) });
+    // Colossal meshing cog trains behind both goal ends and along both flanks
+    const spin = [];
+    const addGear = (R, n, depth, mat, x, y, z, ry, w, ph = 0) => {
+      const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; this.add(g);
+      const m = new THREE.Mesh(this.gearGeo(R, n, depth), mat); g.add(m);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.16, R * 0.16, depth * 1.8, 16), iron); hub.rotation.x = PI / 2; g.add(hub);
+      spin.push({ m, w, ph });
+    };
+    for (const side of [-1, 1]) {
+      const zc = side * (s.L + st.outer + 20), w1 = 0.12 * side;
+      addGear(22, 30, 3.2, brass, -14, 20, zc, 0, w1);
+      addGear(13, 18, 2.6, copper, -14 + 37, 20, zc, 0, -w1 * 30 / 18, PI / 18);
+      addGear(8, 11, 2.2, iron, 23 + 23 * Math.cos(1.05), 20 + 23 * Math.sin(1.05), zc, 0, w1 * 30 / 11, 0.2);
+    }
+    for (const side of [-1, 1]) {
+      const xc = side * (s.W + st.outer + 24);
+      addGear(16, 22, 2.8, brass, xc, 18, -12, PI / 2, 0.15 * side);
+      addGear(10, 14, 2.4, copper, xc, 18, 16, PI / 2, -0.15 * side * 22 / 14, PI / 14);
+    }
+    // Ticking clock towers with roman-numeral faces at opposite corners
+    const faceTex = new THREE.CanvasTexture(TexGen.canvas(512, 512, (g, w) => {
+      const c = w / 2; g.fillStyle = '#f4e6c4'; g.beginPath(); g.arc(c, c, c - 6, 0, TAU); g.fill();
+      g.lineWidth = 14; g.strokeStyle = '#6a4a1c'; g.stroke();
+      g.fillStyle = '#2a1a0c'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold 50px Georgia, serif';
+      const RN = ['XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'];
+      for (let i = 0; i < 12; i++) { const a = i / 12 * TAU - PI / 2; g.fillText(RN[i], c + Math.cos(a) * c * 0.72, c + Math.sin(a) * c * 0.72); }
+      for (let i = 0; i < 60; i++) { const a = i / 60 * TAU, r0 = c * (i % 5 ? 0.88 : 0.84); g.lineWidth = i % 5 ? 3 : 7; g.beginPath(); g.moveTo(c + Math.cos(a) * r0, c + Math.sin(a) * r0); g.lineTo(c + Math.cos(a) * c * 0.93, c + Math.sin(a) * c * 0.93); g.stroke(); }
+    }));
+    faceTex.colorSpace = THREE.SRGBColorSpace;
+    const faceMat = new THREE.MeshBasicMaterial({ map: faceTex, color: new THREE.Color(1.5, 1.35, 1.1) });
+    const verdigris = new THREE.MeshStandardMaterial({ color: 0x3a7a62, roughness: 0.5, metalness: 0.6 });
+    const hands = [];
+    for (const [tx, tz] of [[s.W + st.outer + 30, s.L + 26], [-(s.W + st.outer + 30), -(s.L + 26)]]) {
+      const tg = new THREE.Group(); tg.position.set(tx, 0, tz); tg.rotation.y = Math.atan2(-tx, -tz); this.add(tg);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(14, 64, 14), brick); body.position.y = 32; tg.add(body);
+      const belfry = new THREE.Mesh(new THREE.BoxGeometry(16, 16, 16), brick); belfry.position.y = 72; tg.add(belfry);
+      const trim = [placed(new THREE.BoxGeometry(17, 1.2, 17), 0, 64.6, 0), placed(new THREE.BoxGeometry(17, 1.2, 17), 0, 80.6, 0)];
+      for (const cx of [-1, 1]) for (const cz of [-1, 1]) trim.push(placed(new THREE.ConeGeometry(1.1, 6, 6), cx * 7.6, 84, cz * 7.6));
+      tg.add(new THREE.Mesh(mergeGeoms(trim), brass));
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(12.5, 22, 4), verdigris); roof.position.y = 92; roof.rotation.y = PI / 4; tg.add(roof);
+      const finial = new THREE.Mesh(new THREE.ConeGeometry(0.6, 8, 8), brass); finial.position.y = 107; tg.add(finial);
+      const face = new THREE.Mesh(new THREE.CircleGeometry(6.4, 48), faceMat); face.position.set(0, 72, 8.05); tg.add(face);
+      const bezel = new THREE.Mesh(new THREE.TorusGeometry(6.6, 0.45, 8, 48), brass); bezel.position.copy(face.position); tg.add(bezel);
+      const hm = new THREE.Group(); hm.position.set(0, 72, 8.3); tg.add(hm);
+      const hourG = new THREE.BoxGeometry(0.6, 3.6, 0.15); hourG.translate(0, 1.5, 0);
+      const minG = new THREE.BoxGeometry(0.38, 5.4, 0.15); minG.translate(0, 2.4, 0);
+      const hourH = new THREE.Mesh(hourG, iron), minH = new THREE.Mesh(minG, iron); minH.position.z = 0.12; hm.add(hourH, minH);
+      hands.push({ hourH, minH });
+      const win = []; for (let k = 0; k < 5; k++) win.push(placed(new THREE.PlaneGeometry(1.8, 3.2), 0, 10 + k * 10, 7.05));
+      tg.add(new THREE.Mesh(mergeGeoms(win), glowAmber));
+    }
+    // Brick smokestacks venting steam
+    const stacks = [];
+    for (const [x, z] of [[s.W + st.outer + 46, -s.L - 10], [-(s.W + st.outer + 46), s.L + 10], [s.W + 70, s.L + 64], [-(s.W + 70), -(s.L + 64)]]) {
+      const h = 46 + (stacks.length % 2) * 14;
+      const sk = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.8, h, 16), brick); sk.position.set(x, h / 2, z); this.add(sk);
+      const band = []; for (let k = 1; k <= 3; k++) band.push(placed(new THREE.TorusGeometry(3.95 - 1.2 * k / 3.4, 0.35, 6, 24), x, h * k / 3.4, z, PI / 2, 0, 0));
+      band.push(placed(new THREE.CylinderGeometry(3.2, 2.8, 2.2, 16), x, h + 0.6, z));
+      this.add(new THREE.Mesh(mergeGeoms(band), copper));
+      stacks.push({ x, z, top: h + 1.8 });
+    }
+    // Pumping pistons around the rim + a copper steam main on iron struts
+    const pp = s.path(2, st.outer + 5).pts; const pistons = [];
+    for (let i = 0; i < 12; i++) {
+      const p = pp[Math.floor((i + 0.5) / 12 * (pp.length - 1))];
+      const housing = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, 14, 12), iron); housing.position.set(p.x, 7, p.z); this.add(housing);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 1.0, 12), brass); cap.position.set(p.x, 14.2, p.z); this.add(cap);
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 12, 10), brass); this.add(rod);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8), glowAmber); this.add(head);
+      pistons.push({ rod, head, x: p.x, z: p.z, ph: i * 0.9 });
+    }
+    const ringPts = s.path(3, st.outer + 2).pts.map(p => new V3(p.x, st.top + 2.2, p.z)); ringPts.pop();
+    this.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ringPts, true), 260, 0.6, 8, true), copper));
+    const struts = []; for (let i = 0; i < ringPts.length; i += 6) { const p = ringPts[i]; struts.push(placed(new THREE.CylinderGeometry(0.22, 0.3, p.y, 6), p.x, p.y / 2, p.z)); struts.push(placed(new THREE.TorusGeometry(0.85, 0.22, 6, 12), p.x, p.y, p.z, 0, Math.atan2(p.x, p.z), 0)); }
+    this.add(new THREE.Mesh(mergeGeoms(struts), iron));
+    // Patrolling brass-ribbed airships
+    const fabric = new THREE.MeshStandardMaterial({ color: 0x8a5a3a, roughness: 0.75 });
+    const ships = [];
+    for (let i = 0; i < 3; i++) {
+      const g = new THREE.Group();
+      const env = new THREE.Mesh(new THREE.SphereGeometry(6, 24, 14), fabric); env.scale.set(1, 1, 2.7); g.add(env);
+      const ribs = [];
+      for (let k = -2; k <= 2; k++) { const zz = k * 5.2; const rr = 6 * Math.sqrt(Math.max(0.05, 1 - Math.pow(zz / 16.2, 2))); ribs.push(placed(new THREE.TorusGeometry(rr + 0.05, 0.18, 6, 32), 0, 0, zz)); }
+      ribs.push(placed(new THREE.BoxGeometry(3, 2, 9), 0, -8.2, 0));
+      for (const sx of [-1, 1]) ribs.push(placed(new THREE.BoxGeometry(0.15, 2.4, 0.15), sx * 1.2, -6.6, 0));
+      ribs.push(placed(new THREE.BoxGeometry(0.3, 5, 4), 0, 3.5, -14.5)); ribs.push(placed(new THREE.BoxGeometry(5, 0.3, 4), 0, 0, -14.5));
+      g.add(new THREE.Mesh(mergeGeoms(ribs), brass));
+      const prop = new THREE.Group(); prop.position.set(0, -8.2, -5.0);
+      for (let k = 0; k < 3; k++) { const bg = new THREE.BoxGeometry(0.4, 3.6, 0.15); bg.translate(0, 1.8, 0); const b = new THREE.Mesh(bg, iron); b.rotation.z = k * TAU / 3; prop.add(b); }
+      g.add(prop);
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.5, 7), glowAmber); lamp.position.set(0, -8.2, 0); g.add(lamp);
+      this.add(g); ships.push({ g, prop, a0: i * TAU / 3, rad: 120 + i * 30, y: 48 + i * 12, sp: (i % 2 ? 1 : -1) * 0.05 });
+    }
+    this.updaters.push((t) => {
+      for (const g of spin) g.m.rotation.z = t * g.w + g.ph;
+      for (const h of hands) { h.minH.rotation.z = -t * 0.35; h.hourH.rotation.z = -t * 0.35 / 12; }
+      for (const p of pistons) { const k = Math.pow(0.5 + 0.5 * Math.sin(t * 2.4 + p.ph), 1.5); p.rod.position.set(p.x, 14 + k * 6, p.z); p.head.position.set(p.x, 20.4 + k * 6, p.z); }
+      for (const sh of ships) {
+        const a = sh.a0 + t * sh.sp, dir = Math.sign(sh.sp);
+        sh.g.position.set(Math.cos(a) * sh.rad, sh.y + Math.sin(t * 0.5 + sh.a0) * 2.5, Math.sin(a) * sh.rad);
+        sh.g.rotation.y = Math.atan2(-Math.sin(a) * dir, Math.cos(a) * dir); sh.prop.rotation.z = t * 9;
+      }
+      if (!Game || !Game.fx) return; const fx = Game.fx;
+      for (const sk of stacks) if (Math.random() < 0.15) { fx.c2.setRGB(0.62, 0.58, 0.54); fx.c3.setRGB(0.3, 0.27, 0.25); fx.alpha.spawn(sk.x + rand(-1, 1), sk.top, sk.z + rand(-1, 1), rand(-0.6, 0.6) + 1.2, 3.5 + Math.random() * 2, rand(-0.6, 0.6), 7, 5, 22, fx.c2, fx.c3, 0.42, 0.05, -0.25, 0); }
+    });
+    // Outside weather: drifting coal-smoke haze & glowing furnace sparks
+    this.outerParticles({ count: 700, rMin: 64, rMax: 240, yMin: 0, yMax: 100, clearance: 12, seed: 1401, vy: 1.6, orbit: 0.05, sway: 6.0, size: 14.0, col1: 0xb8a890, col2: 0x7a6a5a, opacity: 0.2, additive: false, shape: 3 });
+    this.outerParticles({ count: 600, rMin: 60, rMax: 220, yMin: 0, yMax: 90, clearance: 12, seed: 1409, vy: 5.5, orbit: -0.06, sway: 4.0, size: 2.6, col1: 0xffc060, col2: 0xff6a10, opacity: 0.8, additive: true, shape: 0 });
+  }
+  decoNightfall() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 5, rise: 1.1, run: 2.0, color: 0x2a2630, seat: 0x4a1020, density: 0.8, base: 2.4, parapet: 0.8, style: 'sides', span: 0.55 });
+    const gp = new THREE.Mesh(new THREE.CircleGeometry(1100, 64), new THREE.MeshStandardMaterial({ color: 0x141218, roughness: 0.95 })); gp.rotation.x = -PI / 2; gp.position.y = -0.6; this.add(gp);
+    this.terrainRing(230, 900, 125, 0x0c0a12, 0x2e2640, 97);
+    const stone = new THREE.MeshStandardMaterial({ color: 0x4a4652, roughness: 0.88 });
+    injectStandard(stone, 'gothStone', {}, { mapFrag: `{ vec2 bq = vec2((vWPos.x + vWPos.z) / 1.8 + 0.5 * mod(floor(vWPos.y / 0.9), 2.0), vWPos.y / 0.9); float m = smoothstep(0.43, 0.49, max(abs(fract(bq.x) - 0.5), abs(fract(bq.y) - 0.5))); diffuseColor.rgb *= (1.0 - m * 0.5) * (0.75 + 0.35 * hash12(floor(bq))) * (0.8 + 0.3 * fbm(vWPos.xy * 0.08)); }` });
+    const darkStone = new THREE.MeshStandardMaterial({ color: 0x1e1c24, roughness: 0.8 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.55, metalness: 0.4 });
+    const winGlow = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.55, 0.2).multiplyScalar(2.2) });
+    const roseMat = (team) => new THREE.ShaderMaterial({
+      uniforms: { uTime: this.uniforms.uTime, uTeam: { value: team === 0 ? this.blue : this.orange } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader: `uniform float uTime; uniform vec3 uTeam; varying vec2 vUv;
+        void main(){ vec2 p = (vUv - 0.5) * 2.0; float r = length(p); float a = atan(p.y, p.x); float u = (a + 3.14159) / 6.2831 * 12.0;
+          float seg = floor(u); float petal = step(r, 0.32 + 0.36 * abs(cos(a * 6.0))) * step(0.32, r);
+          float lead = clamp(step(abs(r - 0.32), 0.03) + step(abs(r - 0.68), 0.035) + step(0.95, r) + step(abs(fract(u) - 0.5), 0.04) * step(0.32, r), 0.0, 1.0);
+          vec3 jewel = 0.5 + 0.5 * cos(6.2831 * (fract(seg * 0.37 + floor(r * 3.0) * 0.21) + vec3(0.0, 0.33, 0.67)));
+          vec3 c = mix(jewel, uTeam * 1.2, 0.45 + 0.25 * petal); c = mix(c, vec3(1.0, 0.85, 0.6), step(r, 0.12));
+          float glow = 1.6 + 0.4 * sin(uTime * 1.3 + seg);
+          gl_FragColor = vec4(mix(c * glow, vec3(0.03), lead), 1.0); }`
+    });
+    // Twin gothic cathedrals behind both ends, rose windows lit in team colours
+    for (const side of [-1, 1]) {
+      const cg = new THREE.Group(); cg.position.set(0, 0, side * (s.L + st.outer + 26)); cg.rotation.y = side < 0 ? 0 : PI; this.add(cg);
+      const sp = [], dk = [], rf = [], gl = [];
+      sp.push(placed(new THREE.BoxGeometry(30, 32, 44), 0, 16, -22));
+      const tri = new THREE.Shape(); tri.moveTo(-16.5, 0); tri.lineTo(16.5, 0); tri.lineTo(0, 15); tri.closePath();
+      const roofG = new THREE.ExtrudeGeometry(tri, { depth: 46, bevelEnabled: false }); roofG.translate(0, 32, -45); rf.push(roofG);
+      for (const sx of [-1, 1]) {
+        sp.push(placed(new THREE.BoxGeometry(10, 52, 10), sx * 20, 26, -2));
+        sp.push(placed(new THREE.BoxGeometry(11.5, 2, 11.5), sx * 20, 52.5, -2));
+        rf.push(placed(new THREE.ConeGeometry(6.2, 34, 4), sx * 20, 70, -2, 0, PI / 4, 0));
+        for (const px of [-1, 1]) for (const pz of [-1, 1]) dk.push(placed(new THREE.ConeGeometry(0.8, 7, 6), sx * 20 + px * 4.8, 56.5, -2 + pz * 4.8));
+        for (let k = 0; k < 3; k++) {
+          dk.push(placed(new THREE.BoxGeometry(2.2, 22, 3), sx * 19.5, 11, -12 - k * 12));
+          dk.push(placed(new THREE.BoxGeometry(7.8, 1.4, 1.6), sx * 17.25, 25, -12 - k * 12, 0, 0, -sx * 0.93));
+          dk.push(placed(new THREE.ConeGeometry(0.9, 5, 4), sx * 19.5, 24.5, -12 - k * 12));
+        }
+        for (let k = 0; k < 3; k++) gl.push(placed(new THREE.PlaneGeometry(2.4, 6), sx * 20, 14 + k * 12, 3.05));
+      }
+      dk.push(placed(new THREE.CylinderGeometry(9.2, 9.2, 1.4, 40), 0, 22, 0.4, PI / 2, 0, 0));
+      gl.push(placed(new THREE.PlaneGeometry(7, 11), 0, 5.5, 0.06));
+      cg.add(new THREE.Mesh(mergeGeoms(sp), stone)); cg.add(new THREE.Mesh(mergeGeoms(dk), darkStone));
+      cg.add(new THREE.Mesh(mergeGeoms(rf), roofMat)); cg.add(new THREE.Mesh(mergeGeoms(gl), winGlow));
+      const rose = new THREE.Mesh(new THREE.CircleGeometry(8.2, 48), roseMat(side < 0 ? 0 : 1)); rose.position.set(0, 22, 1.2); cg.add(rose);
+    }
+    // Gothic pinnacles flanking the pitch & a wrought-iron graveyard fence
+    const pp = s.path(2, st.outer + 9).pts; const pin = [];
+    for (let i = 0; i < 16; i++) {
+      const p = pp[Math.floor((i + 0.5) / 16 * (pp.length - 1))]; if (Math.abs(p.z) > s.L * 0.8) continue;
+      pin.push(placed(new THREE.BoxGeometry(3, 18, 3), p.x, 9, p.z)); pin.push(placed(new THREE.ConeGeometry(2.1, 12, 4), p.x, 24, p.z, 0, PI / 4, 0));
+    }
+    if (pin.length) this.add(new THREE.Mesh(mergeGeoms(pin), stone));
+    const fpth = s.path(1.2, st.outer + 3).pts; const fence = [];
+    for (let i = 0; i < fpth.length - 1; i++) { const p = fpth[i]; fence.push(placed(new THREE.BoxGeometry(0.14, 2.8, 0.14), p.x, 1.4, p.z)); fence.push(placed(new THREE.ConeGeometry(0.16, 0.5, 4), p.x, 3.0, p.z)); }
+    for (const y of [0.6, 2.2]) fence.push(sweepGeometry(fpth, [{ d: 0, y, nd: -1, ny: 0 }, { d: 0, y: y + 0.16, nd: -1, ny: 0 }]));
+    this.add(new THREE.Mesh(mergeGeoms(fence), new THREE.MeshStandardMaterial({ color: 0x141218, roughness: 0.5, metalness: 0.7, side: THREE.DoubleSide })));
+    // Crooked headstones, celtic crosses and dead trees
+    const reject = (x, z) => Math.abs(x) < 34 && Math.abs(z) > s.L + st.outer;
+    const headG = mergeGeoms([placed(new THREE.BoxGeometry(1.2, 1.4, 0.26), 0, 0.7, 0), placed(new THREE.CylinderGeometry(0.6, 0.6, 0.26, 14), 0, 1.4, 0, PI / 2, 0, 0)]);
+    const crossG = mergeGeoms([placed(new THREE.BoxGeometry(0.3, 2.6, 0.3), 0, 1.3, 0), placed(new THREE.BoxGeometry(1.4, 0.3, 0.3), 0, 1.9, 0), placed(new THREE.TorusGeometry(0.38, 0.07, 4, 12), 0, 1.9, 0)]);
+    const graveSpots = this.outsideSpots(240, 64, 210, 131, st.outer + 6, reject);
+    const graveXf = (sp) => ({ p: tmpV.set(sp.x, -0.65, sp.z), q: tmpQ.setFromEuler(new THREE.Euler((sp.r - 0.5) * 0.3, Math.atan2(-sp.x, -sp.z) + (sp.r2 - 0.5) * 0.6, (sp.r3 - 0.5) * 0.3)), s: tmpV3.set(1 + sp.r * 0.6, 1 + sp.r2 * 0.7, 1) });
+    this.instanced(headG, stone, graveSpots.filter((_, i) => i % 4 !== 0), graveXf);
+    this.instanced(crossG, stone, graveSpots.filter((_, i) => i % 4 === 0), graveXf);
+    const tb = [placed(new THREE.CylinderGeometry(0.025, 0.06, 1, 6), 0, 0.5, 0)];
+    for (let k = 0; k < 5; k++) {
+      const a = k * 2.3, y0 = 0.42 + k * 0.1, dir = new V3(Math.cos(a) * 0.75, 0.66, Math.sin(a) * 0.75).normalize();
+      const bg = new THREE.CylinderGeometry(0.006, 0.02, 0.42, 5); bg.translate(0, 0.21, 0); bg.applyQuaternion(new QT().setFromUnitVectors(V3Up, dir)); bg.translate(0, y0, 0); tb.push(bg);
+    }
+    this.instanced(mergeGeoms(tb), new THREE.MeshStandardMaterial({ color: 0x16121a, roughness: 0.95 }), this.outsideSpots(55, 72, 230, 137, st.outer + 10, reject), (sp) => {
+      const h = 11 + sp.r * 12; return { p: tmpV.set(sp.x, -0.6, sp.z), q: tmpQ.setFromEuler(new THREE.Euler((sp.r2 - 0.5) * 0.15, sp.r3 * TAU, (sp.r - 0.5) * 0.15)), s: tmpV3.set(h, h, h) };
+    });
+    // Carved jack-o'-lanterns flickering among the graves
+    const flick = { value: 1 };
+    const pumpMat = new THREE.MeshStandardMaterial({ color: 0xd8641a, roughness: 0.6 });
+    injectStandard(pumpMat, 'pumpkin', { uFlick: flick }, {
+      fragDecl: 'uniform float uFlick;',
+      mapFrag: `{ vec3 on = normalize(vONrm); diffuseColor.rgb *= 0.7 + 0.3 * abs(sin(atan(on.z, on.x) * 5.0)); }`,
+      emisFrag: `{ vec3 on = normalize(vONrm); float front = step(0.3, on.z); vec2 q = on.xy;
+        float eye = step(length(vec2(abs(q.x) - 0.32, q.y - 0.2) * vec2(1.0, 1.3)), 0.15);
+        float mouth = step(abs(q.y + 0.25 + 0.07 * sin(q.x * 22.0)), 0.075) * step(abs(q.x), 0.48);
+        totalEmissiveRadiance += vec3(1.0, 0.55, 0.12) * (eye + mouth) * front * uFlick * 5.0 + vec3(1.0, 0.35, 0.05) * 0.1 * uFlick; }`
+    });
+    this.instanced(new THREE.SphereGeometry(1, 16, 12), pumpMat, this.outsideSpots(48, 60, 140, 149, st.outer + 4, reject), (sp) => {
+      const k = 0.9 + sp.r * 0.9; return { p: tmpV.set(sp.x, -0.6 + 0.78 * k, sp.z), q: tmpQ.setFromAxisAngle(V3Up, Math.atan2(-sp.x, -sp.z)), s: tmpV3.set(k * 1.1, k * 0.82, k * 1.1) };
+    });
+    // Bat swarms wheeling around the cathedral spires
+    const wingG = new THREE.BufferGeometry();
+    const W0 = [0, 0, 0.3], W1 = [0, 0, -0.3], W2 = [0.7, 0, -0.55], W3 = [1.3, 0, -0.4], W4 = [1.9, 0, 0.15];
+    wingG.setAttribute('position', new THREE.Float32BufferAttribute([...W0, ...W1, ...W2, ...W0, ...W2, ...W3, ...W0, ...W3, ...W4], 3)); wingG.computeVertexNormals();
+    const nb = 40, bats = [], rb = mulberry32(151);
+    for (let i = 0; i < nb; i++) { const side = i % 2 ? 1 : -1; bats.push({ cx: (rb() - 0.5) * 30, cz: side * (s.L + st.outer + 40) + (rb() - 0.5) * 20, rad: 18 + rb() * 40, y: 38 + rb() * 50, sp: (rb() < 0.5 ? -1 : 1) * (0.4 + rb() * 0.5), a0: rb() * TAU, ph: rb() * TAU, fl: 10 + rb() * 6 }); }
+    const batIM = new THREE.InstancedMesh(wingG, new THREE.MeshBasicMaterial({ color: 0x08060a, side: THREE.DoubleSide }), nb * 2); batIM.frustumCulled = false; this.add(batIM);
+    const bm4 = new THREE.Matrix4(), bq = new QT(), bpos = new V3(), bsc = new V3(), eu = new THREE.Euler();
+    this.updaters.push((t) => {
+      flick.value = 0.78 + 0.14 * Math.sin(t * 13.0) * Math.sin(t * 7.3) + 0.08 * Math.sin(t * 23.0);
+      for (let i = 0; i < nb; i++) {
+        const b = bats[i], a = b.a0 + t * b.sp, dir = Math.sign(b.sp);
+        bpos.set(b.cx + Math.cos(a) * b.rad, b.y + Math.sin(t * 0.9 + b.ph) * 4, b.cz + Math.sin(a) * b.rad);
+        const yaw = Math.atan2(-Math.sin(a) * dir, Math.cos(a) * dir), flap = Math.sin(t * b.fl + b.ph) * 0.75;
+        for (const w of [1, -1]) { eu.set(0, yaw, w * flap, 'YXZ'); bq.setFromEuler(eu); bsc.set(w * 1.6, 1.6, 1.6); bm4.compose(bpos, bq, bsc); batIM.setMatrixAt(i * 2 + (w > 0 ? 0 : 1), bm4); }
+      }
+      batIM.instanceMatrix.needsUpdate = true;
+    });
+    // Outside weather: low creeping graveyard fog & drifting will-o'-the-wisps
+    this.outerParticles({ count: 650, rMin: 60, rMax: 230, yMin: -2, yMax: 26, clearance: 10, seed: 1501, vy: 0, orbit: 0.03, sway: 6.0, size: 18.0, col1: 0x5a4a6a, col2: 0x2a2a3a, opacity: 0.22, additive: false, shape: 3 });
+    this.outerParticles({ count: 420, rMin: 60, rMax: 200, yMin: 1, yMax: 40, clearance: 10, seed: 1507, vy: 0, orbit: 0.05, sway: 5.0, size: 3.2, col1: 0x8affd0, col2: 0xb88aff, opacity: 0.75, additive: true, shape: 0 });
+  }
+  decoCandy() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 5, rise: 1.1, run: 2.0, color: 0xfff0f6, seat: 0xff7ab8, density: 0.85, base: 2.4, parapet: 0.8, style: 'sides', span: 0.55 });
+    const gp = new THREE.Mesh(new THREE.CircleGeometry(1100, 64), new THREE.MeshStandardMaterial({ color: 0x9ee8c4, roughness: 0.6 })); gp.rotation.x = -PI / 2; gp.position.y = -0.6; this.add(gp);
+    this.terrainRing(230, 900, 140, 0xffb0d4, 0xffffff, 41);
+    // Swirling chocolate river looping around the bowl
+    const rIn = Math.max(s.W, s.L) + st.outer + 34, rOut = rIn + 26;
+    const river = new THREE.Mesh(new THREE.RingGeometry(rIn, rOut, 160, 1), this.waterShader(`
+      float ca = cos(uTime * 0.01), sa = sin(uTime * 0.01); vec2 q = mat2(ca, -sa, sa, ca) * vW.xz * 0.07;
+      float n = fbm(q + fbm(q * 0.5 + uTime * 0.03) * 1.5);
+      col = mix(vec3(0.14, 0.06, 0.025), vec3(0.42, 0.22, 0.1), n) + vec3(0.5, 0.35, 0.25) * pow(smoothstep(0.55, 0.8, n), 3.0); fogK = 0.6;`));
+    river.rotation.x = -PI / 2; river.position.y = -0.45; this.add(river);
+    const inRiver = (x, z) => { const r = Math.hypot(x, z); return r > rIn - 4 && r < rOut + 4; };
+    // Giant spinning swirl lollipops ringing the stands
+    const lolliFrag = `float r = length(vP.xz); float a = atan(vP.z, vP.x); float sw = fract(a / 6.2831 * 2.0 + r * 0.22); float band = floor(sw * 4.0);
+      c = band < 0.5 ? uC1 : (band < 1.5 ? vec3(1.0) : (band < 2.5 ? uC2 : vec3(1.0)));
+      if(abs(vP.y) < 0.66) c = uC1 * 0.85; gloss = 1.1;`;
+    const sets = [[0xff3a7a, 0xffd23f], [0x3ad0ff, 0xff6ab0], [0x8a5aff, 0x6affb0], [0xff7a2a, 0x7ad8ff]];
+    const stickMat = new THREE.MeshStandardMaterial({ color: 0xfffaf4, roughness: 0.4 });
+    const lp = s.path(2, st.outer + 10).pts; const lollis = [];
+    for (let i = 0; i < 10; i++) {
+      const p = lp[Math.floor((i + 0.5) / 10 * (lp.length - 1))];
+      const h = 18 + (i % 3) * 5, R = 6 + (i % 2) * 1.5, set = sets[i % sets.length];
+      const g = new THREE.Group(); g.position.set(p.x, 0, p.z); g.rotation.y = Math.atan2(-p.x, -p.z); this.add(g);
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, h, 10), stickMat); stick.position.y = h / 2; g.add(stick);
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 1.4, 48), this.candyMat(lolliFrag, { uC1: { value: new THREE.Color(set[0]) }, uC2: { value: new THREE.Color(set[1]) } }));
+      disc.position.y = h + R - 0.5; disc.rotation.x = PI / 2; g.add(disc); lollis.push({ disc, sp: (i % 2 ? 1 : -1) * 0.4 });
+    }
+    // Striped candy canes hooked between them
+    const caneGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new V3(0, 0, 0), new V3(0, 8, 0), new V3(0, 16, 0), new V3(0.6, 19.2, 0), new V3(2.8, 21, 0), new V3(5.2, 19.6, 0), new V3(5.8, 17.2, 0)]), 64, 0.9, 12, false);
+    const caneMat = this.candyMat(`float st = step(0.5, fract(vUv.x * 26.0 + vUv.y * 2.0)); c = mix(vec3(1.0), vec3(0.95, 0.08, 0.18), st); gloss = 1.0;`);
+    for (let i = 0; i < 10; i++) { const p = lp[Math.floor(i / 10 * (lp.length - 1))]; const m = new THREE.Mesh(caneGeo, caneMat); m.position.set(p.x * 1.08, -0.6, p.z * 1.08); m.rotation.y = i * 1.3; m.scale.setScalar(1 + (i % 3) * 0.2); this.add(m); }
+    // Sugar-dusted gumdrop hills
+    const gumMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+    injectStandard(gumMat, 'gumdrop', {}, { emisFrag: `{ float sp = pow(hash13(floor(vWPos * 6.0)), 30.0); totalEmissiveRadiance += vec3(sp) * 0.8 + diffuseColor.rgb * 0.08; }` });
+    const gumCols = [0xff3a6a, 0xffd23f, 0x3ae07a, 0x3ab8ff, 0xb05aff, 0xff8a2a];
+    this.instanced(new THREE.SphereGeometry(1, 18, 10, 0, TAU, 0, PI / 2), gumMat, this.outsideSpots(170, 66, 240, 163, st.outer + 6, inRiver), (sp, i, c) => {
+      const r = 2 + sp.r * 4.5; return { p: tmpV.set(sp.x, -0.6, sp.z), q: tmpQ.identity(), s: tmpV3.set(r, r * (1.1 + sp.r2 * 0.4), r), c: c.setHex(gumCols[i % gumCols.length]) };
+    });
+    // Frosted cupcake towers behind both ends
+    for (const side of [-1, 1]) {
+      const z = side * (s.L + st.outer + 34);
+      const wrapG = new THREE.CylinderGeometry(13, 10, 14, 48, 1); const wp = wrapG.attributes.position;
+      for (let k = 0; k < wp.count; k++) { const x = wp.getX(k), zz = wp.getZ(k); if (Math.hypot(x, zz) > 0.1) { const f = 1 + 0.04 * Math.cos(Math.atan2(zz, x) * 24); wp.setX(k, x * f); wp.setZ(k, zz * f); } }
+      wrapG.computeVertexNormals();
+      const wrap = new THREE.Mesh(wrapG, new THREE.MeshStandardMaterial({ color: side < 0 ? 0x7ab8ff : 0xffa860, roughness: 0.5 })); wrap.position.set(0, 7, z); this.add(wrap);
+      const frost = this.candyMat(`c = uC1 * (0.9 + 0.1 * sin(vW.y * 3.0)); gloss = 0.8;`, { uC1: { value: new THREE.Color(side < 0 ? 0xe0f0ff : 0xfff0f8) } });
+      this.add(new THREE.Mesh(mergeGeoms([placed(new THREE.TorusGeometry(11, 4.2, 14, 40), 0, 15, z, PI / 2, 0, 0), placed(new THREE.TorusGeometry(7.6, 3.6, 14, 36), 0, 20.5, z, PI / 2, 0, 0), placed(new THREE.TorusGeometry(4.4, 3.0, 12, 32), 0, 25, z, PI / 2, 0, 0), placed(new THREE.ConeGeometry(3.6, 6, 24), 0, 29.5, z)]), frost));
+      const cherry = new THREE.Mesh(new THREE.SphereGeometry(2.6, 20, 14), this.candyMat(`c = vec3(0.85, 0.04, 0.1); gloss = 1.2;`)); cherry.position.set(0, 34.5, z); this.add(cherry);
+    }
+    // Floating frosted donuts with sprinkles
+    const doughMat = new THREE.MeshStandardMaterial({ color: 0xd89a58, roughness: 0.7 });
+    const frostFrag = `if(vP.z + 0.35 * sin(atan(vP.y, vP.x) * 9.0) < -0.4) discard;
+      vec2 q = vUv * vec2(60.0, 14.0); vec2 qi = floor(q); float spr = step(0.72, hash12(qi)) * step(length(fract(q) - 0.5), 0.22);
+      c = mix(uC1, 0.55 + 0.45 * cos(6.2831 * (hash12(qi + 3.0) + vec3(0.0, 0.33, 0.67))), spr); gloss = 0.9;`;
+    const donuts = [], rd = mulberry32(171), frostCols = [0xff8ac0, 0x6a3218, 0xfff0f6, 0x8ae8ff];
+    for (let i = 0; i < 8; i++) {
+      const g = new THREE.Group(), a = i / 8 * TAU + 0.3, rad = 110 + rd() * 60;
+      g.position.set(Math.cos(a) * rad, 40 + rd() * 30, Math.sin(a) * rad); this.add(g);
+      const inner = new THREE.Group(); inner.rotation.x = -PI / 2 + 0.35; g.add(inner);
+      inner.add(new THREE.Mesh(new THREE.TorusGeometry(6, 2.6, 18, 48), doughMat));
+      inner.add(new THREE.Mesh(new THREE.TorusGeometry(6, 2.75, 18, 48), this.candyMat(frostFrag, { uC1: { value: new THREE.Color(frostCols[i % 4]) } })));
+      donuts.push({ g, y0: g.position.y, ph: rd() * TAU });
+    }
+    // Pastel rainbow arching over the whipped-cream peaks
+    const rainbow = new THREE.Mesh(new THREE.TorusGeometry(420, 22, 8, 120, PI), new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader: `varying vec2 vUv; void main(){ float v = fract(vUv.y * 2.0); vec3 c = 0.6 + 0.4 * cos(6.2831 * (v * 0.85 + vec3(0.0, 0.33, 0.67))); float a = smoothstep(0.0, 0.2, v) * smoothstep(1.0, 0.8, v) * 0.45; gl_FragColor = vec4(c * 1.3, a); }`
+    }));
+    rainbow.position.set(-120, -30, -760); this.add(rainbow);
+    this.updaters.push((t) => {
+      for (const l of lollis) l.disc.rotation.y = t * l.sp;
+      for (const d of donuts) { d.g.rotation.y = t * 0.2 + d.ph; d.g.position.y = d.y0 + Math.sin(t * 0.7 + d.ph) * 3; }
+    });
+    // Outside weather: rainbow sprinkle showers & cotton-candy cloud puffs
+    this.outerParticles({ count: 700, rMin: 60, rMax: 230, yMin: 0, yMax: 100, clearance: 12, seed: 1601, vy: -3.2, orbit: 0.08, sway: 6.0, size: 3.0, col1: 0xff5aa0, col2: 0xffe14a, opacity: 0.85, additive: false, shape: 2 });
+    this.outerParticles({ count: 700, rMin: 60, rMax: 230, yMin: 0, yMax: 100, clearance: 12, seed: 1607, vy: -3.6, orbit: -0.07, sway: 6.0, size: 3.0, col1: 0x5ad8ff, col2: 0x8aff7a, opacity: 0.85, additive: false, shape: 2 });
+    this.outerParticles({ count: 300, rMin: 80, rMax: 260, yMin: 30, yMax: 120, clearance: 14, seed: 1613, vy: 0, orbit: 0.03, sway: 8.0, size: 30.0, col1: 0xffd0e8, col2: 0xffffff, opacity: 0.28, additive: false, shape: 3 });
+  }
+  decoGrotto() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 4, rise: 1.1, run: 2.0, color: 0x1a201c, seat: 0x1f5a4a, density: 0.75, base: 2.3, parapet: 0.7, style: 'sides', span: 0.5 });
+    const rock = new THREE.MeshStandardMaterial({ color: 0x1c221e, roughness: 0.9 });
+    injectStandard(rock, 'grottoRock', { uTime: this.uniforms.uTime }, { fragDecl: 'uniform float uTime;', mapFrag: `diffuseColor.rgb *= 0.7 + 0.5 * fbm(vWPos.xz * 0.15 + vWPos.y * 0.1);`,
+      emisFrag: `{ vec3 v = voronoi(vec2(vWPos.x + vWPos.z, vWPos.y) * 0.25); float cr = 1.0 - smoothstep(0.0, 0.04, v.y - v.x); totalEmissiveRadiance += mix(vec3(0.1, 1.0, 0.75), vec3(0.7, 0.3, 1.0), step(0.6, v.z)) * cr * (0.5 + 0.4 * sin(uTime * 1.5 + v.z * 6.0)) * step(0.45, v.z); }` });
+    const Rx = s.W + st.outer + 12, Rz = s.L + st.outer + 12;
+    const isl = new THREE.Mesh(new THREE.CylinderGeometry(Rx, Rx * 0.72, 12, 64, 2, true), rock); isl.position.y = -6.5; isl.scale.z = Rz / Rx; this.add(isl);
+    const top = new THREE.Mesh(new THREE.CircleGeometry(Rx, 64), rock); top.rotation.x = -PI / 2; top.position.y = -0.55; top.scale.y = Rz / Rx; this.add(top);
+    // Underground lake glowing with drifting bioluminescent algae
+    const lake = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000, 1, 1), this.waterShader(`
+      vec2 p = vW.xz * 0.02; float n = fbm(p + vec2(uTime * 0.01, -uTime * 0.008) + fbm(p * 0.6 + uTime * 0.005) * 1.4);
+      vec3 v = voronoi(vW.xz * 0.05 + vec2(uTime * 0.05, uTime * 0.03)); float rip = pow(1.0 - smoothstep(0.0, 0.25, v.y - v.x), 3.0);
+      float algae = smoothstep(0.55, 0.8, n);
+      col = vec3(0.004, 0.02, 0.025) + mix(vec3(0.0, 0.55, 0.45), vec3(0.5, 0.15, 0.8), smoothstep(0.6, 0.9, fbm(p * 2.0 + 5.0))) * (algae * 0.9 + rip * 0.12);`));
+    lake.rotation.x = -PI / 2; lake.position.y = -5; this.add(lake);
+    // Vaulted cavern ceiling twinkling with glowworms, rocky shores and hanging stalactites
+    const domeR = 330, domeY = -30, domeK = 0.55;
+    const domeMat = new THREE.MeshStandardMaterial({ color: 0x141a16, roughness: 1, side: THREE.BackSide, fog: false });
+    injectStandard(domeMat, 'grottoDome', { uTime: this.uniforms.uTime }, { fragDecl: 'uniform float uTime;', mapFrag: `diffuseColor.rgb *= 0.5 + 0.7 * fbm(vWPos.xz * 0.02 + vWPos.y * 0.03);`,
+      emisFrag: `{ vec3 q = vWPos * 0.065; vec3 iq = floor(q); float hh = hash13(iq);
+        vec3 jit = vec3(hash13(iq + 1.7), hash13(iq + 3.1), hash13(iq + 5.3)) - 0.5;
+        float gw = step(0.62, hh) * smoothstep(0.24, 0.0, length(fract(q) - 0.5 - jit * 0.5)) * (0.55 + 0.45 * sin(uTime * (0.8 + hh * 2.0) + hh * 40.0));
+        float seep = fbm(vWPos.xz * 0.012 + vWPos.y * 0.02);
+        totalEmissiveRadiance += mix(vec3(0.25, 1.0, 0.85), vec3(0.55, 0.75, 1.0), fract(hh * 7.0)) * gw * 5.0 * smoothstep(10.0, 50.0, vWPos.y) + vec3(0.01, 0.045, 0.035) * (0.4 + seep); }` });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(domeR, 64, 24, 0, TAU, 0, PI / 2), domeMat); dome.position.y = domeY; dome.scale.y = domeK; this.add(dome);
+    this.terrainRing(200, 340, 95, 0x0a0e0c, 0x24302a, 23);
+    const stalG = new THREE.ConeGeometry(1, 1, 7); stalG.rotateX(PI); stalG.translate(0, -0.5, 0);
+    const stalSpots = [], rs = mulberry32(181);
+    for (let i = 0; i < 240; i++) { const a = rs() * TAU, rad = 40 + Math.sqrt(rs()) * (domeR * 0.88 - 40); stalSpots.push({ x: Math.cos(a) * rad, z: Math.sin(a) * rad, y: domeY + domeK * Math.sqrt(domeR * domeR - rad * rad), r: rs(), r2: rs() }); }
+    const stalMat = new THREE.MeshStandardMaterial({ color: 0x1e2620, roughness: 0.85 });
+    this.instanced(stalG, stalMat, stalSpots, (sp) => ({ p: tmpV.set(sp.x, sp.y + 3, sp.z), q: tmpQ.identity(), s: tmpV3.set(2 + sp.r2 * 5, 12 + Math.pow(sp.r, 2) * 55, 2 + sp.r2 * 5) }));
+    const mitG = new THREE.ConeGeometry(1, 1, 7); mitG.translate(0, 0.5, 0);
+    this.instanced(mitG, stalMat, this.outsideSpots(90, 90, 300, 187, st.outer + 16), (sp) => ({ p: tmpV.set(sp.x, -6, sp.z), q: tmpQ.identity(), s: tmpV3.set(3 + sp.r2 * 6, 10 + sp.r * 40, 3 + sp.r2 * 6) }));
+    // Towering bioluminescent mushrooms (glowing spotted caps, luminous gills underneath)
+    const capG = new THREE.SphereGeometry(1, 28, 12, 0, TAU, 0, PI / 2);
+    const gillG = new THREE.ConeGeometry(1, 0.4, 28, 1, true); gillG.translate(0, 0.2, 0);
+    { const n = gillG.attributes.normal; for (let k = 0; k < n.count; k++) n.setXYZ(k, -n.getX(k), -n.getY(k), -n.getZ(k)); const ix = gillG.index.array; for (let k = 0; k < ix.length; k += 3) { const tt = ix[k + 1]; ix[k + 1] = ix[k + 2]; ix[k + 2] = tt; } }
+    const stemG = new THREE.CylinderGeometry(0.11, 0.16, 1, 12); stemG.translate(0, 0.5, 0);
+    const shroomMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 });
+    injectStandard(shroomMat, 'shroomCap', { uTime: this.uniforms.uTime }, { fragDecl: 'uniform float uTime;',
+      emisFrag: `{ vec3 on = normalize(vONrm); float top = step(0.0, on.y);
+        vec2 sq = on.xz * 4.5 + 7.0; float spot = step(0.6, hash12(floor(sq))) * smoothstep(0.36, 0.12, length(fract(sq) - 0.5)) * step(0.25, on.y);
+        float gill = (1.0 - top) * (0.55 + 0.45 * sin(atan(on.z, on.x) * 48.0));
+        float pulse = 0.65 + 0.35 * sin(uTime * 1.2 + vWPos.x * 0.04 + vWPos.z * 0.05);
+        totalEmissiveRadiance += diffuseColor.rgb * (spot * 2.6 + gill * 1.8 + top * 0.18) * pulse; }` });
+    const stemMat = new THREE.MeshStandardMaterial({ color: 0xc8d8c8, roughness: 0.7, emissive: 0x0a2a22, emissiveIntensity: 1.0 });
+    const hues = [0x3affd0, 0xd86aff, 0x7aff5a, 0x5ab0ff, 0xff6ad0];
+    const shroomSet = (spots, baseY, hMin, hMax, rMin, rMax) => {
+      const xf = spots.map((sp, i) => ({ sp, H: hMin + sp.r * (hMax - hMin), R: rMin + sp.r2 * (rMax - rMin), col: hues[i % hues.length] }));
+      this.instanced(stemG, stemMat, xf, (o) => ({ p: tmpV.set(o.sp.x, baseY, o.sp.z), q: tmpQ.identity(), s: tmpV3.set(o.R * 0.9, o.H, o.R * 0.9) }));
+      const capXf = (o, i, c) => ({ p: tmpV.set(o.sp.x, baseY + o.H, o.sp.z), q: tmpQ.setFromAxisAngle(V3Up, o.sp.r3 * TAU), s: tmpV3.set(o.R, o.R * 0.45, o.R), c: c.setHex(o.col) });
+      this.instanced(capG, shroomMat, xf, capXf); this.instanced(gillG, shroomMat, xf, capXf);
+    };
+    shroomSet(this.outsideSpots(34, 80, 280, 191, st.outer + 16), -5, 18, 48, 7, 17);
+    shroomSet(this.outsideSpots(150, 40, 90, 197, st.outer + 2, (x, z) => (x / Rx) * (x / Rx) + (z / Rz) * (z / Rz) > 0.9), -0.6, 1.2, 4.5, 0.7, 2.2);
+    // Amethyst crystal clusters along the shore
+    const crysMat = new THREE.MeshStandardMaterial({ color: 0x8a5aff, roughness: 0.15, metalness: 0.2, emissive: 0x6a2aff, emissiveIntensity: 1.4 });
+    this.instanced(new THREE.OctahedronGeometry(1, 0), crysMat, this.outsideSpots(70, 70, 200, 211, st.outer + 10), (sp) => ({ p: tmpV.set(sp.x, -4, sp.z), q: tmpQ.setFromEuler(new THREE.Euler((sp.r - 0.5) * 0.7, sp.r3 * TAU, (sp.r2 - 0.5) * 0.7)), s: tmpV3.set(1 + sp.r2 * 1.5, 4 + sp.r * 9, 1 + sp.r2 * 1.5) }));
+    // Drifting luminous spore-orbs
+    const orbGeo = new THREE.SphereGeometry(1, 12, 8);
+    const orbMats = [new THREE.Color(0.3, 1.0, 0.85), new THREE.Color(0.85, 0.4, 1.0)].map(c => new THREE.MeshBasicMaterial({ color: c.multiplyScalar(2.4), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const orbs = [], ro = mulberry32(223);
+    for (let i = 0; i < 26; i++) { const m = new THREE.Mesh(orbGeo, orbMats[i % 2]); m.scale.setScalar(0.8 + ro() * 1.6); this.add(m); orbs.push({ m, a: ro() * TAU, rad: 80 + ro() * 130, y: 18 + ro() * 55, sp: (ro() - 0.5) * 0.06, ph: ro() * TAU }); }
+    this.updaters.push((t) => { for (const o of orbs) { const a = o.a + t * o.sp; o.m.position.set(Math.cos(a) * o.rad, o.y + Math.sin(t * 0.5 + o.ph) * 5, Math.sin(a) * o.rad); } });
+    // Outside weather: rising glowing spores & slow cave drips
+    this.outerParticles({ count: 900, rMin: 58, rMax: 230, yMin: -4, yMax: 100, clearance: 10, seed: 1701, vy: 2.2, orbit: 0.03, sway: 5.0, size: 3.0, col1: 0x5affd8, col2: 0xa8ff6a, opacity: 0.75, additive: true, shape: 0 });
+    this.outerParticles({ count: 500, rMin: 58, rMax: 230, yMin: -4, yMax: 100, clearance: 10, seed: 1709, vy: 1.6, orbit: -0.04, sway: 6.0, size: 3.4, col1: 0xd86aff, col2: 0x6ab8ff, opacity: 0.7, additive: true, shape: 4 });
+    this.outerRain({ count: 220, rMin: 60, rMax: 200, yMin: -4, yMax: 120, clearance: 12, seed: 1713, speed: 30, slantX: 0, slantZ: 0, len: 1.6, width: 0.07, col1: 0x8affe8, col2: 0xffffff, opacity: 0.25, additive: true });
+  }
+  decoTempest() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 5, rise: 1.1, run: 2.0, color: 0x2a3038, seat: 0x2a4a7a, density: 0.8, base: 2.4, parapet: 0.8, style: 'sides', span: 0.5 });
+    const slate = new THREE.MeshStandardMaterial({ color: 0x2e333a, roughness: 0.78, metalness: 0.05 });
+    injectStandard(slate, 'tempestRock', {}, { mapFrag: `diffuseColor.rgb *= 0.65 + 0.5 * fbm(vec2(vWPos.x + vWPos.z, vWPos.y * 2.5) * 0.06);` });
+    // Sea-cliff spire the arena is perched on
+    const Rx = s.W + st.outer + 16, Rz = s.L + st.outer + 16, seaY = -120;
+    const spireG = new THREE.CylinderGeometry(Rx, Rx * 0.55, 180, 48, 12, true); const spp = spireG.attributes.position;
+    for (let i = 0; i < spp.count; i++) { const x = spp.getX(i), y = spp.getY(i), z = spp.getZ(i); const k = 1 + Noise.fbm2(Math.cos(Math.atan2(z, x)) * 2.5 + y * 0.012, Math.sin(Math.atan2(z, x)) * 2.5, 4) * 0.22 * clamp((90 - y) / 20, 0, 1); spp.setXYZ(i, x * k, y, z * k); }
+    spireG.computeVertexNormals();
+    const spire = new THREE.Mesh(spireG, slate); spire.position.y = -90.55; spire.scale.z = Rz / Rx; this.add(spire);
+    const capTop = new THREE.Mesh(new THREE.CircleGeometry(Rx, 64), slate); capTop.rotation.x = -PI / 2; capTop.position.y = -0.55; capTop.scale.y = Rz / Rx; this.add(capTop);
+    // Churning storm sea with whitecaps that lights up with every strike
+    const flash = { value: 0 };
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000, 1, 1), this.waterShader(`
+      vec2 p = vW.xz * 0.012; float w = fbm(p + vec2(uTime * 0.03, uTime * 0.02)) * 0.6 + fbm(p * 3.0 - vec2(uTime * 0.07, -uTime * 0.05)) * 0.4;
+      float foam = smoothstep(0.62, 0.74, w) * (0.6 + 0.4 * vnoise(vW.xz * 0.2 + uTime));
+      col = mix(vec3(0.02, 0.05, 0.07), vec3(0.06, 0.12, 0.16), w) + vec3(0.55, 0.6, 0.65) * foam * 0.5 + vec3(0.5, 0.6, 0.9) * uFlash * (0.25 + w * 0.4); fogK = 0.8;`, { uFlash: flash }));
+    sea.rotation.x = -PI / 2; sea.position.y = seaY; this.add(sea);
+    const stacks = [], rs = mulberry32(241);
+    for (let i = 0; i < 12; i++) {
+      const a = rs() * TAU, rad = 170 + rs() * 380, h = 60 + rs() * 140, r = 10 + rs() * 22;
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r, h, 9, 1), slate); m.position.set(Math.cos(a) * rad, seaY + h / 2, Math.sin(a) * rad); this.add(m);
+      stacks.push({ x: m.position.x, z: m.position.z, top: seaY + h });
+    }
+    // Crackling tesla coils around the rim
+    const iron = new THREE.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.45, metalness: 0.85 });
+    const copper = new THREE.MeshStandardMaterial({ color: 0xc06a3a, roughness: 0.3, metalness: 0.95 });
+    const alu = new THREE.MeshStandardMaterial({ color: 0xc8d0d8, roughness: 0.22, metalness: 0.95 });
+    const plasma = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.55, 0.8, 1.0).multiplyScalar(3.2) });
+    const tp = s.path(2, st.outer + 6).pts, coils = [], ip = [], cp = [], ap = [];
+    for (let i = 0; i < 6; i++) {
+      const p = tp[Math.floor((i + 0.5) / 6 * (tp.length - 1))];
+      ip.push(placed(new THREE.CylinderGeometry(1.0, 3.0, 22, 4), p.x, 11, p.z, 0, PI / 4, 0));
+      for (let k = 0; k < 7; k++) cp.push(placed(new THREE.TorusGeometry(1.5, 0.22, 6, 20), p.x, 22.5 + k * 0.9, p.z, PI / 2, 0, 0));
+      cp.push(placed(new THREE.CylinderGeometry(1.2, 1.2, 7, 12), p.x, 25.5, p.z));
+      ap.push(placed(new THREE.TorusGeometry(3.4, 1.2, 12, 32), p.x, 30.2, p.z, PI / 2, 0, 0));
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 8), plasma); orb.position.set(p.x, 31.8, p.z); this.add(orb);
+      coils.push(new V3(p.x, 31.6, p.z));
+    }
+    this.add(new THREE.Mesh(mergeGeoms(ip), iron)); this.add(new THREE.Mesh(mergeGeoms(cp), copper)); this.add(new THREE.Mesh(mergeGeoms(ap), alu));
+    const jag = (a, b, n, amp) => { const pts = []; for (let k = 0; k <= n; k++) { const u = k / n, q = new V3().lerpVectors(a, b, u); if (k > 0 && k < n) q.add(new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(amp * Math.sin(u * PI))); pts.push(q); } return pts; };
+    const boltGeo = (pts, r) => { const cpth = new THREE.CurvePath(); for (let k = 0; k < pts.length - 1; k++) cpth.add(new THREE.LineCurve3(pts[k], pts[k + 1])); return new THREE.TubeGeometry(cpth, pts.length * 3, r, 4, false); };
+    const arcMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 0.85, 1.0).multiplyScalar(4.0), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+    const arcs = []; for (let k = 0; k < 4; k++) { const m = new THREE.Mesh(new THREE.BufferGeometry(), arcMat); m.visible = false; m.frustumCulled = false; this.add(m); arcs.push({ m, life: 0 }); }
+    // Lightning bolt (main channel + forks)
+    const boltMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.75, 0.88, 1.0).multiplyScalar(6.0), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const bolt = new THREE.Mesh(new THREE.BufferGeometry(), boltMat); bolt.visible = false; bolt.frustumCulled = false; this.add(bolt);
+    // Wind turbines & a sweeping lighthouse on the sea stacks
+    const white = new THREE.MeshStandardMaterial({ color: 0xd8dce2, roughness: 0.4, metalness: 0.3 });
+    const blinkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.1, 0.05).multiplyScalar(4) });
+    const turb = [];
+    for (let k = 0; k < 4; k++) {
+      const sk = stacks[k]; const g = new THREE.Group(); g.position.set(sk.x, sk.top, sk.z); g.rotation.y = Math.atan2(-sk.x, -sk.z); this.add(g);
+      const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.6, 40, 10), white); tw.position.y = 20; g.add(tw);
+      const nac = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.6, 6), white); nac.position.set(0, 40.5, -1); g.add(nac);
+      const rot = new THREE.Group(); rot.position.set(0, 40.5, 2.2); g.add(rot);
+      for (let b = 0; b < 3; b++) { const bg = new THREE.BoxGeometry(1.2, 22, 0.3); bg.translate(0, 11, 0); const bl = new THREE.Mesh(bg, white); bl.rotation.z = b * TAU / 3; rot.add(bl); }
+      const blink = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), blinkMat); blink.position.set(0, 42.2, -1); g.add(blink);
+      turb.push({ rot, blink, sp: 1.2 + k * 0.3, ph: k * 0.7 });
+    }
+    const lhS = stacks[4]; const lh = new THREE.Group(); lh.position.set(lhS.x, lhS.top, lhS.z); this.add(lh);
+    const lhMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    injectStandard(lhMat, 'lighthouse', {}, { mapFrag: `diffuseColor.rgb *= mix(vec3(1.0), vec3(0.85, 0.1, 0.1), step(0.5, fract(vWPos.y / 6.0)));` });
+    const lhT = new THREE.Mesh(new THREE.CylinderGeometry(3, 4.5, 34, 16), lhMat); lhT.position.y = 17; lh.add(lhT);
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 3.4, 12), new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.7).multiplyScalar(5) })); lamp.position.y = 35.7; lh.add(lamp);
+    const lhRoof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 3.6, 12), iron); lhRoof.position.y = 39.2; lh.add(lhRoof);
+    const beamG = new THREE.CylinderGeometry(0.6, 16, 220, 20, 1, true); beamG.translate(0, 110, 0); beamG.rotateX(PI / 2);
+    const beamPivot = new THREE.Group(); beamPivot.position.y = 35.7; lh.add(beamPivot);
+    beamPivot.add(new THREE.Mesh(beamG, new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.7).multiplyScalar(1.6), transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })));
+    let arcT = 0, strikeT = 2.5, boltLife = 0, flashV = 0;
+    const hemiBase = this.hemi.intensity, skyFlash = this.skyMat.uniforms.uFlash;
+    const strike = () => {
+      const toCoil = Math.random() < 0.35;
+      const target = toCoil ? coils[(Math.random() * coils.length) | 0].clone() : (() => { const sk = stacks[(Math.random() * stacks.length) | 0]; return new V3(sk.x, sk.top, sk.z); })();
+      const main = jag(new V3(target.x + rand(-60, 60), 280, target.z + rand(-60, 60)), target, 22, 16);
+      const parts = [boltGeo(main, 0.75)];
+      for (let f = 0; f < 3; f++) { const k = 3 + ((Math.random() * (main.length - 8)) | 0), a = main[k]; parts.push(boltGeo(jag(a, a.clone().add(new V3(rand(-40, 40), -rand(25, 55), rand(-40, 40))), 8, 6), 0.32)); }
+      bolt.geometry.dispose(); bolt.geometry = mergeGeoms(parts); parts.forEach(g => g.dispose());
+      bolt.visible = true; boltLife = 0.34; flashV = 1;
+      if (toCoil && Game && Game.fx) Game.fx.flashLight(target, 0x9ad8ff, 260, 0.35, 70);
+    };
+    this.updaters.push((t, dt) => {
+      dt = Math.min(dt || 0.016, 0.1);
+      arcT -= dt;
+      if (arcT <= 0) {
+        arcT = 0.06 + Math.random() * 0.12;
+        const a = arcs[(Math.random() * arcs.length) | 0], i = (Math.random() * coils.length) | 0, from = coils[i];
+        const to = Math.random() < 0.55 ? coils[(i + 1) % coils.length] : from.clone().add(new V3(rand(-8, 8), rand(6, 14), rand(-8, 8)));
+        a.m.geometry.dispose(); a.m.geometry = boltGeo(jag(from, to, 12, from.distanceTo(to) * 0.08), 0.12); a.m.visible = true; a.life = 0.08 + Math.random() * 0.12;
+      }
+      for (const a of arcs) { a.life -= dt; if (a.life <= 0) a.m.visible = false; }
+      strikeT -= dt;
+      if (strikeT <= 0) { strike(); strikeT = Math.random() < 0.3 ? 0.25 : 3 + Math.random() * 6; }
+      boltLife -= dt; bolt.visible = boltLife > 0 && (boltLife > 0.24 || Math.random() < 0.6);
+      flashV = Math.max(0, flashV - dt * 3.2); const fl = flashV * (0.65 + 0.35 * Math.random());
+      skyFlash.value = fl; flash.value = fl; this.hemi.intensity = hemiBase * (1 + fl * 2.2);
+      for (const tb of turb) { tb.rot.rotation.z = t * tb.sp; tb.blink.visible = Math.sin(t * 2.0 + tb.ph) > 0.6; }
+      beamPivot.rotation.y = t * 0.6;
+    });
+    // Outside weather: driving slanted rainstorm & wind-torn sea mist
+    this.outerRain({ count: 1500, rMin: 56, rMax: 230, yMin: -40, yMax: 120, clearance: 10, seed: 1801, speed: 78, slantX: 0.24, slantZ: 0.1, len: 6.5, width: 0.11, col1: 0xb8d0ff, col2: 0x8aa8d8, opacity: 0.3, additive: true });
+    this.outerParticles({ count: 500, rMin: 70, rMax: 250, yMin: -60, yMax: 60, clearance: 14, seed: 1809, vy: 0.6, orbit: 0.2, sway: 10.0, size: 26.0, col1: 0x5a6878, col2: 0x2a3440, opacity: 0.2, additive: false, shape: 3 });
+  }
+  decoHorizon() {
+    const s = this.shape;
+    const st = this.stands({ off: 5, tiers: 4, rise: 1.1, run: 2.0, color: 0x141018, seat: 0x3a1a4a, density: 0.6, base: 2.6, parapet: 0.8, style: 'sides', span: 0.5 });
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x16141c, metalness: 0.9, roughness: 0.3, side: THREE.DoubleSide });
+    const Rx = s.W + st.outer + 14, Rz = s.L + st.outer + 14;
+    const hull = new THREE.Mesh(new THREE.CylinderGeometry(Rx, 20, 44, 64, 1, true), hullMat); hull.position.y = -22.5; hull.scale.z = Rz / Rx; this.add(hull);
+    const deck = new THREE.Mesh(new THREE.CircleGeometry(Rx, 64), new THREE.MeshStandardMaterial({ color: 0x1a1620, metalness: 0.85, roughness: 0.35 })); deck.rotation.x = -PI / 2; deck.position.y = -0.55; deck.scale.y = Rz / Rx; this.add(deck);
+    const rimMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.55, 0.2).multiplyScalar(3.5) });
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(Rx, 0.5, 8, 128), rimMat); rim.rotation.x = PI / 2; rim.scale.y = Rz / Rx; rim.position.y = -0.5; this.add(rim);
+    const rim2 = new THREE.Mesh(new THREE.TorusGeometry(Rx * 0.62, 0.35, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.65, 0.35, 1.0).multiplyScalar(3.0) })); rim2.rotation.x = PI / 2; rim2.scale.y = Rz / Rx; rim2.position.y = -16; this.add(rim2);
+    // Debris torn off the ring and spaghettified as it spirals into the black hole
+    const hd = new V3(...this.def.light.sunDir).normalize(), holeP = hd.clone().multiplyScalar(1500);
+    const nR = 130, nH = 120, rr = mulberry32(263);
+    const mkDeb = () => {
+      let p0; do { const a = rr() * TAU, rad = 140 + rr() * 380; p0 = new V3(Math.cos(a) * rad, -60 + rr() * 220, Math.sin(a) * rad); } while (p0.x * hd.x + p0.z * hd.z < 0.25 * Math.hypot(p0.x, p0.z));
+      const dir = holeP.clone().sub(p0).normalize(), b1 = new V3().crossVectors(dir, V3Up).normalize(), b2 = new V3().crossVectors(dir, b1);
+      return { p0, dir, b1, b2, u0: rr(), sp: 0.012 + rr() * 0.02, s: 0.5 + Math.pow(rr(), 3) * 3.2, sw: (rr() < 0.5 ? -1 : 1) * (1.5 + rr() * 2.5), r0: 20 + rr() * 50 };
+    };
+    const debR = Array.from({ length: nR }, mkDeb), debH = Array.from({ length: nH }, mkDeb);
+    const rockIM = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x3a3440, roughness: 0.85, flatShading: true }), nR);
+    const hotIM = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.6, 0.25).multiplyScalar(3.0) }), nH);
+    rockIM.frustumCulled = false; hotIM.frustumCulled = false; this.add(rockIM); this.add(hotIM);
+    const dm4 = new THREE.Matrix4(), dq = new QT(), dp = new V3(), ds = new V3(), Zax = new V3(0, 0, 1);
+    const updDeb = (t, list, im) => {
+      for (let i = 0; i < list.length; i++) {
+        const d = list[i], u = (d.u0 + t * d.sp) % 1, e = Math.pow(u, 2.2), ph = e * d.sw * TAU, rad = (1 - e) * d.r0;
+        dp.copy(d.p0).lerp(holeP, e).addScaledVector(d.b1, Math.cos(ph) * rad).addScaledVector(d.b2, Math.sin(ph) * rad);
+        const thin = d.s * (1 - e * 0.75); ds.set(thin, thin, d.s * (1 + e * e * 9));
+        dq.setFromUnitVectors(Zax, d.dir); dm4.compose(dp, dq, ds); im.setMatrixAt(i, dm4);
+      }
+      im.instanceMatrix.needsUpdate = true;
+    };
+    updDeb(0, debR, rockIM); updDeb(0, debH, hotIM);
+    // Gravitational-lens halo rings hovering above the pitch
+    const ringMat = new THREE.ShaderMaterial({
+      uniforms: { uTime: this.uniforms.uTime }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader: `uniform float uTime; varying vec2 vUv; void main(){ float d = fract(vUv.x * 6.0 - uTime * 0.2); float a = 0.35 + 0.65 * pow(d, 6.0); vec3 c = mix(vec3(1.0, 0.6, 0.25), vec3(0.6, 0.3, 1.0), 0.5 + 0.5 * sin(vUv.x * 12.566 + uTime)); gl_FragColor = vec4(c * a * 1.6, 1.0); }`
+    });
+    const halos = [];
+    for (let k = 0; k < 3; k++) { const m = new THREE.Mesh(new THREE.TorusGeometry(26 + k * 9, 0.35, 8, 160), ringMat); m.position.y = s.H + 18 + k * 7; this.add(m); halos.push({ m, ph: k * 1.3, dir: k % 2 ? 1 : -1 }); }
+    // Spinning habitat wheel & observation pylons with blinking beacons
+    const metal = new THREE.MeshStandardMaterial({ color: 0x3a3844, metalness: 0.9, roughness: 0.3 });
+    const hab = new THREE.Group(); hab.position.set(-260, 70, 160); hab.lookAt(0, 30, 0); this.add(hab);
+    const wheel = new THREE.Group(); hab.add(wheel);
+    const wp = [new THREE.TorusGeometry(50, 4, 12, 96), new THREE.CylinderGeometry(5, 5, 14, 16).rotateX(PI / 2)];
+    for (let k = 0; k < 6; k++) wp.push(placed(new THREE.BoxGeometry(1.6, 100, 1.6), 0, 0, 0, 0, 0, k * PI / 6));
+    wheel.add(new THREE.Mesh(mergeGeoms(wp), metal));
+    wheel.add(new THREE.Mesh(new THREE.TorusGeometry(50, 0.7, 6, 96).translate(0, 0, 3.8), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.85, 0.6).multiplyScalar(2.5) })));
+    const pylMat = new THREE.MeshStandardMaterial({ color: 0x201c28, metalness: 0.9, roughness: 0.25 });
+    const pp = s.path(2, st.outer + 6).pts, pyl = [], beacons = [];
+    for (let i = 0; i < 10; i++) {
+      const p = pp[Math.floor((i + 0.5) / 10 * (pp.length - 1))];
+      pyl.push(placed(new THREE.CylinderGeometry(0.5, 1.6, 22, 6), p.x, 11, p.z));
+      const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, 1), i % 2 ? rimMat : rim2.material); b.position.set(p.x, 23, p.z); this.add(b); beacons.push({ b, ph: i * 0.6 });
+    }
+    this.add(new THREE.Mesh(mergeGeoms(pyl), pylMat));
+    let fr = 0;
+    this.updaters.push((t) => {
+      if ((fr++ & 1) === 0) { updDeb(t, debR, rockIM); updDeb(t, debH, hotIM); }
+      for (const h of halos) { h.m.rotation.set(PI / 2 + Math.sin(t * 0.2 + h.ph) * 0.35, Math.cos(t * 0.17 + h.ph) * 0.35, t * 0.1 * h.dir); }
+      wheel.rotation.z = t * 0.06;
+      for (const b of beacons) b.b.scale.setScalar(0.7 + 0.5 * Math.pow(0.5 + 0.5 * Math.sin(t * 2.2 + b.ph), 4));
+    });
+    // Outside weather: glittering infalling stardust & hot accretion sparks
+    this.outerParticles({ count: 900, rMin: 64, rMax: 250, yMin: -30, yMax: 140, clearance: 14, seed: 1901, vy: 0, orbit: 0.04, sway: 5.0, size: 3.4, col1: 0xffa04a, col2: 0xb070ff, opacity: 0.65, additive: true, shape: 4 });
+    this.outerParticles({ count: 500, rMin: 64, rMax: 240, yMin: -20, yMax: 120, clearance: 14, seed: 1907, vy: 0, orbit: -0.12, sway: 3.0, size: 2.2, col1: 0xffe0b0, col2: 0xff7a2a, opacity: 0.8, additive: true, shape: 0 });
+  }
   update(t, dt, excite) {
     this.uniforms.uTime.value = t; this.skyMat.uniforms.uTime.value = t;
     if (this.crowdMat) this.crowdMat.uniforms.uExcite.value = excite;
@@ -6640,7 +7510,7 @@ class FX {
   setAmbient(kind) { this.ambient = kind; }
   ambientEmit(dt, camPos) {
     if (this.ambient === 'none') return;
-    this.ambAcc += dt * ({ stars: 25, snow: 90, bubbles: 30, fireflies: 22, ash: 55, petals: 52, feathers: 28, synth: 34 }[this.ambient] || 40);
+    this.ambAcc += dt * ({ stars: 25, snow: 90, bubbles: 30, fireflies: 22, ash: 55, petals: 52, feathers: 28, synth: 34, steam: 38, wisps: 24, sprinkles: 48, spores: 34, storm: 130, hawking: 30 }[this.ambient] || 40);
     while (this.ambAcc > 1) {
       this.ambAcc--;
       const x = camPos.x + this.rnd(30), y = Math.random() * 14 + 0.5, z = camPos.z + this.rnd(30);
@@ -6657,6 +7527,18 @@ class FX {
       else if (this.ambient === 'stars') { this.c2.setHex(Math.random() < 0.5 ? 0xa58cff : 0xffffff); this.add.spawn(x, y + 2, z, 0, this.rnd(0.1), 0, 5, 0.05, 0.05, this.c2, this.c2, 0.8, 0, 0, 3); }
       else if (this.ambient === 'petals') { this.c2.setHex(Math.random() < 0.7 ? 0xffa6c9 : 0xffe6f0); this.c3.setHex(0xff6b9e); this.alpha.spawn(x, y + 5, z, 1.1 + this.rnd(0.6), -0.65 - Math.random() * 0.45, 0.4 + this.rnd(0.6), 7, 0.11 + Math.random() * 0.06, 0.09, this.c2, this.c3, 0.9, 0.1, 0, 2); }
       else if (this.ambient === 'feathers') { this.c2.setHex(Math.random() < 0.65 ? 0xffffff : 0xffe69a); this.c3.setHex(0xcce8ff); this.add.spawn(x, y + 3, z, 1.4 + this.rnd(0.5), this.rnd(0.25), 0.4 + this.rnd(0.4), 6, 0.09, 0.05, this.c2, this.c3, 0.55, 0.1, 0, 0); }
+      else if (this.ambient === 'steam') {
+        if (Math.random() < 0.35) { this.c2.setHex(0xffc060); this.c3.setHex(0xff5a10); this.add.spawn(x, y * 0.4, z, this.rnd(0.5), 1.0 + Math.random(), this.rnd(0.5), 2.5, 0.07, 0.02, this.c2, this.c3, 0.9, 0, 0, 1); }
+        else { this.c2.setHex(0xd8ccc0); this.c3.setHex(0x8a7a6a); this.alpha.spawn(x, y * 0.6, z, 0.4 + this.rnd(0.3), 0.35 + Math.random() * 0.3, this.rnd(0.3), 6, 0.25, 0.9, this.c2, this.c3, 0.12, 0.05, 0, 0); }
+      }
+      else if (this.ambient === 'wisps') { this.c2.setHex(Math.random() < 0.7 ? 0x9affd8 : 0xc89aff); this.c3.setHex(0x4a2a8a); this.add.spawn(x, 0.4 + y * 0.5, z, this.rnd(0.35), 0.1 + this.rnd(0.15), this.rnd(0.35), 5 + Math.random() * 3, 0.1, 0.04, this.c2, this.c3, 0.85, 0.15, 0, 0); }
+      else if (this.ambient === 'sprinkles') { this.c2.setHSL(Math.random(), 0.85, 0.62); this.c3.copy(this.c2); this.alpha.spawn(x, y + 5, z, 0.3 + this.rnd(0.4), -1.1 - Math.random() * 0.6, this.rnd(0.4), 7, 0.1, 0.1, this.c2, this.c3, 0.95, 0.05, 0, 2); }
+      else if (this.ambient === 'spores') { this.c2.setHex(Math.random() < 0.6 ? 0x5affd8 : 0xd88aff); this.c3.setHex(Math.random() < 0.5 ? 0x2a8aff : 0x6aff5a); this.add.spawn(x, y * 0.5, z, this.rnd(0.2), 0.25 + Math.random() * 0.35, this.rnd(0.2), 7, 0.09, 0.05, this.c2, this.c3, 0.85, 0.1, 0, 3); }
+      else if (this.ambient === 'storm') {
+        if (Math.random() < 0.94) { this.c2.setHex(0xc8dcff); this.c3.setHex(0x8aa8d8); this.alpha.spawn(x, y + 6, z, 2.2 + this.rnd(0.3), -15 - Math.random() * 4, 0.9 + this.rnd(0.3), 1.2, 0.045, 0.04, this.c2, this.c3, 0.5, 0, 0, 0); }
+        else { this.c2.setHex(0x9ad8ff); this.c3.setHex(0x4a6aff); this.add.spawn(x, y * 0.6, z, this.rnd(2), this.rnd(2), this.rnd(2), 0.35, 0.08, 0.02, this.c2, this.c3, 1, 0, 0, 3); }
+      }
+      else if (this.ambient === 'hawking') { this.c2.setHex(Math.random() < 0.6 ? 0xffb060 : 0xb07aff); this.c3.setHex(0xff4a2a); this.add.spawn(x, y + 2, z, this.rnd(0.2), 0.1 + this.rnd(0.1), -0.6 - Math.random() * 0.8, 5, 0.06, 0.02, this.c2, this.c3, 0.85, 0, 0, 3); }
       else if (this.ambient === 'synth') { this.c2.setHex(Math.random() < 0.5 ? 0xff36b8 : 0x3ef2ff); this.c3.setHex(0x8a3cff); this.add.spawn(x, y * 0.5, z, this.rnd(0.3), 0.9 + Math.random() * 0.8, this.rnd(0.3), 4, 0.08, 0.03, this.c2, this.c3, 0.85, 0, 0, 3); }
     }
   }
@@ -10227,6 +11109,12 @@ const ARENA_ART = [
   'radial-gradient(circle at 72% 36%,#ffe0c8 0%,#ff98b8 20%,transparent 48%),linear-gradient(180deg,#201842 0%,#f092a8 58%,#3b262a 59%,#2b2029)',
   'radial-gradient(circle at 30% 28%,#fffbe0 0%,rgba(255,235,170,.65) 18%,transparent 42%),linear-gradient(180deg,#1c6ad4 0%,#cfe8ff 58%,#e8eef6 59%,#c8d8ec)',
   'radial-gradient(circle at 50% 48%,#ffea40 0%,#ff4a48 22%,#b01070 36%,transparent 37%),repeating-linear-gradient(0deg,transparent 0 6px,rgba(255,54,184,.28) 6px 7px),linear-gradient(180deg,#050114 0%,#7a1058 56%,#120526 57%,#080212)',
+  'radial-gradient(circle at 72% 40%,transparent 0 13%,#c8902e 13.5% 16%,transparent 16.5%),radial-gradient(circle at 30% 64%,transparent 0 8%,#8a5a22 8.5% 11%,transparent 11.5%),radial-gradient(circle at 70% 30%,rgba(255,200,120,.5),transparent 45%),linear-gradient(180deg,#2a1a0e,#7a4a20 58%,#5a3c1c 59%,#3a2610)',
+  'radial-gradient(circle at 68% 30%,#ffb090 0%,#d82a2a 11%,rgba(140,20,40,.55) 14%,transparent 34%),linear-gradient(180deg,#0a0614 0%,#3a1430 56%,#1a1620 57%,#0c0a10)',
+  'radial-gradient(circle at 28% 40%,transparent 0 8%,#ff5aa0 8% 10%,#fff 10% 12%,#ff5aa0 12% 14%,transparent 14%),radial-gradient(ellipse at 70% 30%,#fff 0%,rgba(255,255,255,.7) 14%,transparent 30%),linear-gradient(180deg,#ffb8d8 0%,#ffe4f2 56%,#9ee8d4 57%,#f2a6c8)',
+  'radial-gradient(ellipse at 30% 80%,rgba(58,255,200,.6),transparent 30%),radial-gradient(ellipse at 72% 60%,rgba(216,106,255,.55),transparent 28%),radial-gradient(circle at 50% 0%,rgba(122,255,224,.25),transparent 50%),linear-gradient(180deg,#020806,#08201a 60%,#0c1410)',
+  'linear-gradient(105deg,transparent 0 46%,rgba(200,230,255,.9) 47%,transparent 48% 100%),repeating-linear-gradient(100deg,transparent 0 5px,rgba(160,200,255,.12) 5px 6px),linear-gradient(180deg,#0e141e 0%,#3a4a60 55%,#1c2228 56%,#0e1216)',
+  'radial-gradient(ellipse at 50% 40%,#000 0 9%,#ffe8b0 10%,#ff9a3a 13%,transparent 22%),radial-gradient(ellipse 60% 9% at 50% 42%,#ffd890 0%,#ff7a2a 35%,transparent 70%),radial-gradient(circle at 50% 40%,rgba(176,96,255,.35),transparent 55%),linear-gradient(180deg,#020104,#0a0612)',
   'radial-gradient(circle at 50% 26%,rgba(62,242,255,.55),transparent 36%),radial-gradient(circle at 50% 74%,rgba(255,63,216,.55),transparent 36%),linear-gradient(160deg,#090f2e,#030510)',
   'radial-gradient(circle at 50% 50%,rgba(126,244,255,.35),transparent 52%),linear-gradient(180deg,#2c6cb8 0%,#b8d8f0 48%,#225632 49%,#2f7042 75%,#1c4628)',
   'radial-gradient(circle at 25% 28%,rgba(88,230,255,.55),transparent 34%),radial-gradient(circle at 75% 72%,rgba(255,154,42,.55),transparent 34%),repeating-linear-gradient(45deg,transparent 0 10px,rgba(122,76,255,.22) 10px 11px),linear-gradient(160deg,#140932,#070314)'
@@ -10245,6 +11133,12 @@ const ARENA_TIPS = {
   sakura: 'Balanced curves in <em>Sakura Shrine</em> reward clean backboard reads and controlled wall clears.',
   skyline: 'High 22m ceilings and crisp octagonal rebounds make <em>Skyline Citadel</em> ideal for aerial redirects.',
   synthwave: 'Use the angled hexagonal walls of <em>Synthwave Horizon</em> to redirect shots past anchored keepers.',
+  clockwork: 'The tight chamfers of <em>Clockwork Bastion</em> kick corner shots back to midfield — time your rotations like gears.',
+  nightfall: 'Wide rounded corners in <em>Nightfall Cathedral</em> let you carry wall runs high — strike before the defense resets.',
+  candy: '<em>Sugar Rush</em> is a near-circular bowl: soft rebounds and long curving walls make lazy clears dangerous.',
+  grotto: '<em>Mycelium Grotto</em> pinches into narrow hexagonal ends — crowd the goal pinch and win the 50/50s.',
+  tempest: '<em>Tempest Spire</em> is long and narrow with huge round ends: fast counterattacks win storms.',
+  horizon: 'A 25m ceiling and deep wall curves in <em>Event Horizon</em> reward patient air-roll setups and ceiling resets.',
   figure8: 'In <em>Hyperloop 8</em>, control the tight midfield waist — whoever owns the choke point controls the match.',
   standalone: 'In <em>Throwback Core</em>, you can drive completely behind either net to wrap passes out front.',
   splitgoal: '<em>Twin Vortex</em> splits each end into two angled nets — bank off the central prow to fake defenders.'
