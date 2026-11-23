@@ -395,6 +395,9 @@ body.pad-ui .dock .cta>span::after{content:"START";font-size:10px;font-style:nor
 .tabs button.on::after{transform:scaleX(1);left:0;right:0}
 .tabs button:hover,.tabs button:focus-visible,body.gp-nav .tabs button:focus{color:#fff;background:rgba(62,242,255,.08)}
 .tabs button:focus-visible,body.gp-nav .tabs button:focus{box-shadow:inset 0 0 0 1px rgba(62,242,255,.7)}
+.tabs button small{display:block;margin-top:3px;font-size:9.5px;font-weight:700;letter-spacing:.1em;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tabs button.on small{color:var(--accent)}
+.tabs.sub button{flex:1 1 0;min-width:0}
 .set{display:flex;align-items:center;gap:14px;padding:11px 10px;border-bottom:1px solid rgba(140,185,255,.07);transition:background .12s}
 .set:hover{background:rgba(255,255,255,.025)}
 body.gp-nav .set:has(:focus){background:rgba(62,242,255,.1);box-shadow:inset 3px 0 0 var(--accent)}
@@ -11243,7 +11246,7 @@ class UIManager {
   constructor(game) {
     this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: -1, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
     if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = -1; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
-    this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
+    this.settingsTab = 'camera'; this.garageTab = 'body'; this.subTab = { play: 'mode', freeplay: 'arena', training: 'drills' }; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
     $('boostTicks').innerHTML = t;
@@ -11807,6 +11810,20 @@ class UIManager {
     el.classList.add('fade');
     this._alHideT = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('fade'); }, 340);
   }
+  // Section tabs for the setup screens; each tab shows its current value underneath so nothing is hidden.
+  subTabs(tabs) {
+    const cur = this.subTab[this.menuScreen];
+    return '<div class="tabs sub">' + tabs.map(([k, l, v]) => `<button class="${cur === k ? 'on' : ''}" data-ptab="${k}">${l}${v ? `<small>${this.esc(v)}</small>` : ''}</button>`).join('') + '</div>';
+  }
+  arenaLabel(i) { return i >= 0 && ARENAS[i] ? ARENAS[i].name : 'Random'; }
+  layoutLabel(id) { const l = LAYOUTS.find(x => x.id === id); return !l || id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase(); }
+  arenaTabHtml() {
+    const s = this.setup;
+    return `<div class="sect">Arena</div>${this.arenaCards()}
+          <div class="desc">${s.arena < 0 ? 'A random arena is picked each time the match starts.' : ARENAS[s.arena].desc}</div>
+          <div class="sect">Layout</div>${this.layoutSeg()}
+          <div class="desc">${s.layout === 'default' ? 'Plays on the shape this arena was built with.' : LAYOUTS.find(l => l.id === s.layout).desc + ' The arena theme is rebuilt around this layout.'}</div>`;
+  }
   arenaCards(key = 'arena') {
     const std = ARENAS.map((a, i) => [a, i]).filter(([a]) => !a.weird);
     const weird = ARENAS.map((a, i) => [a, i]).filter(([a]) => a.weird);
@@ -11827,14 +11844,14 @@ class UIManager {
     if (d.lset !== undefined) return `[data-lset="${esc(d.lset)}"][data-lval="${esc(d.lval ?? '')}"]`;
     if (d.set !== undefined) return `[data-set="${esc(d.set)}"][data-val="${esc(d.val ?? '')}"]`;
     if (d.car !== undefined) return `[data-car="${esc(d.car)}"][data-val="${esc(d.val ?? '')}"]`;
-    for (const k of ['lbt', 'lbkick', 'sqkick', 'joinlb', 'lbsort', 'gtab', 'stab', 'drill']) {
+    for (const k of ['lbt', 'lbkick', 'sqkick', 'joinlb', 'lbsort', 'gtab', 'stab', 'ptab', 'drill']) {
       if (d[k] !== undefined) return `[data-${k}="${esc(d[k])}"]`;
     }
     return null;
   }
   renderPanel(refocusSel = null) {
     const P = $('menuPanel'); const s = this.setup; P.classList.remove('wide', 'garage');
-    const viewKey = this.menuScreen === 'multiplayer' ? (this.g.online && this.g.online.lobby ? 'mp:in' : 'mp:out') : this.menuScreen;
+    const viewKey = this.menuScreen === 'multiplayer' ? (this.g.online && this.g.online.lobby ? 'mp:in' : 'mp:out') : this.menuScreen + (this.subTab[this.menuScreen] ? ':' + this.subTab[this.menuScreen] : '');
     const sameView = this._renderedViewKey === viewKey;
     const prevScroll = sameView ? P.scrollTop : 0;
     const prevEl = document.activeElement && P.contains(document.activeElement) ? document.activeElement : null;
@@ -11845,20 +11862,22 @@ class UIManager {
     this._renderedViewKey = viewKey;
     let h = '';
     switch (this.menuScreen) {
-      case 'play':
-        h = `<div class="ph"><h2>Play Match</h2><span>vs AI</span></div>
-          <div class="sect">Game mode</div>${this.seg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem · Power-ups']])}
-          ${s.mode === 'mayhem' ? `<div class="desc">Every few seconds each car receives a random power-up. Use it with <kbd>R</kbd> (gamepad <kbd>L3</kbd> / <kbd>D-pad ↑</kbd>). Hover an icon for details.</div>${this.powerGrid()}<div class="sect">New power-up every</div>${this.seg('interval', [[6, '6 sec'], [10, '10 sec'], [15, '15 sec']])}` : ''}
+      case 'play': {
+        const t = this.subTab.play, mayhem = s.mode === 'mayhem';
+        h = `<div class="ph"><h2>Play Match</h2><span>vs AI</span></div>` + this.subTabs([
+          ['mode', 'Mode', `${mayhem ? 'Mayhem' : 'Standard'} · ${s.teamSize}v${s.teamSize}`],
+          ['arena', 'Arena', this.arenaLabel(s.arena) + (s.layout !== 'default' ? ' · ' + this.layoutLabel(s.layout) : '')],
+          ['bots', 'Bots', `${DIFFICULTY[s.difficulty] ? DIFFICULTY[s.difficulty].name.charAt(0) + DIFFICULTY[s.difficulty].name.slice(1).toLowerCase() : ''} · ${s.duration ? s.duration / 60 + ' min' : '∞'}`]]);
+        if (t === 'mode') h += `<div class="sect">Game mode</div>${this.seg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem · Power-ups']])}
+          ${mayhem ? `<div class="desc">Every few seconds each car receives a random power-up. Use it with <kbd>R</kbd> (gamepad <kbd>L3</kbd> / <kbd>D-pad ↑</kbd>). Hover an icon for details.</div>${this.powerGrid()}<div class="sect">New power-up every</div>${this.seg('interval', [[6, '6 sec'], [10, '10 sec'], [15, '15 sec']])}` : ''}
           <div class="sect">Team size</div>${this.seg('teamSize', [[1, '1 v 1'], [2, '2 v 2'], [3, '3 v 3'], [4, '4 v 4'], [5, '5 v 5']])}
           ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
-          <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}
-          <div class="sect">Arena</div>${this.arenaCards()}
-          <div class="desc">${s.arena < 0 ? 'A random arena is picked each time the match starts.' : ARENAS[s.arena].desc}</div>
-          <div class="sect">Layout</div>${this.layoutSeg()}
-          <div class="desc">${s.layout === 'default' ? 'Plays on the shape this arena was built with.' : LAYOUTS.find(l => l.id === s.layout).desc + ' The arena theme is rebuilt around this layout.'}</div>
-          <div class="sect">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
-          <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
-          <div class="dock"><button class="cta ${s.mode === 'mayhem' ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${s.mode === 'mayhem' ? 'Mayhem' : 'Match'}</span></button></div>`; break;
+          <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}`;
+        else if (t === 'arena') h += this.arenaTabHtml();
+        else h += `<div class="sect">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
+          <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}`;
+        h += `<div class="dock"><button class="cta ${mayhem ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${mayhem ? 'Mayhem' : 'Match'}</span></button></div>`; break;
+      }
       case 'tournament':
         h = `<div class="ph"><h2>Tournament</h2><span>8-team knockout</span></div>
           <div class="desc">Fight through the Quarterfinal, Semifinal and Grand Final. Every round the opposition gets sharper and the arena changes. Lose once and you're out.</div>
@@ -11868,18 +11887,21 @@ class UIManager {
           <div class="sect">Rounds</div><div class="desc">3 min matches · Overtime decides ties · Arena rotates each round</div>
           <div class="dock"><button class="cta alt" id="goTourney"><span>${ico('trophy')}Begin Tournament</span></button></div>`; break;
       case 'freeplay':
-        h = `<div class="ph"><h2>Free Play</h2><span>practice</span></div>
-          <div class="desc">No clock, no opponents — just you, the ball and the arena. Reset the ball, launch it skyward for aerial practice and toggle unlimited boost.</div>
-          <div class="sect">Arena</div>${this.arenaCards()}
-          <div class="sect">Layout</div>${this.layoutSeg()}
-          <div class="sect">Boost</div>${this.seg('unlimited', [[false, 'Normal'], [true, 'Unlimited']])}
-          <div class="dock"><button class="cta" id="goFree"><span>${ico('ball')}Enter Free Play</span></button></div>`; break;
+        h = `<div class="ph"><h2>Free Play</h2><span>practice</span></div>` + this.subTabs([
+          ['arena', 'Arena', this.arenaLabel(s.arena) + (s.layout !== 'default' ? ' · ' + this.layoutLabel(s.layout) : '')],
+          ['boost', 'Boost', s.unlimited ? 'Unlimited' : 'Normal']]);
+        if (this.subTab.freeplay === 'arena') h += this.arenaTabHtml();
+        else h += `<div class="desc">No clock, no opponents — just you, the ball and the arena. Reset the ball, launch it skyward for aerial practice and toggle unlimited boost.</div>
+          <div class="sect">Boost</div>${this.seg('unlimited', [[false, 'Normal'], [true, 'Unlimited']])}`;
+        h += `<div class="dock"><button class="cta" id="goFree"><span>${ico('ball')}Enter Free Play</span></button></div>`; break;
       case 'training':
-        h = `<div class="ph"><h2>Training</h2><span>drills</span></div>
-          <div class="sect">Arena</div>${this.arenaCards()}
-          <div class="sect">Layout</div>${this.layoutSeg()}
-          <div class="sect">Choose a drill</div>` +
-          DRILLS.map((d, i) => `<button class="drill" data-drill="${i}">${ico(d.icon, 'ic')}<div><b>${d.name}</b><span>${d.desc}</span></div><div class="best">BEST<em>${Settings.data.best[d.id] || 0}</em></div></button>`).join(''); break;
+        h = `<div class="ph"><h2>Training</h2><span>drills</span></div>` + this.subTabs([
+          ['drills', 'Drills', `${DRILLS.length} drills`],
+          ['arena', 'Arena', this.arenaLabel(s.arena) + (s.layout !== 'default' ? ' · ' + this.layoutLabel(s.layout) : '')]]);
+        if (this.subTab.training === 'arena') h += this.arenaTabHtml();
+        else h += `<div class="sect">Choose a drill</div>` +
+          DRILLS.map((d, i) => `<button class="drill" data-drill="${i}">${ico(d.icon, 'ic')}<div><b>${d.name}</b><span>${d.desc}</span></div><div class="best">BEST<em>${Settings.data.best[d.id] || 0}</em></div></button>`).join('');
+        break;
       case 'multiplayer': h = this.multiplayerHtml(); P.classList.add('wide'); break;
       case 'ranks': h = this.ranksHtml(); P.classList.add('wide'); break;
       case 'garage': h = this.garageHtml(); P.classList.add('garage'); break;
@@ -11892,6 +11914,7 @@ class UIManager {
     on('goMatch', () => this.g.startMatch({ teamSize: s.teamSize, side: s.side, arena: resolveArena(s.arena), difficulty: s.difficulty, duration: s.duration, mode: s.mode, interval: s.interval, layout: s.layout }));
     on('goTourney', () => this.g.startTournament({ teamSize: s.tsize, difficulty: s.tdiff, mode: s.tmode }));
     on('goFree', () => this.g.startFreePlay({ arena: resolveArena(s.arena), unlimitedBoost: s.unlimited, layout: s.layout }));
+    P.querySelectorAll('[data-ptab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.subTab[this.menuScreen] = b.dataset.ptab; this.renderPanel(`[data-ptab="${b.dataset.ptab}"]`); });
     P.querySelectorAll('[data-drill]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.startTraining({ drill: +b.dataset.drill, arena: resolveArena(s.arena), layout: s.layout }); });
     if (this.menuScreen === 'multiplayer') this.bindMultiplayer();
     if (this.menuScreen === 'ranks') this.bindRanks();
