@@ -11478,12 +11478,12 @@ class UIManager {
     document.body.classList.add('gp-nav'); this.focusEl(b); b.click(); return true;
   }
   overlay(html, cls = '') {
-    $('overlay').classList.remove('hidden'); $('overlay').style.pointerEvents = ''; $('overlayBox').className = 'box ' + cls; $('overlayBox').innerHTML = html; this.bindOverlay();
+    $('overlay').classList.remove('hidden'); $('overlay').style.pointerEvents = ''; $('overlayBox').className = 'box ' + cls; $('overlayBox').innerHTML = html; this._actLockUntil = 0; this.bindOverlay();
     if (!this._sb) { const b = $('overlayBox').querySelector('button, input[type=range], input[type=text]'); b && this.focusEl(b, !!(this.g.input && this.g.input.usingPad)); }
   }
   hideOverlay() { $('overlay').classList.add('hidden'); $('overlay').classList.remove('pwa-top'); this._sb = false; this._inPauseSettings = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
   get overlayOpen() { return !$('overlay').classList.contains('hidden'); }
-  bindOverlay() { $('overlayBox').querySelectorAll('[data-act]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.g.uiAction(b.dataset.act); }); }
+  bindOverlay() { $('overlayBox').querySelectorAll('[data-act]').forEach(b => b.onclick = () => { if (performance.now() < (this._actLockUntil || 0)) return; this.g.audio.ui('click'); this.g.uiAction(b.dataset.act); }); }
   showPause() {
     this._inPauseSettings = false;
     const pi = { resume: '<path d="M7 4l13 8-13 8z" fill="currentColor"/>', restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.2"/>', exit: '<path d="M14 4h6v16h-6M10 8l-4 4 4 4M6 12h10" fill="none" stroke="currentColor" stroke-width="2.2"/>' };
@@ -11520,6 +11520,10 @@ class UIManager {
       : (t ? `<button class="cta alt" data-act="tcontinue"><span>Continue</span></button>` : `<button class="cta" data-act="rematch"><span>Rematch</span></button><button class="cta alt" data-act="menu"><span>Main Menu</span></button>`);
     this.overlay(`<div class="results"><div class="ov-kicker">${isOnline ? 'ONLINE MATCH' : t ? 'TOURNAMENT' : 'MATCH'} COMPLETE</div><div class="winner ${win === 0 ? 'blue' : 'orange'}">${title}</div><div class="final"><span class="b">${s[0]}</span><span style="font-size:22px;color:#9fb2d6">${mode.overtime ? 'OT' : 'FINAL'}</span><span class="o">${s[1]}</span></div>${this.statsTable(g, true)}<div id="xpRewardSlot"></div><div class="btnrow">${btns}</div></div>`, 'results');
     if (pt === win || pt < 0) { g.fx.confetti(new V3(0, 0, 0), 400, 35, 12); }
+    // Lock the buttons briefly: matches often end mid-boost, and a held button would skip straight past this screen.
+    this._actLockUntil = performance.now() + 3000;
+    const row = $('overlayBox').querySelector('.btnrow');
+    if (row) { row.style.opacity = '0.35'; row.style.transition = 'opacity .3s'; setTimeout(() => { row.style.opacity = ''; }, 3000); }
   }
   showXpReward(res) {
     const slot = $('xpRewardSlot');
