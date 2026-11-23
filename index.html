@@ -256,6 +256,36 @@ button{font-family:inherit;color:inherit}
   .ml-pl{padding:3px 7px;font-size:10.5px}
   .ml-foot{padding-top:8px;gap:6px}
 }
+/* Phones held sideways: keep two columns, drop the secondary detail so it all fits in ~360-430px of height */
+@media (orientation:landscape) and (max-height:500px){
+  #matchLoad{padding:calc(var(--sat,0px) + 10px) calc(var(--sar,0px) + 18px) calc(var(--sab,0px) + 10px) calc(var(--sal,0px) + 18px)}
+  .ml-top{padding-bottom:6px}
+  .ml-brand .mark{width:26px;height:26px}
+  .ml-mode-kicker{font-size:9px}
+  .ml-pill{font-size:9px;padding:2px 7px}
+  .ml-sector{display:none}
+  .ml-stage{grid-template-columns:minmax(0,1fr) minmax(240px,.9fr);gap:18px;padding:6px 0;align-items:center;align-content:center}
+  .ml-hero{gap:6px}
+  .ml-eyebrow{font-size:9.5px}
+  .ml-title{font-size:clamp(26px,4.6vw,38px)}
+  .ml-desc{display:none}
+  .ml-specs{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:2px}
+  .ml-spec{padding:4px 8px}
+  .ml-spec b{font-size:11px;margin-top:1px}
+  .ml-side{gap:8px;overflow-y:auto}
+  .ml-schem{display:none}
+  .ml-panel{padding:8px 12px}
+  .ml-panel-h{margin-bottom:6px}
+  .ml-team{gap:3px}
+  .ml-pl{padding:2px 6px;font-size:10px}
+  .ml-drill-ic{width:36px;height:36px}
+  .ml-drill-b h4{font-size:14px}
+  .ml-drill-b p{font-size:11px}
+  .ml-keys{gap:3px 10px;font-size:10.5px}
+  .ml-tip{display:none}
+  .ml-foot{padding-top:6px;gap:4px}
+  .ml-bar{height:5px}
+}
 
 /* ============ MAIN MENU ============ */
 #menu{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;pointer-events:auto;
@@ -1111,10 +1141,20 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
 }
 @media (orientation:portrait) and (max-width:600px){
   #matchLoad{padding:calc(var(--sat) + 14px) 16px calc(var(--sab) + 14px)}
-  .ml-title{font-size:clamp(34px,11vw,52px)}
-  .ml-desc{font-size:12.5px}
-  .ml-bp-box{width:84px;height:84px}
+  .ml-top{padding-bottom:8px}
+  .ml-stage{gap:12px;padding:10px 0}
+  .ml-hero{gap:8px}
+  .ml-title{font-size:clamp(30px,10vw,46px)}
+  .ml-desc{font-size:12px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .ml-specs{gap:5px}
+  .ml-spec{padding:5px 9px}
+  .ml-side{gap:10px}
+  .ml-schem{display:none}
+  .ml-panel{padding:10px 12px}
+  .ml-pl{padding:4px 7px}
   .ml-keys{grid-template-columns:1fr}
+  .ml-tip{font-size:11.5px;gap:8px}
+  .ml-foot{padding-top:8px;gap:6px}
 }
 @media (prefers-reduced-motion:reduce){.cta::after,.logo .word b,.logo .mark .orbit,#boostGauge::before,#goalBanner .strip::after,#loading .bar i::after,#matchLoad .ml-art,#matchLoad .ml-bp-box::after,#matchLoad .ml-bar i::after,#matchLoad .ml-live i,#matchLoad .ml-brand .mark .orbit,#arenaLoad .al-spin,#arenaLoad .al-bar i{animation:none!important}}
 </style>
@@ -1159,7 +1199,7 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
       <div class="ml-specs" id="mlSpecs"></div>
     </div>
     <div class="ml-side">
-      <div class="ml-panel">
+      <div class="ml-panel ml-schem">
         <div class="ml-panel-h"><span>ARENA SCHEMATIC</span><b id="mlLayoutLbl">STANDARD</b></div>
         <div class="ml-bp-wrap">
           <div class="ml-bp-box" id="mlBlueprint"></div>
