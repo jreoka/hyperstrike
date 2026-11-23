@@ -614,15 +614,22 @@ body.pad-ui .prompts .gp{display:inline-flex}
 #afkWarn b{color:var(--gold);font-family:var(--mono);font-style:normal;font-size:15px}
 @keyframes afkPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
 #flash{display:none}
-.ping{display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 9px;background:rgba(6,10,22,.66);border:1px solid var(--line);
-  font:700 11px var(--mono);letter-spacing:.04em;color:var(--ink2);white-space:nowrap;pointer-events:none;user-select:none;--pc:var(--good)}
-.ping .bars{display:inline-flex;align-items:flex-end;gap:2px;height:12px}
-.ping .bars i{display:block;width:3px;background:rgba(255,255,255,.16);transition:background .25s}
-.ping .bars i:nth-child(1){height:5px}.ping .bars i:nth-child(2){height:8px}.ping .bars i:nth-child(3){height:12px}
+.ping{display:inline-flex;align-items:stretch;background:linear-gradient(120deg,rgba(10,17,36,.82),rgba(6,10,22,.72));border:1px solid var(--line);border-left:2px solid var(--pc);
+  box-shadow:0 4px 14px rgba(0,0,0,.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  font:700 11px var(--mono);letter-spacing:.04em;color:var(--ink2);white-space:nowrap;pointer-events:none;user-select:none;--pc:var(--good);transition:border-color .25s}
+.ping .ms{display:inline-flex;align-items:center;gap:6px;padding:5px 9px}
+.ping .ms small{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--ink3);margin-left:-3px}
+.ping .bars{display:inline-flex;align-items:flex-end;gap:2px;height:11px}
+.ping .bars i{display:block;width:3px;border-radius:1px;background:rgba(255,255,255,.16);transition:background .25s,box-shadow .25s}
+.ping .bars i:nth-child(1){height:4px}.ping .bars i:nth-child(2){height:7.5px}.ping .bars i:nth-child(3){height:11px}
 .ping[data-q="3"] .bars i,.ping[data-q="2"] .bars i:nth-child(-n+2),.ping[data-q="1"] .bars i:nth-child(1){background:var(--pc);box-shadow:0 0 6px var(--pc)}
 .ping[data-q="2"]{--pc:var(--gold)}.ping[data-q="1"],.ping[data-q="0"]{--pc:var(--bad)}
-.ping b{color:#fff;font-weight:800;min-width:2.4em;text-align:right}
+.ping b{color:#fff;font-weight:800;min-width:2.2em;text-align:right;font-variant-numeric:tabular-nums}
 .ping[data-q="0"] b{color:var(--bad)}
+.ping .reg{display:inline-flex;align-items:center;padding:0 8px;border-left:1px solid var(--line);background:rgba(62,242,255,.08);
+  color:var(--accent);font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;text-shadow:0 0 10px rgba(62,242,255,.35)}
+.ping .reg:empty{display:none}
+#pingMenu{pointer-events:auto;cursor:default}
 #pingHud{position:absolute;top:14px;right:20px}
 #fps{position:fixed;left:8px;bottom:6px;font:11px var(--mono);color:#7f8;z-index:50;pointer-events:none;opacity:.75}
 
@@ -1118,7 +1125,9 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
   #afkWarn{white-space:normal;text-align:center;max-width:92vw;font-size:12px;padding:8px 18px}
   #hint{white-space:normal;text-align:center;max-width:92vw}
   body.touch-on .t-sys{flex-direction:column;top:calc(var(--sat) + 64px)}
-  body.touch-on #pingHud{top:calc(var(--sat) + 10px);right:calc(var(--sar) + 10px);padding:4px 7px;font-size:10px}
+  body.touch-on #pingHud{top:calc(var(--sat) + 10px);right:calc(var(--sar) + 10px);font-size:10px}
+  body.touch-on #pingHud .ms{padding:4px 6px;gap:5px}
+  body.touch-on #pingHud .reg{padding:0 6px;font-size:9px;letter-spacing:.1em}
   body.touch-on #feed{right:calc(var(--sar) + 66px)}
   body.touch-on #hudTL{top:calc(var(--sat) + 64px)}
   body.touch-on #modeInfo{min-width:0;max-width:calc(100vw - 90px);padding:8px 12px 9px}
@@ -1244,7 +1253,7 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
     <div class="team orange"><span class="tscore" id="scoreOrange">0</span><span class="tname" id="nameOrange">ORANGE</span></div>
   </div>
   <div id="hudTL"><div id="modeInfo" class="hidden"></div><div id="tCtx" class="t-ctx hidden"></div></div>
-  <div id="pingHud" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div>
+  <div id="pingHud" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="ms"><span class="bars"><i></i><i></i><i></i></span><b>--</b><small>MS</small></span><span class="reg"></span></div>
   <div id="feed"></div>
   <div id="countdown"></div>
   <div id="goalBanner"><div class="big" id="gbBig">GOAL!</div><div class="strip"><span id="gbStrip">BLUE SCORES</span></div><div class="meta" id="gbMeta"></div></div>
@@ -1292,7 +1301,7 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
 <div id="menu" class="hidden">
   <header class="topbar">
     <div class="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lgM2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ef2ff"/><stop offset="1" stop-color="#ff3fd8"/></linearGradient></defs><path d="M32 3 57 17.5v29L32 61 7 46.5v-29z" fill="#081024" stroke="url(#lgM2)" stroke-width="3" stroke-linejoin="round"/><g class="orbit"><circle cx="32" cy="32" r="19" fill="none" stroke="url(#lgM2)" stroke-width="2" stroke-dasharray="18 7" opacity=".75"/></g><path d="M35 13 20 35h11l-3 16 16-23H33z" fill="#fff"/></svg><div><div class="word">HYPER<b>STRIKE</b></div><div class="sub">ROCKET CAR SOCCER</div></div></div>
-    <div class="top-right"><button type="button" id="installAppBtn" class="install-chip hidden" title="Install Hyperstrike as an app"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>INSTALL APP</span></button><div id="pingMenu" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="bars"><i></i><i></i><i></i></span><b>--</b>MS</div><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
+    <div class="top-right"><button type="button" id="installAppBtn" class="install-chip hidden" title="Install Hyperstrike as an app"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>INSTALL APP</span></button><div id="pingMenu" class="ping hidden" data-q="0" title="Round-trip latency to the server"><span class="ms"><span class="bars"><i></i><i></i><i></i></span><b>--</b><small>MS</small></span><span class="reg"></span></div><div id="sqChip" class="sq-chip hidden"></div><div id="profileCard" class="hidden"></div></div>
   </header>
   <div class="m-body">
     <div class="left"><nav id="mainNav"></nav></div>
@@ -11426,6 +11435,7 @@ class OnlineManager {
     this.targetRegion = region || null;
     this.pendingAction = pendingAction;
     clearTimeout(this._reconnectTimer);
+    this.connected = false;
     this.stopPing();
     if (this.ws) {
       const old = this.ws;
@@ -11436,7 +11446,6 @@ class OnlineManager {
       old.onerror = null;
       try { old.close(); } catch (_) {}
     }
-    this.connected = false;
     this.connectWs();
   }
   maybeReturnToHomeRegion() {
@@ -11591,11 +11600,12 @@ class OnlineManager {
         break;
       case 'auth_ok':
         this.connected = true;
-        this.startPing();
         if (msg.user) this.user = msg.user;
         this.region = msg.region || '';
         if (!this.targetRegion && this.region) this.homeRegion = this.region;
         this.onlineCount = msg.online || 1;
+        this.startPing();
+        ui.updatePing();
         ui.updateProfileCard();
         if (g.inGame && g.mode instanceof OnlineMatchMode && !g.mode.endedByServer) {
           g.mode.endedByServer = true;
@@ -13074,12 +13084,27 @@ class UIManager {
     const on = this.g.online, ms = on && on.connected ? on.ping : null;
     const q = ms === null ? 0 : ms < 80 ? 3 : ms < 150 ? 2 : 1;
     const txt = ms === null ? '--' : String(Math.min(999, Math.round(ms)));
+    const regRaw = on && on.connected && on.region ? String(on.region).trim().toLowerCase() : '';
+    const reg = regRaw ? regRaw.toUpperCase() : '';
+    const regNames = {
+      ord: 'Chicago', fra: 'Frankfurt', nrt: 'Tokyo',
+      iad: 'Virginia', sjc: 'San Jose', lax: 'Los Angeles', dfw: 'Dallas',
+      lhr: 'London', ams: 'Amsterdam', cdg: 'Paris', sin: 'Singapore',
+      syd: 'Sydney', gru: 'São Paulo', yyz: 'Toronto', local: 'Local'
+    };
+    const regLabel = reg ? (regNames[regRaw] ? `${regNames[regRaw]} (${reg})` : reg) : '';
+    const tip = regLabel
+      ? `Server region: ${regLabel} · ${ms === null ? 'measuring latency' : `${txt} ms RTT`}`
+      : 'Round-trip latency to the server';
     for (const id of ['pingHud', 'pingMenu']) {
       const el = $(id); if (!el) continue;
       el.classList.toggle('hidden', !on || !on.token);
       if (el.dataset.q !== String(q)) el.dataset.q = q;
+      if (el.title !== tip) el.title = tip;
       const b = el.querySelector('b');
       if (b && b.textContent !== txt) b.textContent = txt;
+      const r = el.querySelector('.reg');
+      if (r && r.textContent !== reg) r.textContent = reg;
     }
   }
   restartAnim(el, cls) {
