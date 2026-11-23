@@ -10,6 +10,7 @@ use crate::math_ext::{
 };
 use crate::physics::{Ball, Car, PredSlice};
 use crate::powers::PowerTarget;
+use crate::strike::{StrikeCtx, StrikePlan, simulate_strike, strike_controls};
 use crate::world::World;
 
 #[derive(Clone, Copy, Debug)]
@@ -26,14 +27,18 @@ pub struct Difficulty {
     pub rot: f64,
     pub kick: f64,
     pub err: f64,
+    /// >= 0.5: recover from landing on the roof; >= 0.75: also skip wasteful ground speed-flips.
+    pub fix: f64,
+    /// Simulated shot planner replan interval in seconds (0 = planner off).
+    pub plan: f64,
 }
 
 pub const DIFFICULTY: [Difficulty; 5] = [
     Difficulty {
         name: "ROOKIE",
-        react: 0.34,
-        aim: 0.32,
-        speed: 0.82,
+        react: 0.42,
+        aim: 0.4,
+        speed: 0.76,
         boost: 0.4,
         aerial: 0.0,
         aerial_h: 0.0,
@@ -41,13 +46,15 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         jump_shot: 0.35,
         rot: 0.45,
         kick: 0.5,
+        fix: 0.0,
+        plan: 0.0,
         err: 0.9,
     },
     Difficulty {
         name: "PRO",
-        react: 0.2,
-        aim: 0.15,
-        speed: 0.94,
+        react: 0.3,
+        aim: 0.23,
+        speed: 0.88,
         boost: 0.8,
         aerial: 0.4,
         aerial_h: 7.5,
@@ -55,13 +62,15 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         jump_shot: 0.75,
         rot: 0.75,
         kick: 0.8,
+        fix: 0.0,
+        plan: 0.0,
         err: 0.5,
     },
     Difficulty {
         name: "ALL-STAR",
         react: 0.11,
         aim: 0.07,
-        speed: 1.0,
+        speed: 0.97,
         boost: 1.0,
         aerial: 0.8,
         aerial_h: 13.0,
@@ -69,12 +78,14 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         jump_shot: 0.95,
         rot: 0.9,
         kick: 0.95,
+        fix: 0.0,
+        plan: 0.0,
         err: 0.25,
     },
     Difficulty {
         name: "LEGEND",
-        react: 0.05,
-        aim: 0.025,
+        react: 0.035,
+        aim: 0.015,
         speed: 1.0,
         boost: 1.0,
         aerial: 1.0,
@@ -83,7 +94,9 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         jump_shot: 1.0,
         rot: 1.0,
         kick: 1.0,
-        err: 0.1,
+        fix: 0.5,
+        plan: 0.0,
+        err: 0.05,
     },
     Difficulty {
         name: "CHAMP",
@@ -97,6 +110,8 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         jump_shot: 1.0,
         rot: 1.0,
         kick: 1.0,
+        fix: 1.0,
+        plan: 0.15,
         err: 0.02,
     },
 ];
@@ -335,6 +350,8 @@ pub struct BotAi {
     pub unstuck: f64,
     pub unstuck_steer: f64,
     pub item_hold: f64,
+    pub strike: Option<StrikePlan>,
+    pub strike_next: f64,
 }
 
 impl BotAi {
@@ -370,6 +387,8 @@ impl BotAi {
             unstuck: 0.0,
             unstuck_steer: 1.0,
             item_hold: 0.0,
+            strike: None,
+            strike_next: 0.0,
         }
     }
 
@@ -392,6 +411,8 @@ impl BotAi {
         self.pad_target = None;
         self.stuck_t = 0.0;
         self.unstuck = 0.0;
+        self.strike = None;
+        self.strike_next = 0.0;
     }
 
     pub fn estimate(&self, car: &Car, target: DVec3, use_boost: bool) -> f64 {
@@ -492,7 +513,11 @@ impl BotAi {
                 let car_pos = w.cars[car_idx].pos;
                 let goal = if let Some(sg) = s.split_goal {
                     let sx = if car_pos.x >= 0.0 { 1.0 } else { -1.0 };
-                    DVec3::new(sx * (sg.gx + sg.gnx * 2.5), 0.0, ad * (sg.gz + sg.gnz * 2.5))
+                    DVec3::new(
+                        sx * (sg.gx + sg.gnx * 2.5),
+                        0.0,
+                        ad * (sg.gz + sg.gnz * 2.5),
+                    )
                 } else {
                     let gx = clamp(car_pos.x * 0.2, -s.gw + 2.0, s.gw - 2.0);
                     DVec3::new(gx, 0.0, ad * (s.goal_line_z() + 3.0))
@@ -625,6 +650,32 @@ impl BotAi {
             self.decide_t = self.d.react * (0.7 + w.rng.r#gen::<f64>() * 0.6);
             self.decide(car_idx, w);
         }
+        if self.d.fix >= 0.5 {
+            let car = &mut w.cars[car_idx];
+            if car.contacts == 0
+                && car.body_contact
+                && car.basis.u.y < 0.5
+                && car.pos.y < 1.4
+                && car.vel.y < 2.0
+                && self.aer.is_none()
+            {
+                self.seq = None;
+                car.controls.jump = !car.prev_jump;
+                car.controls.throttle = 1.0;
+                return;
+            }
+        }
+        if let Some(mut pl) = self.strike
+            && let Some(t0) = pl.seq_t0
+        {
+            if w.time - t0 < 0.7 {
+                let ctl = strike_controls(&mut pl, &w.cars[car_idx], w.ball.pos, w.time, &w.phys);
+                self.strike = Some(pl);
+                w.cars[car_idx].controls = ctl;
+                return;
+            }
+            self.strike = None;
+        }
         if self.aer.is_some() {
             self.fly_aerial(car_idx, dt, w);
             return;
@@ -681,7 +732,8 @@ impl BotAi {
         let threat = w.pred.goal_team == car.team as i32 && w.pred.goal_time < 5.0;
         let ad = Self::attack_dir(car);
         let own_z = -ad * w.shape.goal_line_z();
-        if threat && (role == Role::Defend || role == Role::Attack || self.closest_to_goal(car_idx, w))
+        if threat
+            && (role == Role::Defend || role == Role::Attack || self.closest_to_goal(car_idx, w))
         {
             self.mode = BotMode::Save;
         } else if role == Role::Attack {
@@ -704,14 +756,18 @@ impl BotAi {
             let opp_close = w.cars.iter().any(|o| {
                 o.team != car.team && !o.demolished && o.pos.distance(w.ball.pos) < my_d - margin
             });
-            if ahead && opp_close && self.d.rot > 0.6 && (w.ball.pos.z - own_z).abs() < w.shape.l * 1.2
+            if ahead
+                && opp_close
+                && self.d.rot > 0.6
+                && (w.ball.pos.z - own_z).abs() < w.shape.l * 1.2
             {
                 self.mode = BotMode::Shadow;
             }
         }
-        let sup_boost_thresh = if self.is_champ() { 42.0 } else { 30.0 };
-        let def_boost_thresh = if self.is_champ() { 22.0 } else { 12.0 };
-        let sup_pad_d = if self.is_champ() { 28.0 } else { 40.0 };
+        let cb = self.is_champ();
+        let sup_boost_thresh = if cb { 42.0 } else { 30.0 };
+        let def_boost_thresh = if cb { 22.0 } else { 12.0 };
+        let sup_pad_d = if cb { 28.0 } else { 40.0 };
         if self.d.boost > 0.3
             && ((self.mode == BotMode::Support && car.boost < sup_boost_thresh)
                 || (self.mode == BotMode::Defend && car.boost < def_boost_thresh))
@@ -813,7 +869,12 @@ impl BotAi {
                         14.0 + self.p.defend * 8.0
                     };
                     let z = clamp(w.ball.pos.z - ad * back, -glz + 6.0, glz - 6.0);
-                    let x = w.ball.pos.x * 0.45 + if w.cars[car_idx].pos.x > 0.0 { 6.0 } else { -6.0 };
+                    let x = w.ball.pos.x * 0.45
+                        + if w.cars[car_idx].pos.x > 0.0 {
+                            6.0
+                        } else {
+                            -6.0
+                        };
                     (x, z)
                 } else {
                     let sl = sl.unwrap();
@@ -889,8 +950,12 @@ impl BotAi {
         let vf = car.vel.dot(car.basis.f);
         if ang.abs() > 0.5 {
             car.controls.throttle = if vf > 2.0 { -0.5 } else { 0.6 };
-            car.controls.steer =
-                clamp(ang * 2.0, -1.0, 1.0) * if car.controls.throttle < 0.0 { -1.0 } else { 1.0 };
+            car.controls.steer = clamp(ang * 2.0, -1.0, 1.0)
+                * if car.controls.throttle < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
         } else {
             car.controls.throttle = clamp(-vf * 0.4, -1.0, 1.0);
         }
@@ -904,7 +969,9 @@ impl BotAi {
         let opp_z = ad * (glz + 2.0);
         let own_half = (pos.z * ad) < -glz * 0.35;
         if own_half {
-            if self.is_champ() && (pos.z * ad) > -glz * 0.65 && shape.goal_mode == GoalMode::Standard
+            if self.is_champ()
+                && (pos.z * ad) > -glz * 0.65
+                && shape.goal_mode == GoalMode::Standard
             {
                 let opp_in_net = w.cars.iter().any(|o| {
                     o.team != car.team
@@ -973,7 +1040,140 @@ impl BotAi {
         DVec3::new(gx, 0.0, opp_z)
     }
 
+    /// CHAMP: plan the touch by simulating candidate strikes with the real physics, then execute
+    /// the best one. Returns false when no worthwhile plan exists (caller falls back to heuristics).
+    fn run_strike(&mut self, car_idx: usize, w: &mut World, save: bool) -> bool {
+        let now = w.time;
+        if let Some(pl) = self.strike {
+            let done = now > pl.t_hit + 0.35 || pl.seq_t0.is_some_and(|t0| now - t0 > 0.7);
+            if done {
+                self.strike = None;
+            }
+        }
+        let mid_seq = self.strike.is_some_and(|p| p.seq_t0.is_some());
+        if !mid_seq && now >= self.strike_next {
+            self.strike_next = now + self.d.plan;
+            self.plan_strike(car_idx, w, save);
+        }
+        let Some(mut pl) = self.strike else {
+            return false;
+        };
+        let ctl = strike_controls(&mut pl, &w.cars[car_idx], w.ball.pos, now, &w.phys);
+        if pl.seq_t0.is_some() && self.strike.is_some_and(|p| p.seq_t0.is_none()) {
+            self.last_jump_t = now;
+        }
+        self.strike = Some(pl);
+        w.cars[car_idx].controls = ctl;
+        true
+    }
+
+    fn plan_strike(&mut self, car_idx: usize, w: &World, save: bool) {
+        let now = w.time;
+        let car = &w.cars[car_idx];
+        if !car.on_ground || car.contacts < 3 {
+            self.strike = None;
+            return;
+        }
+        let Some(it) = self.intercept else {
+            self.strike = None;
+            return;
+        };
+        if it.aerial {
+            self.strike = None;
+            return;
+        }
+        let ad = Self::attack_dir(car);
+        let ctx = StrikeCtx {
+            shape: &w.shape,
+            phys: &w.phys,
+            ad,
+            tick: w.tick as i64,
+        };
+        let mut scratch = car.clone();
+        scratch.bot = None;
+        let mut sball = w.ball.clone();
+        let mut best: Option<StrikePlan> = None;
+        let mut consider = |pl: StrikePlan, best: &mut Option<StrikePlan>| {
+            let sc = simulate_strike(
+                &pl,
+                car,
+                car_idx,
+                &w.ball,
+                now,
+                &ctx,
+                &mut scratch,
+                &mut sball,
+            );
+            if best.is_none_or(|b| sc > b.score) {
+                let mut p2 = pl;
+                p2.score = sc;
+                *best = Some(p2);
+            }
+        };
+        if let Some(cur) = self.strike {
+            // incumbent gets a small bonus for stability
+            let mut c2 = cur;
+            c2.seq_t0 = None;
+            consider(c2, &mut best);
+            if let Some(b) = best.as_mut() {
+                b.score += 6.0;
+            }
+        }
+        let t_rel0 = it.t - (now - self.decided_at);
+        let max_t = 2.2;
+        let glz = w.shape.goal_line_z();
+        let offs: &[f64] = &[0.0, 0.18, 0.4];
+        for &off in offs {
+            let tr = t_rel0 + off;
+            if tr < 0.05 || tr > max_t {
+                continue;
+            }
+            let sl = w.pred.at(tr);
+            let pp = sl.pos;
+            if pp.y > 4.4 {
+                continue;
+            }
+            let tgt = self.shot_target(car_idx, w, pp);
+            let (ca, sa) = (self.aim_err.cos(), self.aim_err.sin());
+            let rot = |v: DVec3| DVec3::new(v.x * ca - v.z * sa, 0.0, v.x * sa + v.z * ca);
+            let mut sds: Vec<DVec3> = vec![rot(
+                DVec3::new(tgt.x - pp.x, 0.0, tgt.z - pp.z).three_normalize()
+            )];
+            if !save {
+                let c = rot(DVec3::new(-pp.x, 0.0, ad * (glz + 2.0) - pp.z).three_normalize());
+                if c.dot(sds[0]) < 0.995 {
+                    sds.push(c);
+                }
+            }
+            let dodges: &[u8] = if pp.y < 1.9 { &[0, 1] } else { &[2] };
+            for sd in &sds {
+                for &dg in dodges {
+                    let kp: &[(f64, f64)] = &[(4.0, 1.0), (5.5, 1.3)];
+                    for &(k, pace) in kp {
+                        let pl = StrikePlan {
+                            p: pp,
+                            t_hit: now + tr,
+                            sd: *sd,
+                            k,
+                            pace,
+                            dodge: dg,
+                            seq_t0: None,
+                            score: 0.0,
+                        };
+                        consider(pl, &mut best);
+                    }
+                }
+            }
+        }
+        let thresh = -20.0;
+        self.strike = best.filter(|b| b.score > thresh);
+    }
+
     fn attack(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
+        if self.d.plan > 0.0 && self.mode == BotMode::Attack && self.run_strike(car_idx, w, false) {
+            return;
+        }
+        self.strike = None;
         let Some(it) = self.intercept else { return };
         let champ = self.is_champ();
         let now = w.time;
@@ -1065,7 +1265,12 @@ impl BotAi {
                     self.start_jump(0.2, dbl);
                 }
             } else if p.y < 1.8
-                && bdist < if champ { 3.7 + car.speed() * 0.11 } else { 3.4 + car.speed() * 0.1 }
+                && bdist
+                    < if champ {
+                        3.7 + car.speed() * 0.11
+                    } else {
+                        3.4 + car.speed() * 0.1
+                    }
                 && bdist > if champ { 1.2 } else { 1.4 }
                 && facing > if champ { 0.85 } else { 0.88 }
                 && (champ || w.rng.r#gen::<f64>() < self.d.flip * 0.6)
@@ -1078,6 +1283,10 @@ impl BotAi {
     }
 
     fn save(&mut self, car_idx: usize, _dt: f64, w: &mut World) {
+        if self.d.plan > 0.0 && self.run_strike(car_idx, w, true) {
+            return;
+        }
+        self.strike = None;
         let champ = self.is_champ();
         let ad = Self::attack_dir(&w.cars[car_idx]);
         let gz = -ad * w.shape.goal_line_z();
@@ -1093,8 +1302,8 @@ impl BotAi {
             return;
         };
         let it = it.unwrap();
-        let clear_dir = DVec3::new(if p.x >= 0.0 { 1.0 } else { -1.0 }, 0.0, ad * 1.4)
-            .three_normalize();
+        let clear_dir =
+            DVec3::new(if p.x >= 0.0 { 1.0 } else { -1.0 }, 0.0, ad * 1.4).three_normalize();
         let car_pos = w.cars[car_idx].pos;
         let to_p = p - car_pos;
         let dist = to_p.x.hypot(to_p.z);
@@ -1172,32 +1381,13 @@ impl BotAi {
             };
             t.z -= ad * 0.4;
             self.drive_to(car_idx, t, 23.0, w, false);
-            let (speed, facing, on_ground) = {
+            let (speed, facing) = {
                 let car = &mut w.cars[car_idx];
                 car.controls.boost = car.boost > 0.0 && self.d.kick > 0.4;
                 car.controls.throttle = 1.0;
                 let to_b = (ball_pos - car.pos).three_normalize();
-                (car.speed(), car.basis.f.dot(to_b), car.on_ground)
+                (car.speed(), car.basis.f.dot(to_b))
             };
-            if champ
-                && !self.kick_boost_flip
-                && on_ground
-                && d > 14.0
-                && d < 28.0
-                && speed > 10.5
-                && facing > 0.92
-            {
-                self.kick_boost_flip = true;
-                let diag = if car_pos.x > 1.0 {
-                    -0.35
-                } else if car_pos.x < -1.0 {
-                    0.35
-                } else {
-                    0.0
-                };
-                self.start_flip(1.0, diag, true);
-                return;
-            }
             if !self.kick_done
                 && d < if champ { 4.3 } else { 4.1 } + speed * 0.14
                 && facing > if champ { 0.90 } else { 0.94 }
@@ -1371,6 +1561,7 @@ impl BotAi {
         };
 
         if !cautious
+            && self.d.fix < 0.75
             && on_ground
             && ang.abs() < if champ { 0.09 } else { 0.06 }
             && dist > if champ { 22.0 } else { 30.0 }
@@ -1769,8 +1960,7 @@ impl TeamBrain {
                 if c.team != team {
                     continue;
                 }
-                let d = c.pos.distance(ball.pos)
-                    - if c.bot.is_some() { 0.0 } else { 1.0 }
+                let d = c.pos.distance(ball.pos) - if c.bot.is_some() { 0.0 } else { 1.0 }
                     + if c.pos.x * (if team == 0 { 1.0 } else { -1.0 }) < -0.5 {
                         -0.01
                     } else {

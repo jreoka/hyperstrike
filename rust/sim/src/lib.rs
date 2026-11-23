@@ -4,6 +4,7 @@ pub mod math_ext;
 pub mod netcode;
 pub mod physics;
 pub mod powers;
+pub mod strike;
 pub mod world;
 
 pub use ai::{BOT_NAMES, BotAi, BotMode, DIFFICULTY, Difficulty, PERSONALITIES, Personality, Role, SupportSlot, TeamBrain};
