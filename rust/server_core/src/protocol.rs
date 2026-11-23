@@ -443,7 +443,40 @@ pub struct MatchPlayerSpec {
     pub car: CarCustomization,
 }
 
+/// Behavioral anti-cheat report for one human in one match (produced by the match engine,
+/// stored and acted on by `crate::anticheat`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcReport {
+    pub user_id: String,
+    /// "casual" | "ranked" | "solo"
+    pub kind: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub team_size: i32,
+    #[serde(default)]
+    pub humans: u32,
+    #[serde(default)]
+    pub bots: u32,
+    pub t: i64,
+    pub live_secs: f32,
+    /// Model probability of automated play, 0..1 (0 when no trained model is loaded)
+    pub score: f32,
+    pub model_version: String,
+    pub features: Vec<f32>,
+    pub evidence: std::collections::BTreeMap<String, f32>,
+    #[serde(default)]
+    pub region: String,
+}
+
 pub trait MatchEventSink: Send + Sync {
+    /// Latest measured network round trip for a player, if known.
+    fn rtt_ms(&self, _user_id: &str) -> Option<f64> {
+        None
+    }
+    /// A behavioral anti-cheat report for a player is ready.
+    fn on_ac_report(&self, _report: AcReport) {}
     fn broadcast(&self, msg: serde_json::Value);
     fn send_user(&self, user_id: &str, msg: serde_json::Value);
     fn send_raw(&self, user_id: &str, payload: SnapshotPayload);

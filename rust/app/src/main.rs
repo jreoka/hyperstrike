@@ -47,6 +47,14 @@ async fn main() {
     let region = config.region.clone();
     let data_dir_display = config.data_dir.display().to_string();
 
+    let model = match_engine::server_match::ac_model();
+    server_core::anticheat::set_model_info(server_core::anticheat::ModelInfo {
+        version: model.version.clone(),
+        trained: model.is_trained(),
+        human_ref: model.human_ref.clone(),
+        metrics: model.metrics.clone(),
+    });
+
     let backend = Arc::new(SimPool::new(sim_workers));
     let state = AppState::new(config, backend);
     let bg_tasks = state.spawn_background_tasks();

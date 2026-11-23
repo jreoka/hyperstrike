@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod anticheat;
 pub mod arena;
 pub mod math_ext;
 pub mod netcode;
@@ -7,6 +8,7 @@ pub mod powers;
 pub mod strike;
 pub mod world;
 
+pub use anticheat::{AcContext, AcModel, AcSummary, AcTracker, FEATURE_NAMES as AC_FEATURE_NAMES, ShadowBot};
 pub use ai::{BOT_NAMES, BotAi, BotMode, DIFFICULTY, Difficulty, PERSONALITIES, Personality, Role, SupportSlot, TeamBrain};
 pub use arena::{
     ARENAS, ArenaDef, ArenaOpts, ArenaShape, BoostPad, GoalMode, KICKOFF_SETS, KICKOFF_SPOTS,

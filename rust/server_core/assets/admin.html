@@ -463,6 +463,7 @@ tbody tr:hover{background:var(--surf2)}
           const map = new Map();
           for (const x of [...b.users, ...u.users]) map.set(x.username, x);
           state.users = Array.from(map.values());
+          state.behavior = await api('/api/admin/ac/behavior').catch(() => null);
         }
       } else if (state.tab === 'users') {
         const qs = new URLSearchParams({ q: state.userSearch, filter: state.userFilter, sort: state.userSort });
@@ -1304,10 +1305,125 @@ tbody tr:hover{background:var(--surf2)}
     $('sSearch').oninput = (e) => { state.sessSearch = e.target.value; renderSessionsRows(); };
   }
 
+  function acPct(v) { return (v == null || isNaN(v)) ? '–' : Math.round(v * 100) + '%'; }
+  function acNum(v, d = 2) { return (v == null || isNaN(v)) ? '–' : (+v).toFixed(d); }
+  function acVerdictBadge(v) {
+    if (!v) return '<span class="dim">–</span>';
+    const cls = v === 'ban' ? 'b-red' : v === 'no_ban' ? 'b-green' : v === 'error' ? 'b-amber' : 'b-muted';
+    return `<span class="badge ${cls}">${esc(v)}</span>`;
+  }
+  function acWaveStatusBadge(st) {
+    const cls = st === 'ok' ? 'b-green' : (st === 'failed' || st === 'aborted_anomaly') ? 'b-red' : (st === 'partial' || st === 'skipped_no_api_key') ? 'b-amber' : 'b-muted';
+    return `<span class="badge ${cls}">${esc(st)}</span>`;
+  }
+
+  function renderBehavior() {
+    const bh = state.behavior;
+    if (!bh) return '<div class="card" style="margin-bottom:16px"><div class="empty">Behavioral detection data unavailable</div></div>';
+    const c = bh.config;
+    const m = c.detectionMetrics || {};
+    const suspects = bh.suspects || [];
+    const waves = bh.waves || [];
+    const warn = [];
+    if (!c.apiKeySet) warn.push('AC_LLM_API_KEY is not set: waves list suspects but nobody is judged or banned.');
+    if (!c.enforce) warn.push('AC_ENFORCE is off: verdicts are recorded but never applied.');
+    if (!c.detectionModelTrained) warn.push('No trained detection model is loaded: only hard client-invariant evidence and shadow-bot similarity can flag players.');
+    return `
+      ${warn.length ? `<div class="card" style="margin-bottom:16px;border-color:rgba(245,158,11,.35)">${warn.map(w => `<div style="color:var(--amber);padding:2px 0">⚠ ${esc(w)}</div>`).join('')}</div>` : ''}
+      <div class="kpis" style="margin-bottom:16px">
+        <div class="kpi">
+          <div class="kpi-label"><span>Detection model</span><span class="badge ${c.detectionModelTrained ? 'b-green' : 'b-amber'}">${c.detectionModelTrained ? 'trained' : 'untrained'}</span></div>
+          <div class="kpi-val" style="font-size:15px">${esc(c.detectionModel || '–')}</div>
+          <div class="kpi-sub">synthetic AUC ${acNum(m.auc, 3)} · human FPR@0.9 ${acPct(m['human_fpr_at_0.9'])}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>Ban waves</span><span class="badge ${c.enforce ? 'b-red' : 'b-muted'}">${c.enforce ? 'enforcing' : 'observe only'}</span></div>
+          <div class="kpi-val" style="font-size:15px">every ${acNum(c.waveHours, 1)}h</div>
+          <div class="kpi-sub">last ${bh.lastWaveAt ? fmtDate(bh.lastWaveAt) : 'never'} · next ${fmtDate(bh.nextWaveAt)}${bh.waveRunning ? ' · <b>running</b>' : ''}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>LLM judge</span><span class="badge ${c.apiKeySet ? 'b-green' : 'b-amber'}">${c.apiKeySet ? 'key set' : 'no key'}</span></div>
+          <div class="kpi-val" style="font-size:15px" title="${esc(c.llmBaseUrl)}">${esc(c.llmModel)}</div>
+          <div class="kpi-sub">bans need confidence ≥ ${acNum(c.minConfidence)} · max ${c.maxBansPerWave}/wave</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>Tracked players</span></div>
+          <div class="kpi-val">${bh.trackedPlayers}</div>
+          <div class="kpi-sub">${bh.recentReports} match reports in the 14-day window</div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-h"><div class="card-title">Behavioral suspects</div>
+          <div class="act-row">
+            <button class="btn btn-sm" id="acDry">Dry-run wave</button>
+            <button class="btn btn-danger btn-sm" id="acWave">Run wave now</button>
+            <button class="btn btn-sm" id="acExport">Export training data</button>
+          </div>
+        </div>
+        ${suspects.length ? `<table>
+          <thead><tr><th>Player</th><th>Matches</th><th>Model score</th><th>≥0.8</th><th>Invariant</th><th>Shadow</th><th>React</th><th>Last verdict</th><th>Status</th><th></th></tr></thead>
+          <tbody>${suspects.map(s => { const a = s.agg; return `
+            <tr>
+              <td><b>${esc(s.username)}</b>${s.candidate ? ' <span class="badge b-amber">candidate</span>' : ''}</td>
+              <td class="mono">${a.n}</td>
+              <td class="mono">${acNum(a.meanScore)}</td>
+              <td class="mono">${acPct(a.fracHigh)}</td>
+              <td class="mono">${a.hardMatches ? `<span style="color:var(--red)">${a.hardMatches}</span>` : '0'}</td>
+              <td class="mono" title="median corr ${acNum(a.medShadowCorr)} · lead ${acNum(a.medShadowLead)} · lag−net ${a.medShadowLagNetMs}ms">${a.shadowHits}</td>
+              <td class="mono">${a.medReactMs}ms</td>
+              <td title="${esc(s.lastVerdict ? s.lastVerdict.reasoning : '')}">${s.lastVerdict ? acVerdictBadge(s.lastVerdict.verdict) + ' <span class="dim mono">' + acNum(s.lastVerdict.confidence) + '</span>' : '<span class="dim">–</span>'}</td>
+              <td>${s.banUntil ? '<span class="badge b-red">banned</span>' : s.clearedAt ? '<span class="badge b-green">cleared</span>' : '<span class="dim">active</span>'}</td>
+              <td style="text-align:right">${(s.banUntil || s.waveBans) && !(s.clearedAt && !s.banUntil) ? `<button class="btn btn-green btn-sm" data-acfp="${esc(s.userId)}" data-acname="${esc(s.username)}">Unban (false positive)</button>` : ''}</td>
+            </tr>`; }).join('')}
+          </tbody></table>` : '<div class="empty">No behavioral suspects</div>'}
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-h"><div class="card-title">Ban wave history</div><div class="card-sub">${waves.length}</div></div>
+        ${waves.length ? waves.map(w => `
+          <details class="ac-item" style="display:block" data-wid="${esc(w.id)}" ${(state.acOpen || new Set()).has(w.id) ? 'open' : ''}>
+            <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <span>${acWaveStatusBadge(w.status)} <b class="mono">${esc(w.id)}</b> <span class="muted">${esc(w.trigger)} · ${w.candidates} candidates · ${w.bans} banned · ${esc(w.llmModel)}</span></span>
+              <span class="mono dim">${fmtDate(w.t)}</span>
+            </summary>
+            ${w.note ? `<div class="muted" style="margin:6px 0">${esc(w.note)}</div>` : ''}
+            ${(w.entries || []).map(e => `
+              <div style="border-top:1px solid var(--line);padding:6px 0">
+                <div><b>${esc(e.username)}</b> <span class="dim mono">${esc(e.pid)}</span> ${acVerdictBadge(e.verdict)} <span class="mono dim">${e.verdict ? acNum(e.confidence) : ''}</span> ${e.applied ? '<span class="badge b-red">ban applied</span>' : ''}</div>
+                ${e.summary ? `<div>${esc(e.summary)}</div>` : ''}
+                ${e.reasoning ? `<div class="muted" style="font-size:12px">${esc(e.reasoning)}</div>` : ''}
+              </div>`).join('')}
+          </details>`).join('') : '<div class="empty">No waves yet</div>'}
+      </div>`;
+  }
+
+  async function acRunWave(dryRun) {
+    if (!dryRun && !confirm('Run a ban wave now? Players the LLM judges as cheaters (above the confidence floor) will be banned.')) return;
+    toast(dryRun ? 'Dry-run wave running…' : 'Ban wave running…');
+    try {
+      const r = await api('/api/admin/ac/wave', { method: 'POST', body: { dryRun } });
+      toast(`Wave ${r.wave.id}: ${r.wave.status} · ${r.wave.candidates} candidates · ${r.wave.bans} banned`);
+      refreshCurrent();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  async function acExport() {
+    try {
+      const res = await fetch('/api/admin/ac/export', { headers: { Authorization: 'Bearer ' + state.token } });
+      if (!res.ok) throw new Error('Export failed: HTTP ' + res.status);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'hyperstrike_ac_export.ndjson';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
   function renderAntiCheat() {
     const ov = state.overview || { recentAc: [], counts: { banned: 0, flagged: 0 } };
     const flagged = state.users || [];
-    $('content').innerHTML = `
+    state.acOpen = new Set(Array.from(document.querySelectorAll('details[data-wid][open]')).map(d => d.dataset.wid));
+    $('content').innerHTML = renderBehavior() + `
       <div class="grid-2">
         <div class="card">
           <div class="card-h"><div class="card-title">Flagged & Banned Accounts</div><div class="card-sub">${flagged.length}</div></div>
@@ -1341,6 +1457,19 @@ tbody tr:hover{background:var(--surf2)}
       </div>
     `;
 
+    if ($('acDry')) $('acDry').onclick = () => acRunWave(true);
+    if ($('acWave')) $('acWave').onclick = () => acRunWave(false);
+    if ($('acExport')) $('acExport').onclick = acExport;
+    $('content').querySelectorAll('[data-acfp]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm(`Unban ${b.dataset.acname} as a false positive? This lifts the ban, refunds the escalation step and labels their matches as legitimate for retraining.`)) return;
+        try {
+          await api('/api/admin/ac/clear', { method: 'POST', body: { userId: b.dataset.acfp } });
+          toast(`Cleared ${b.dataset.acname}`);
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
     $('content').querySelectorAll('[data-acunban]').forEach(b => {
       b.onclick = async () => {
         try {

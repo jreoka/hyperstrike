@@ -28,8 +28,13 @@ pub enum WsOut {
     Text(String),
     Binary(Vec<u8>),
     Ping,
+    /// Ping carrying a send timestamp; the browser echoes it in a Pong (RTT measurement)
+    PingData(Vec<u8>),
     Close,
 }
+
+/// Interval of timestamped WebSocket pings used to measure network RTT for anti-cheat.
+const RTT_PROBE_SECS: u64 = 3;
 
 #[derive(Clone)]
 pub struct ClientHandle {
@@ -49,6 +54,15 @@ pub struct ClientHandle {
     pub solo_match: Option<SoloMatchMeta>,
     pub solo_ac: Option<crate::protocol::AcRecord>,
     pub solo_gen: u64,
+    /// Smoothed WebSocket round trip in ms (f64 bits; 0 = unknown)
+    pub rtt_bits: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ClientHandle {
+    pub fn rtt_ms(&self) -> Option<f64> {
+        let v = f64::from_bits(self.rtt_bits.load(Ordering::Relaxed));
+        (v > 0.0).then_some(v)
+    }
 }
 
 impl ClientHandle {
@@ -261,6 +275,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
     let (tx, mut rx) = mpsc::unbounded_channel::<WsOut>();
     let backlog_bytes = Arc::new(AtomicUsize::new(0));
     let writer_backlog = Arc::clone(&backlog_bytes);
+    let rtt_bits = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     let conn_id = {
         let mut rt = state.rt.lock().unwrap();
@@ -285,6 +300,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
                 solo_match: None,
                 solo_ac: None,
                 solo_gen: 0,
+                rtt_bits: Arc::clone(&rtt_bits),
             },
         );
         id
@@ -306,6 +322,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
                     r
                 }
                 WsOut::Ping => ws_sink.send(Message::Ping(Vec::new().into())).await,
+                WsOut::PingData(d) => ws_sink.send(Message::Ping(d.into())).await,
                 WsOut::Close => {
                     let _ = ws_sink.send(Message::Close(None)).await;
                     break;
@@ -323,6 +340,8 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
     let mut chat_times: Vec<i64> = Vec::new();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
     heartbeat.tick().await; // skip immediate tick
+    let mut rtt_probe = tokio::time::interval(Duration::from_secs(RTT_PROBE_SECS));
+    rtt_probe.tick().await;
 
     loop {
         tokio::select! {
@@ -349,10 +368,23 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
                     break;
                 }
             }
+            _ = rtt_probe.tick() => {
+                let _ = tx.send(WsOut::PingData(now_ms().to_le_bytes().to_vec()));
+            }
             next_msg = ws_stream.next() => {
                 match next_msg {
-                    Some(Ok(Message::Pong(_))) => {
+                    Some(Ok(Message::Pong(payload))) => {
                         is_alive = true;
+                        if payload.len() == 8 {
+                            let mut b = [0u8; 8];
+                            b.copy_from_slice(&payload);
+                            let rtt = (now_ms() - i64::from_le_bytes(b)) as f64;
+                            if (0.0..5000.0).contains(&rtt) {
+                                let old = f64::from_bits(rtt_bits.load(Ordering::Relaxed));
+                                let v = if old > 0.0 { old * 0.8 + rtt * 0.2 } else { rtt.max(1.0) };
+                                rtt_bits.store(v.to_bits(), Ordering::Relaxed);
+                            }
+                        }
                     }
                     Some(Ok(Message::Ping(_))) => {
                         is_alive = true;
@@ -1326,6 +1358,18 @@ impl LobbyEventSink {
 }
 
 impl MatchEventSink for LobbyEventSink {
+    fn rtt_ms(&self, user_id: &str) -> Option<f64> {
+        let rt = self.state.rt.lock().unwrap();
+        rt.clients_by_user_id
+            .get(user_id)
+            .and_then(|cid| rt.conns.get(cid))
+            .and_then(|c| c.rtt_ms())
+    }
+
+    fn on_ac_report(&self, report: crate::protocol::AcReport) {
+        crate::anticheat::submit(Arc::clone(&self.state), report);
+    }
+
     fn broadcast(&self, msg: Value) {
         let rt = self.state.rt.lock().unwrap();
         if let Some(lb) = rt.lobbies.get(&self.lobby_code)
@@ -1504,6 +1548,16 @@ impl SoloEventSink {
 }
 
 impl MatchEventSink for SoloEventSink {
+    fn rtt_ms(&self, _user_id: &str) -> Option<f64> {
+        let rt = self.state.rt.lock().unwrap();
+        rt.conns.get(&self.conn_id).and_then(|c| c.rtt_ms())
+    }
+
+    fn on_ac_report(&self, mut report: crate::protocol::AcReport) {
+        report.kind = "solo".into();
+        crate::anticheat::submit(Arc::clone(&self.state), report);
+    }
+
     fn broadcast(&self, msg: Value) {
         let rt = self.state.rt.lock().unwrap();
         if self.is_current(&rt) {

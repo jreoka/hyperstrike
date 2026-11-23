@@ -1,3 +1,5 @@
 data/
 *.log
 rust/*/target/
+tools/anticheat/data/
+__pycache__/

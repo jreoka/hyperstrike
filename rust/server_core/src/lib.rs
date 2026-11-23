@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod anticheat;
 pub mod auth;
 pub mod cluster;
 pub mod config;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub backend: Arc<dyn MatchBackend>,
     pub metrics: admin::MetricsState,
     pub cluster: cluster::ClusterState,
+    pub ac: anticheat::AcStore,
 }
 
 impl AppState {
@@ -47,7 +49,9 @@ impl AppState {
         } else {
             Database::new_empty(config.db_file.clone())
         };
+        let ac = anticheat::AcStore::new(&config.data_dir, config.is_primary());
         let state = Arc::new(Self {
+            ac,
             config,
             started_at: Instant::now(),
             cached_index_html: RwLock::new(None),
@@ -68,6 +72,8 @@ impl AppState {
         }
         let mut db = self.db.lock().unwrap();
         db.flush_sync();
+        drop(db);
+        self.ac.flush_sync();
     }
 
     pub fn spawn_background_tasks(self: &Arc<Self>) -> BackgroundTasks {
@@ -75,6 +81,7 @@ impl AppState {
         let mut shutdown_rx_rl = shutdown_tx.subscribe();
         let mut shutdown_rx_metrics = shutdown_tx.subscribe();
         let mut shutdown_rx_cluster = shutdown_tx.subscribe();
+        let ac_task = anticheat::spawn_tasks(Arc::clone(self), shutdown_tx.subscribe());
 
         let state_db = Arc::clone(self);
         let db_task = tokio::spawn(async move {
@@ -203,6 +210,7 @@ impl AppState {
             rl_task: Some(rl_task),
             metrics_task: Some(metrics_task),
             cluster_task: Some(cluster_task),
+            ac_task: Some(ac_task),
         }
     }
 }
@@ -213,6 +221,7 @@ pub struct BackgroundTasks {
     rl_task: Option<tokio::task::JoinHandle<()>>,
     metrics_task: Option<tokio::task::JoinHandle<()>>,
     cluster_task: Option<tokio::task::JoinHandle<()>>,
+    ac_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl BackgroundTasks {
@@ -228,6 +237,9 @@ impl BackgroundTasks {
             let _ = t.await;
         }
         if let Some(t) = self.cluster_task.take() {
+            let _ = t.await;
+        }
+        if let Some(t) = self.ac_task.take() {
             let _ = t.await;
         }
     }
@@ -361,6 +373,27 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/broadcast",
             post(admin::broadcast).options(http::options_handler),
         )
+        .route(
+            "/api/admin/ac/behavior",
+            get(anticheat::admin_behavior).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/ac/user/{user_id}",
+            get(anticheat::admin_user_reports).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/ac/wave",
+            post(anticheat::admin_run_wave).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/ac/clear",
+            post(anticheat::admin_clear).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/ac/export",
+            get(anticheat::admin_export).options(http::options_handler),
+        )
+        .route("/internal/ac/report", post(anticheat::internal_report))
         .route("/internal/cluster/state", post(cluster::internal_cluster_state))
         .route("/internal/cluster/find", get(cluster::internal_cluster_find))
         .route("/internal/cluster/live", get(cluster::internal_cluster_live))

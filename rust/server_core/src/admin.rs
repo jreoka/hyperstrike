@@ -132,7 +132,7 @@ pub async fn serve_admin_page(
     resp
 }
 
-fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(String, String), Box<Response>> {
+pub(crate) fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(String, String), Box<Response>> {
     check_api_access(state, headers)?;
     let Some(token) = get_bearer_token(headers) else {
         return Err(Box::new(json_response(

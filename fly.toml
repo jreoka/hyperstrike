@@ -11,6 +11,8 @@ primary_region = 'ord'
 
 [env]
   ADMIN_USER = 'jreoka'
+  AC_LLM_BASE_URL = 'https://openrouter.ai/api/v1'
+  AC_LLM_MODEL = 'tencent/hy4-flash'
   CLUSTER_REGIONS = 'ord,fra,nrt'
   DATA_DIR = '/data'
   NODE_ENV = 'production'

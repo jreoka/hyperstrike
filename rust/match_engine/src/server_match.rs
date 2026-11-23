@@ -8,9 +8,10 @@ use rand::Rng;
 use serde_json::{Value, json};
 use server_core::auth::now_ms;
 use server_core::protocol::{
-    LobbySettings, MatchCreateOptions, MatchEventSink, MatchStatsEntry, SnapshotPayload,
+    AcReport, LobbySettings, MatchCreateOptions, MatchEventSink, MatchStatsEntry, SnapshotPayload,
 };
 use sim::{
+    AcContext, AcModel, AcTracker, ShadowBot,
     ARENAS, ArenaOpts, BOT_NAMES, BotAi, Car, Controls, HITBOXES, KICKOFF_SPOTS, PERSONALITIES,
     PhysConfig, PowerEvent, PowerSystem, ShotTarget, SnapshotInfo, ThreeVec3Ext, World, WorldEvent,
     kickoff_sets_for, net_encode_snapshot, net_pack_controls, net_patch_snapshot, pick, yaw_toward,
@@ -26,6 +27,31 @@ pub const AFK_KICK_S: f64 = 30.0;
 pub const COUNTDOWN_S: f64 = 3.0;
 pub const GOAL_PAUSE_S: f64 = 3.4;
 pub const REPLAY_MAX_S: f64 = 12.0;
+/// Minimum live play time before a behavioral anti-cheat report is produced for a player.
+pub const AC_MIN_LIVE_S: f64 = 45.0;
+/// RTT assumed when the connection has no measurement yet.
+const AC_DEFAULT_RTT_MS: f64 = 80.0;
+
+/// The anti-cheat model: `AC_MODEL_PATH` (if set and valid) overrides the embedded one.
+pub fn ac_model() -> &'static AcModel {
+    static MODEL: std::sync::OnceLock<AcModel> = std::sync::OnceLock::new();
+    MODEL.get_or_init(|| {
+        if let Ok(path) = std::env::var("AC_MODEL_PATH")
+            && !path.is_empty()
+        {
+            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| AcModel::from_json(&s)) {
+                Ok(m) => {
+                    eprintln!("[ANTI-CHEAT] model {} loaded from {path}", m.version);
+                    return m;
+                }
+                Err(e) => eprintln!("[ANTI-CHEAT] AC_MODEL_PATH {path} ignored: {e}"),
+            }
+        }
+        let m = AcModel::embedded();
+        eprintln!("[ANTI-CHEAT] using embedded model {}", m.version);
+        m
+    })
+}
 
 #[inline]
 fn r3(v: f64) -> f64 {
@@ -153,11 +179,18 @@ struct HumanState {
     last_activity_ctl: [f64; 6],
     had_active_ctl: bool,
     activity_this_slot: bool,
+    ac: AcTracker,
+    shadow: ShadowBot,
+    ac_last_starves: u32,
 }
 
 impl HumanState {
-    fn new(car_idx: usize) -> Self {
+    fn new(car_idx: usize, rng: &mut rand::rngs::StdRng) -> Self {
+        let seed: u64 = rng.r#gen();
         Self {
+            ac: AcTracker::new(car_idx, seed),
+            shadow: ShadowBot::new(rng),
+            ac_last_starves: 0,
             car_idx,
             buf: HashMap::new(),
             next_seq: 0,
@@ -273,7 +306,7 @@ impl ServerMatch {
                 let body = usize::try_from(p.car.body).unwrap_or(0) % HITBOXES.len();
                 let name = p.username.to_uppercase();
                 let idx = world.add_car(Car::new(world.cars.len(), team, &name, body));
-                humans.insert(p.user_id.clone(), HumanState::new(idx));
+                humans.insert(p.user_id.clone(), HumanState::new(idx, &mut world.rng));
                 car_user_ids.push(Some(p.user_id.clone()));
                 car_explosions.push(p.car.explosion);
                 car_kick.push([0.0; 4]);
@@ -573,6 +606,7 @@ impl ServerMatch {
         let Some(h) = self.humans.shift_remove(user_id) else {
             return;
         };
+        self.emit_ac_report(user_id, &h);
         self.replay_done.remove(user_id);
         let diff_idx = usize::try_from(self.settings.bot_diff.clamp(0, 4)).unwrap_or(1);
         let pers_idx = self.world.rng.gen_range(0..PERSONALITIES.len());
@@ -683,6 +717,7 @@ impl ServerMatch {
         for h in self.humans.values_mut() {
             Self::consume_input(h, in_play);
         }
+        self.observe_anticheat(in_play);
         self.update_afk(self.slot_sec);
         let dt = self.world.phys.dt;
         for _ in 0..TICKS_PER_INPUT {
@@ -728,6 +763,9 @@ impl ServerMatch {
                 if COUNTDOWN_S - self.state_t <= 0.0 {
                     self.world.frozen = false;
                     self.set_state(MatchState::Play);
+                    for h in self.humans.values_mut() {
+                        h.ac.on_kickoff_go();
+                    }
                 }
             }
             MatchState::Play => {
@@ -853,6 +891,9 @@ impl ServerMatch {
     }
 
     fn begin_kickoff(&mut self) {
+        for h in self.humans.values_mut() {
+            h.shadow.reset();
+        }
         self.last_shot_car = None;
         self.last_shot_at.clear();
         let ball_r = self.world.phys.ball_r;
@@ -886,6 +927,9 @@ impl ServerMatch {
             match ev {
                 WorldEvent::Hit(hit) => {
                     if self.state == MatchState::Play {
+                        for h in self.humans.values_mut() {
+                            h.ac.on_hit(&self.world, &hit);
+                        }
                         let car = &mut self.world.cars[hit.car_idx];
                         if hit.save {
                             car.stats.saves += 1;
@@ -1072,6 +1116,9 @@ impl ServerMatch {
         self.world.frozen = true;
         self.send_snapshots();
         self.stop();
+        for (uid, h) in &self.humans {
+            self.emit_ac_report(uid, h);
+        }
         let mut stats = HashMap::new();
         for (i, c) in self.world.cars.iter().enumerate() {
             if let Some(uid) = &self.car_user_ids[i] {
@@ -1088,6 +1135,61 @@ impl ServerMatch {
             }
         }
         self.callbacks.on_end(self.score, stats);
+    }
+
+    /// Feed this slot's applied inputs (plus what the champion AI would have done in the same
+    /// seat) to each human's behavioral tracker.
+    fn observe_anticheat(&mut self, in_play: bool) {
+        let live_play = in_play && !self.world.frozen;
+        let slot_sec = self.slot_sec;
+        for h in self.humans.values_mut() {
+            let car_live = live_play
+                && self
+                    .world
+                    .cars
+                    .get(h.car_idx)
+                    .is_some_and(|c| !c.demolished && c.bot.is_none());
+            let shadow = if car_live {
+                Some(h.shadow.predict(h.car_idx, slot_sec, &mut self.world))
+            } else {
+                None
+            };
+            let starved = h.starves != h.ac_last_starves;
+            h.ac_last_starves = h.starves;
+            h.ac.observe_slot(car_live, &h.applied, shadow.as_ref(), h.depth, starved);
+        }
+    }
+
+    fn emit_ac_report(&self, user_id: &str, h: &HumanState) {
+        let live = h.ac.live_secs();
+        if live < AC_MIN_LIVE_S {
+            return;
+        }
+        let rtt = self.callbacks.rtt_ms(user_id);
+        let summary = h.ac.finish(AcContext {
+            rtt_ms: rtt.unwrap_or(AC_DEFAULT_RTT_MS),
+        });
+        let model = ac_model();
+        let score = model.score(&summary.features);
+        let mut evidence = summary.evidence;
+        evidence.insert("rtt_known".into(), if rtt.is_some() { 1.0 } else { 0.0 });
+        let n_bots = self.car_user_ids.iter().filter(|u| u.is_none()).count();
+        let report = AcReport {
+            user_id: user_id.to_string(),
+            kind: if self.settings.ranked { "ranked".into() } else { "casual".into() },
+            mode: self.settings.mode.clone(),
+            team_size: self.settings.team_size,
+            humans: self.humans.len() as u32,
+            bots: n_bots as u32,
+            t: now_ms(),
+            live_secs: live as f32,
+            score,
+            model_version: model.version.clone(),
+            features: summary.features,
+            evidence,
+            region: String::new(),
+        };
+        self.callbacks.on_ac_report(report);
     }
 
     fn powers_snap(&self) -> Option<Value> {
