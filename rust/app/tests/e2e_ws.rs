@@ -563,3 +563,205 @@ async fn e2e_multiplayer_quit_and_afk_kick_replace_players_with_bots() {
     server_task.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[tokio::test]
+async fn e2e_multi_region_cluster_sync_and_cross_region_handoff() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "hyperstrike_cluster_e2e_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let secret = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string();
+
+    // Pre-bind both listeners so each node knows the other's URL
+    let listener_ord = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr_ord = listener_ord.local_addr().unwrap();
+    let listener_fra = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr_fra = listener_fra.local_addr().unwrap();
+
+    let mut cfg_ord = Config::from_env(&repo_root);
+    cfg_ord.data_dir = tmp_dir.join("ord");
+    cfg_ord.db_file = cfg_ord.data_dir.join("db.json");
+    cfg_ord.region = "ord".into();
+    cfg_ord.primary_region = "ord".into();
+    cfg_ord.cluster_regions = vec!["ord".into(), "fra".into()];
+    cfg_ord.peer_urls = std::collections::HashMap::from([("fra".into(), format!("http://{addr_fra}"))]);
+    cfg_ord.client_secret = secret.clone();
+    cfg_ord.allowed_origin.clear();
+    cfg_ord.allowed_host.clear();
+
+    let mut cfg_fra = Config::from_env(&repo_root);
+    cfg_fra.data_dir = tmp_dir.join("fra");
+    cfg_fra.db_file = cfg_fra.data_dir.join("db.json");
+    cfg_fra.region = "fra".into();
+    cfg_fra.primary_region = "ord".into();
+    cfg_fra.cluster_regions = vec!["ord".into(), "fra".into()];
+    cfg_fra.peer_urls = std::collections::HashMap::from([("ord".into(), format!("http://{addr_ord}"))]);
+    cfg_fra.client_secret = secret.clone();
+    cfg_fra.allowed_origin.clear();
+    cfg_fra.allowed_host.clear();
+
+    let state_ord = AppState::new(cfg_ord.clone(), Arc::new(SimPool::new(1)));
+    let state_fra = AppState::new(cfg_fra.clone(), Arc::new(SimPool::new(1)));
+
+    // Seed two users ONLY in ord's authoritative DB
+    let (tok_a, tok_b) = {
+        let mut db = state_ord.db.lock().unwrap();
+        for (id, uname) in [("u_ord", "USPlayer"), ("u_fra", "EUPlayer")] {
+            let key = uname.to_ascii_lowercase();
+            db.data.users.insert(
+                key,
+                server_core::db::User {
+                    id: id.into(),
+                    username: uname.into(),
+                    pass_hash: "00".repeat(64),
+                    salt: "testsalt12345678".into(),
+                    created_at: 1_700_000_000_000,
+                    level: 1,
+                    xp: 0,
+                    total_xp: 0,
+                    rp: 100,
+                    peak_rp: 100,
+                    stats: server_core::db::UserStats::default(),
+                    car: server_core::db::sanitize_car(None),
+                    anti_cheat_flags: 0,
+                    last_report_at: 0,
+                    ac_ban_until: None,
+                    ac_log: Vec::new(),
+                },
+            );
+        }
+        (db.create_session("usplayer"), db.create_session("euplayer"))
+    };
+
+    let bg_ord = state_ord.spawn_background_tasks();
+    let bg_fra = state_fra.spawn_background_tasks();
+
+    let app_ord = server_core::router(Arc::clone(&state_ord));
+    let app_fra = server_core::router(Arc::clone(&state_fra));
+    let task_ord = tokio::spawn(async move {
+        let _ = axum::serve(listener_ord, app_ord.into_make_service_with_connect_info::<SocketAddr>()).await;
+    });
+    let task_fra = tokio::spawn(async move {
+        let _ = axum::serve(listener_fra, app_fra.into_make_service_with_connect_info::<SocketAddr>()).await;
+    });
+
+    // Give background tasks a moment to start
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // 1. Non-primary /api/me must return fly-replay: region=ord
+    let http_client = tokio::net::TcpStream::connect(addr_fra).await.unwrap();
+    drop(http_client);
+    let set_cookie = issue_client_cookie(&secret, "");
+    let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+
+    // Test WS upgrade with ?region=ord on fra -> must reject upgrade with HTTP 200 + fly-replay: region=ord
+    let mut replay_ws_req = format!("ws://{addr_fra}/?region=ord").into_client_request().unwrap();
+    replay_ws_req.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+    replay_ws_req.headers_mut().insert("Origin", format!("http://{addr_fra}").parse().unwrap());
+    let replay_err = tokio_tungstenite::connect_async(replay_ws_req).await.unwrap_err();
+    match replay_err {
+        tokio_tungstenite::tungstenite::Error::Http(resp) => {
+            assert_eq!(
+                resp.headers().get("fly-replay").and_then(|v| v.to_str().ok()),
+                Some("region=ord"),
+                "expected fly-replay: region=ord on cross-region WS upgrade"
+            );
+        }
+        other => panic!("expected Http fly-replay response, got {other:?}"),
+    }
+
+    // 2. Connect User A to ord, User B to fra
+    let mut req_a = format!("ws://{addr_ord}/").into_client_request().unwrap();
+    req_a.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+    req_a.headers_mut().insert("Origin", format!("http://{addr_ord}").parse().unwrap());
+    let (mut ws_a, _) = tokio_tungstenite::connect_async(req_a).await.unwrap();
+
+    let mut req_b = format!("ws://{addr_fra}/").into_client_request().unwrap();
+    req_b.headers_mut().insert("Cookie", cookie_pair.parse().unwrap());
+    req_b.headers_mut().insert("Origin", format!("http://{addr_fra}").parse().unwrap());
+    let (mut ws_b, _) = tokio_tungstenite::connect_async(req_b).await.unwrap();
+
+    ws_a.send(Message::Text(json!({ "type": "auth", "token": tok_a }).to_string().into())).await.unwrap();
+    ws_b.send(Message::Text(json!({ "type": "auth", "token": tok_b }).to_string().into())).await.unwrap();
+
+    let mut a_ok = false;
+    let mut b_ok = false;
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_a.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "auth_ok" {
+            assert_eq!(v["region"], "ord");
+            a_ok = true;
+            break;
+        }
+    }
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_b.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "auth_ok" {
+            assert_eq!(v["region"], "fra");
+            assert_eq!(v["user"]["username"], "EUPlayer");
+            b_ok = true;
+            break;
+        }
+    }
+    assert!(a_ok && b_ok, "both users should authenticate across primary & replica");
+
+    // 3. User A creates a public lobby on ord
+    ws_a.send(Message::Text(json!({ "type": "lobby_create", "settings": { "name": "CROSS REGION", "isPublic": true } }).to_string().into())).await.unwrap();
+    let mut lobby_code = String::new();
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_a.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "lobby_joined" {
+            lobby_code = v["lobby"]["code"].as_str().unwrap().to_string();
+            break;
+        }
+    }
+    assert!(!lobby_code.is_empty());
+
+    // Wait briefly for instant notify_changed sync
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // 4. User B on fra lists lobbies -> must see ord's lobby with region="ord" & global online=2
+    ws_b.send(Message::Text(json!({ "type": "lobby_list" }).to_string().into())).await.unwrap();
+    let mut saw_remote_lobby = false;
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_b.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "lobby_list" {
+            assert_eq!(v["online"], 2, "expected global online count = 2");
+            let lobbies = v["lobbies"].as_array().unwrap();
+            if lobbies.iter().any(|l| l["code"] == lobby_code && l["region"] == "ord") {
+                saw_remote_lobby = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_remote_lobby, "EU player on fra should see US player's lobby on ord");
+
+    // 5. User B on fra attempts to join ord's lobby -> must get region_redirect to ord
+    ws_b.send(Message::Text(json!({ "type": "lobby_join", "code": lobby_code }).to_string().into())).await.unwrap();
+    let mut saw_redirect = false;
+    while let Ok(Some(Ok(Message::Text(txt)))) = tokio::time::timeout(Duration::from_secs(2), ws_b.next()).await {
+        let v: Value = serde_json::from_str(&txt).unwrap();
+        if v["type"] == "region_redirect" {
+            assert_eq!(v["region"], "ord");
+            assert_eq!(v["action"], "lobby_join");
+            assert_eq!(v["code"], lobby_code);
+            saw_redirect = true;
+            break;
+        }
+    }
+    assert!(saw_redirect, "EU player joining US lobby should receive region_redirect");
+
+    let _ = ws_a.close(None).await;
+    let _ = ws_b.close(None).await;
+    bg_ord.shutdown().await;
+    bg_fra.shutdown().await;
+    task_ord.abort();
+    task_fra.abort();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

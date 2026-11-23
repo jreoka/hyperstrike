@@ -9733,6 +9733,9 @@ class OnlineManager {
     this.ws = null;
     this.connected = false;
     this.region = '';
+    this.homeRegion = '';
+    this.targetRegion = null;
+    this.pendingAction = null;
     this.onlineCount = 0;
     this.squad = null;
     this.lobby = null;
@@ -9793,7 +9796,33 @@ class OnlineManager {
     localStorage.setItem('hyperstrike.serverUrl', clean);
   }
   wsUrl() {
-    return this.serverUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+    const base = this.serverUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+    if (this.targetRegion) {
+      return base + '/?region=' + encodeURIComponent(this.targetRegion);
+    }
+    return base;
+  }
+  switchRegion(region, pendingAction = null) {
+    this.targetRegion = region || null;
+    this.pendingAction = pendingAction;
+    clearTimeout(this._reconnectTimer);
+    this.stopPing();
+    if (this.ws) {
+      const old = this.ws;
+      this.ws = null;
+      old.onopen = null;
+      old.onmessage = null;
+      old.onclose = null;
+      old.onerror = null;
+      try { old.close(); } catch (_) {}
+    }
+    this.connected = false;
+    this.connectWs();
+  }
+  maybeReturnToHomeRegion() {
+    if (!this.lobby && !this.squad && this.targetRegion && this.homeRegion && this.targetRegion !== this.homeRegion && !this.g.inGame) {
+      this.switchRegion(null, null);
+    }
   }
   async api(path, opts = {}) {
     const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
@@ -9854,6 +9883,8 @@ class OnlineManager {
     this.isAdmin = false;
     this.squad = null;
     this.lobby = null;
+    this.targetRegion = null;
+    this.pendingAction = null;
     this.chatLog = [];
     localStorage.removeItem('hyperstrike.token');
     clearTimeout(this._reconnectTimer);
@@ -9943,6 +9974,7 @@ class OnlineManager {
         this.startPing();
         if (msg.user) this.user = msg.user;
         this.region = msg.region || '';
+        if (!this.targetRegion && this.region) this.homeRegion = this.region;
         this.onlineCount = msg.online || 1;
         ui.updateProfileCard();
         if (g.inGame && g.mode instanceof OnlineMatchMode && !g.mode.endedByServer) {
@@ -9950,7 +9982,18 @@ class OnlineManager {
           ui.toast('MATCH DISCONNECTED');
           g.exitToMenu();
         }
+        if (this.pendingAction) {
+          const act = this.pendingAction;
+          this.pendingAction = null;
+          this.wsSend(act);
+        }
         this.listLobbies();
+        break;
+      case 'region_redirect':
+        if (msg.region) {
+          ui.toast(`SWITCHING TO ${String(msg.region).toUpperCase()}...`);
+          this.switchRegion(msg.region, msg.action ? { type: msg.action, code: msg.code } : null);
+        }
         break;
       case 'auth_error':
         this.logout();
@@ -9971,6 +10014,7 @@ class OnlineManager {
         this.squad = msg.squad || null;
         ui.updateProfileCard();
         if (!g.inGame && ui.menuScreen === 'multiplayer') ui.renderPanel();
+        if (!this.squad) this.maybeReturnToHomeRegion();
         break;
       case 'lobby_list':
         this.publicLobbies = msg.lobbies || [];
@@ -9993,6 +10037,7 @@ class OnlineManager {
         g.cancelMatchLoad();
         if (g.inGame && g.mode instanceof OnlineMatchMode) g.exitToMenu();
         else if (!g.inGame && ui.menuScreen === 'multiplayer') { this.listLobbies(); ui.renderPanel(); }
+        this.maybeReturnToHomeRegion();
         break;
       case 'lobby_chat':
         this.chatLog.push({ from: msg.from, text: msg.text, system: !!msg.system });
@@ -10080,6 +10125,7 @@ class OnlineManager {
         if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
         if (g.inGame) g.exitToMenu();
         ui.toast(msg.reason || 'REMOVED FROM MATCH FOR INACTIVITY (AFK)', 4000);
+        this.maybeReturnToHomeRegion();
         break;
       case 'anticheat_warn':
         ui.toast(msg.reason || 'ANTI-CHEAT WARNING', 3200);
@@ -10092,6 +10138,7 @@ class OnlineManager {
         if (g.mode instanceof OnlineMatchMode) g.mode.endedByServer = true;
         if (g.inGame) g.exitToMenu();
         ui.toast(msg.reason || 'REMOVED BY ANTI-CHEAT', 4000);
+        this.maybeReturnToHomeRegion();
         break;
       case 'match_finished':
         this.lobby = msg.lobby || this.lobby;
@@ -10349,7 +10396,7 @@ class UIManager {
     if (!el) return;
     const on = this.g.online, u = on && on.user;
     const net = $('menuNet');
-    if (net && on) net.innerHTML = `<i class="dot ${on.connected ? '' : 'off'}"></i>${on.connected ? `Online · ${on.onlineCount || 1} player${(on.onlineCount || 1) === 1 ? '' : 's'}` : 'Connecting'}`;
+    if (net && on) net.innerHTML = `<i class="dot ${on.connected ? '' : 'off'}"></i>${on.connected ? `Online · ${on.onlineCount || 1} player${(on.onlineCount || 1) === 1 ? '' : 's'}${on.region ? ` · ${this.esc(on.region.toUpperCase())}` : ''}` : 'Connecting'}`;
     if (!u) { el.classList.add('hidden'); sqc && sqc.classList.add('hidden'); return; }
     el.classList.remove('hidden');
     if (sqc) {
@@ -10915,6 +10962,7 @@ class UIManager {
           <div class="mp-list-item">
             <div>
               <b>${this.esc(l.name)}</b> <span class="mp-pill">${this.esc(l.code)}</span>
+              ${l.region ? `<span class="mp-pill">${this.esc(String(l.region).toUpperCase())}</span>` : ''}
               ${l.ranked ? '<span class="mp-pill ranked">RANKED</span>' : '<span class="mp-pill">CASUAL</span>'}
               <div style="font-size:11px;color:var(--ink2);margin-top:3px">Host: ${this.esc(l.host)} · ${l.teamSize}v${l.teamSize} · ${l.mode.toUpperCase()} · ${ARENAS[l.arena] ? ARENAS[l.arena].name : l.arena === -1 ? 'Random Arena' : 'Arena'} · ${l.players}/${l.maxPlayers} players</div>
             </div>

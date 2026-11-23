@@ -349,7 +349,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
                             continue;
                         }
                         if let Ok(msg) = serde_json::from_str::<Value>(&text) {
-                            handle_ws_message(&state, conn_id, msg, now, &mut chat_times);
+                            handle_ws_message(&state, conn_id, msg, now, &mut chat_times).await;
                         }
                     }
                     Some(Ok(Message::Binary(bytes))) => {
@@ -363,7 +363,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
                             continue;
                         }
                         if let Ok(msg) = serde_json::from_slice::<Value>(&bytes) {
-                            handle_ws_message(&state, conn_id, msg, now, &mut chat_times);
+                            handle_ws_message(&state, conn_id, msg, now, &mut chat_times).await;
                         }
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
@@ -387,6 +387,7 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_ag
         leave_squad(&mut rt, &db, conn_id);
         rt.conns.remove(&conn_id);
     }
+    state.cluster.notify_changed();
 
     let _ = tx.send(WsOut::Close);
     let _ = writer.await;
@@ -691,6 +692,7 @@ fn pull_squad_into_lobby(
 }
 
 fn add_lobby_strike(
+    state: &Arc<AppState>,
     rt: &mut RuntimeState,
     db: &mut Database,
     lobby_code: &str,
@@ -721,7 +723,18 @@ fn add_lobby_strike(
     if strikes >= AC_KICK_STRIKES {
         if let Some(user) = db.data.users.get_mut(&ulower) {
             ac_penalize(user, reason);
+            let cloned = user.clone();
             db.mark_dirty();
+            if state.config.is_primary() {
+                crate::cluster::fanout_user_sync(Arc::clone(state), ulower.clone(), Some(cloned));
+            }
+        }
+        if !state.config.is_primary() {
+            crate::cluster::notify_primary_ac_penalize(
+                Arc::clone(state),
+                ulower.clone(),
+                reason.to_string(),
+            );
         }
         send_to_conn(
             rt,
@@ -758,6 +771,7 @@ fn add_lobby_strike(
 }
 
 fn add_solo_strike(
+    state: &Arc<AppState>,
     rt: &mut RuntimeState,
     db: &mut Database,
     conn_id: u64,
@@ -777,11 +791,23 @@ fn add_solo_strike(
     };
 
     if strikes >= AC_KICK_STRIKES {
-        if let Some(ul) = ulower
-            && let Some(user) = db.data.users.get_mut(&ul) {
+        if let Some(ul) = ulower {
+            if let Some(user) = db.data.users.get_mut(&ul) {
                 ac_penalize(user, reason);
+                let cloned = user.clone();
                 db.mark_dirty();
+                if state.config.is_primary() {
+                    crate::cluster::fanout_user_sync(Arc::clone(state), ul.clone(), Some(cloned));
+                }
             }
+            if !state.config.is_primary() {
+                crate::cluster::notify_primary_ac_penalize(
+                    Arc::clone(state),
+                    ul,
+                    reason.to_string(),
+                );
+            }
+        }
         stop_solo_match(rt, conn_id);
         send_to_conn(
             rt,
@@ -804,37 +830,114 @@ fn add_solo_strike(
     true
 }
 
+pub fn apply_solo_rewards_to_db(
+    db: &mut Database,
+    uid: &str,
+    ulower: &str,
+    duration: i32,
+    difficulty: i32,
+    tournament: bool,
+    player_team: i32,
+    sim_score: [i32; 2],
+    player_stats: &HashMap<String, MatchStatsEntry>,
+) -> Value {
+    let blue_score = sim_score[0].clamp(0, 99);
+    let orange_score = sim_score[1].clamp(0, 99);
+    let winner_team = if blue_score > orange_score {
+        0
+    } else if orange_score > blue_score {
+        1
+    } else {
+        -1
+    };
+
+    if duration <= 0 {
+        return Value::Null;
+    }
+    let Some(user) = db.data.users.get_mut(ulower) else {
+        return Value::Null;
+    };
+    let st = player_stats.get(uid).cloned().unwrap_or_default();
+    let goals = st.goals.min(20);
+    let assists = st.assists.min(20);
+    let saves = st.saves.min(25);
+    let shots = st.shots.min(35);
+    let demos = st.demos.min(20);
+    let won = winner_team == player_team;
+    let lost = winner_team >= 0 && winner_team != player_team;
+
+    user.stats.matches += 1;
+    if won {
+        user.stats.wins += 1;
+    } else if lost {
+        user.stats.losses += 1;
+    }
+    user.stats.goals += goals;
+    user.stats.assists += assists;
+    user.stats.saves += saves;
+    user.stats.shots += shots;
+    user.stats.demos += demos;
+
+    let diff_mult =
+        1.0 + f64::from(difficulty) * 0.15 + if tournament { 0.25 } else { 0.0 };
+    let time_factor = (f64::from(duration) / 60.0).min(1.0);
+    let raw_xp = (75.0
+        + if won { 65.0 } else { 20.0 }
+        + (goals * 30 + assists * 20 + saves * 25 + shots * 6 + demos * 10) as f64)
+        * diff_mult
+        * time_factor;
+    let xp_gain = (raw_xp.round() as u64).min(750);
+    let xp_res = add_xp(user, xp_gain);
+
+    let mut rp_delta: i64 = 0;
+    if won && user.rp < 600 {
+        rp_delta = 8 + i64::from(difficulty) * 3;
+        user.rp = (user.rp + rp_delta).min(600);
+        user.peak_rp = user.peak_rp.max(user.rp);
+    }
+    let pub_u = public_user(user);
+    db.mark_dirty();
+    json!({
+        "xpGained": xp_res.xp_gained,
+        "oldLevel": xp_res.old_level,
+        "newLevel": xp_res.new_level,
+        "leveledUp": xp_res.leveled_up,
+        "rpDelta": rp_delta,
+        "user": pub_u
+    })
+}
+
 fn finalize_solo_match(
-    state: &AppState,
+    state: &Arc<AppState>,
     conn_id: u64,
     solo_gen: u64,
     sim_score: [i32; 2],
     player_stats: HashMap<String, MatchStatsEntry>,
 ) {
-    let mut rt = state.rt.lock().unwrap();
-    let mut db = state.db.lock().unwrap();
-
-    let (sm, uid, ulower) = match rt.conns.get_mut(&conn_id) {
-        Some(c) => {
-            if c.solo_gen != solo_gen {
-                return;
+    let (sm, uid, ulower) = {
+        let mut rt = state.rt.lock().unwrap();
+        match rt.conns.get_mut(&conn_id) {
+            Some(c) => {
+                if c.solo_gen != solo_gen {
+                    return;
+                }
+                let Some(sm) = c.solo_match.as_mut() else {
+                    return;
+                };
+                if sm.finished {
+                    return;
+                }
+                sm.finished = true;
+                let sm_clone = sm.clone();
+                if let Some(sim) = c.solo_sim.take() {
+                    sim.stop();
+                }
+                c.solo_match = None;
+                c.solo_ac = None;
+                (sm_clone, c.user_id.clone(), c.username_lower.clone())
             }
-            let Some(sm) = c.solo_match.as_mut() else {
-                return;
-            };
-            if sm.finished {
-                return;
-            }
-            sm.finished = true;
-            let sm_clone = sm.clone();
-            if let Some(sim) = c.solo_sim.take() {
-                sim.stop();
-            }
-            c.solo_match = None;
-            c.solo_ac = None;
-            (sm_clone, c.user_id.clone(), c.username_lower.clone())
+            None => return,
         }
-        None => return,
     };
 
     let blue_score = sim_score[0].clamp(0, 99);
@@ -847,110 +950,104 @@ fn finalize_solo_match(
         -1
     };
 
-    let mut reward: Value = Value::Null;
-    if sm.duration > 0
-        && let (Some(uid), Some(ulower)) = (uid, ulower)
-            && let Some(user) = db.data.users.get_mut(&ulower) {
-                let st = player_stats.get(&uid).cloned().unwrap_or_default();
-                let goals = st.goals.min(20);
-                let assists = st.assists.min(20);
-                let saves = st.saves.min(25);
-                let shots = st.shots.min(35);
-                let demos = st.demos.min(20);
-                let won = winner_team == sm.player_team;
-                let lost = winner_team >= 0 && winner_team != sm.player_team;
-
-                user.stats.matches += 1;
-                if won {
-                    user.stats.wins += 1;
-                } else if lost {
-                    user.stats.losses += 1;
-                }
-                user.stats.goals += goals;
-                user.stats.assists += assists;
-                user.stats.saves += saves;
-                user.stats.shots += shots;
-                user.stats.demos += demos;
-
-                let diff_mult =
-                    1.0 + f64::from(sm.difficulty) * 0.15 + if sm.tournament { 0.25 } else { 0.0 };
-                let time_factor = (f64::from(sm.duration) / 60.0).min(1.0);
-                let raw_xp = (75.0
-                    + if won { 65.0 } else { 20.0 }
-                    + (goals * 30 + assists * 20 + saves * 25 + shots * 6 + demos * 10) as f64)
-                    * diff_mult
-                    * time_factor;
-                let xp_gain = (raw_xp.round() as u64).min(750);
-                let xp_res = add_xp(user, xp_gain);
-
-                let mut rp_delta: i64 = 0;
-                if won && user.rp < 600 {
-                    rp_delta = 8 + i64::from(sm.difficulty) * 3;
-                    user.rp = (user.rp + rp_delta).min(600);
-                    user.peak_rp = user.peak_rp.max(user.rp);
-                }
-                let pub_u = public_user(user);
-                db.mark_dirty();
-                reward = json!({
-                    "xpGained": xp_res.xp_gained,
-                    "oldLevel": xp_res.old_level,
-                    "newLevel": xp_res.new_level,
-                    "leveledUp": xp_res.leveled_up,
-                    "rpDelta": rp_delta,
-                    "user": pub_u
-                });
+    if state.config.is_primary() {
+        let (reward, updated_user) = {
+            let mut db = state.db.lock().unwrap();
+            if let (Some(uid), Some(ulower)) = (&uid, &ulower) {
+                let r = apply_solo_rewards_to_db(
+                    &mut db,
+                    uid,
+                    ulower,
+                    sm.duration,
+                    sm.difficulty,
+                    sm.tournament,
+                    sm.player_team,
+                    sim_score,
+                    &player_stats,
+                );
+                let u = db.data.users.get(ulower).cloned();
+                (r, u.map(|u| (ulower.clone(), u)))
+            } else {
+                (Value::Null, None)
             }
-
-    send_to_conn(
-        &rt,
-        conn_id,
-        &json!({
-            "type": "solo_match_finished",
-            "score": [blue_score, orange_score],
-            "winnerTeam": winner_team,
-            "reward": reward
-        }),
-    );
+        };
+        if let Some((ul, u)) = updated_user {
+            crate::cluster::fanout_user_sync(Arc::clone(state), ul, Some(u));
+        }
+        let rt = state.rt.lock().unwrap();
+        send_to_conn(
+            &rt,
+            conn_id,
+            &json!({
+                "type": "solo_match_finished",
+                "score": [blue_score, orange_score],
+                "winnerTeam": winner_team,
+                "reward": reward
+            }),
+        );
+    } else {
+        let state_clone = Arc::clone(state);
+        tokio::spawn(async move {
+            let reward = if let (Some(uid), Some(ulower)) = (uid, ulower) {
+                let req = crate::cluster::SoloResultRequest {
+                    user_id: uid.clone(),
+                    username_lower: ulower.clone(),
+                    duration: sm.duration,
+                    difficulty: sm.difficulty,
+                    tournament: sm.tournament,
+                    player_team: sm.player_team,
+                    sim_score,
+                    player_stats: player_stats.clone(),
+                };
+                if let Some(res) =
+                    crate::cluster::apply_solo_result_via_primary(&state_clone, &req).await
+                {
+                    if let Some(u) = res.user {
+                        let mut db = state_clone.db.lock().unwrap();
+                        db.data.users.insert(ulower, u);
+                    }
+                    res.reward
+                } else {
+                    let mut db = state_clone.db.lock().unwrap();
+                    apply_solo_rewards_to_db(
+                        &mut db,
+                        &uid,
+                        &ulower,
+                        sm.duration,
+                        sm.difficulty,
+                        sm.tournament,
+                        sm.player_team,
+                        sim_score,
+                        &player_stats,
+                    )
+                }
+            } else {
+                Value::Null
+            };
+            let rt = state_clone.rt.lock().unwrap();
+            send_to_conn(
+                &rt,
+                conn_id,
+                &json!({
+                    "type": "solo_match_finished",
+                    "score": [blue_score, orange_score],
+                    "winnerTeam": winner_team,
+                    "reward": reward
+                }),
+            );
+        });
+    }
 }
 
-fn finalize_multiplayer_match(
-    state: &AppState,
-    lobby_code: &str,
-    match_gen: u64,
+pub fn apply_mp_rewards_to_db(
+    db: &mut Database,
+    started_at: i64,
+    participants: &[MatchParticipant],
+    is_ranked_setting: bool,
+    players_list: &[(String, String, i32)],
     sim_score: [i32; 2],
-    player_stats: HashMap<String, MatchStatsEntry>,
-) {
-    let mut rt = state.rt.lock().unwrap();
-    let mut db = state.db.lock().unwrap();
-
-    let (started_at, participants, is_ranked_setting, players_list) = {
-        let Some(lb) = rt.lobbies.get_mut(lobby_code) else {
-            return;
-        };
-        let Some(m) = lb.active_match.as_mut() else {
-            return;
-        };
-        if m.match_gen != match_gen || m.finished {
-            return;
-        }
-        m.finished = true;
-        lb.status = LobbyStatus::Waiting;
-        if let Some(sim) = lb.sim.take() {
-            sim.stop();
-        }
-        let host_id = lb.host_id.clone();
-        for p in lb.players.values_mut() {
-            p.ready = p.user_id == host_id;
-        }
-        let plist: Vec<(String, String, i32)> = lb
-            .players
-            .values()
-            .filter(|p| p.team == 0 || p.team == 1)
-            .map(|p| (p.user_id.clone(), p.username_lower.clone(), p.team))
-            .collect();
-        (m.started_at, m.participants.clone(), lb.settings.ranked, plist)
-    };
-
+    player_stats: &HashMap<String, MatchStatsEntry>,
+) -> (serde_json::Map<String, Value>, Option<String>, Vec<String>) {
     let duration_sec = ((now_ms() - started_at) as f64 / 1000.0).max(1.0);
     let blue_score = sim_score[0].clamp(0, 99);
     let orange_score = sim_score[1].clamp(0, 99);
@@ -963,19 +1060,20 @@ fn finalize_multiplayer_match(
     };
 
     let mut is_ranked = is_ranked_setting && duration_sec >= 25.0;
-    let mut ranked_void: Option<&'static str> = None;
+    let mut ranked_void: Option<String> = None;
     if is_ranked
         && let RankedEligibility::Ineligible(reason) =
-            ranked_eligibility_from_participants(&participants)
-        {
-            is_ranked = false;
-            ranked_void = Some(reason);
-        }
+            ranked_eligibility_from_participants(participants)
+    {
+        is_ranked = false;
+        ranked_void = Some(reason.to_string());
+    }
 
     let mut rewards = serde_json::Map::new();
     let mut stayed_ids: HashSet<String> = HashSet::new();
+    let mut touched_users: Vec<String> = Vec::new();
 
-    for (uid, ulower, team) in &players_list {
+    for (uid, ulower, team) in players_list {
         stayed_ids.insert(uid.clone());
         let Some(user) = db.data.users.get_mut(ulower) else {
             continue;
@@ -1027,6 +1125,7 @@ fn finalize_multiplayer_match(
         }
 
         let pub_u = public_user(user);
+        touched_users.push(ulower.clone());
         rewards.insert(
             uid.clone(),
             json!({
@@ -1041,7 +1140,7 @@ fn finalize_multiplayer_match(
     }
 
     if is_ranked {
-        for part in &participants {
+        for part in participants {
             if stayed_ids.contains(&part.user_id) {
                 continue;
             }
@@ -1050,21 +1149,142 @@ fn finalize_multiplayer_match(
                 user.stats.mp_matches += 1;
                 user.stats.losses += 1;
                 user.rp = (user.rp - 22).max(0);
+                touched_users.push(part.username_lower.clone());
             }
         }
     }
     db.mark_dirty();
+    (rewards, ranked_void, touched_users)
+}
 
-    if let Some(lb) = rt.lobbies.get(lobby_code) {
-        let msg = json!({
-            "type": "match_finished",
-            "score": [blue_score, orange_score],
-            "winnerTeam": winner_team,
-            "rewards": rewards,
-            "rankedVoid": ranked_void,
-            "lobby": lobby_snapshot(&db, lb)
+fn finalize_multiplayer_match(
+    state: &Arc<AppState>,
+    lobby_code: &str,
+    match_gen: u64,
+    sim_score: [i32; 2],
+    player_stats: HashMap<String, MatchStatsEntry>,
+) {
+    let (started_at, participants, is_ranked_setting, players_list) = {
+        let mut rt = state.rt.lock().unwrap();
+        let Some(lb) = rt.lobbies.get_mut(lobby_code) else {
+            return;
+        };
+        let Some(m) = lb.active_match.as_mut() else {
+            return;
+        };
+        if m.match_gen != match_gen || m.finished {
+            return;
+        }
+        m.finished = true;
+        lb.status = LobbyStatus::Waiting;
+        if let Some(sim) = lb.sim.take() {
+            sim.stop();
+        }
+        let host_id = lb.host_id.clone();
+        for p in lb.players.values_mut() {
+            p.ready = p.user_id == host_id;
+        }
+        let plist: Vec<(String, String, i32)> = lb
+            .players
+            .values()
+            .filter(|p| p.team == 0 || p.team == 1)
+            .map(|p| (p.user_id.clone(), p.username_lower.clone(), p.team))
+            .collect();
+        (m.started_at, m.participants.clone(), lb.settings.ranked, plist)
+    };
+    state.cluster.notify_changed();
+
+    let blue_score = sim_score[0].clamp(0, 99);
+    let orange_score = sim_score[1].clamp(0, 99);
+    let winner_team = if blue_score > orange_score {
+        0
+    } else if orange_score > blue_score {
+        1
+    } else {
+        -1
+    };
+
+    if state.config.is_primary() {
+        let (rewards, ranked_void, synced_users) = {
+            let mut db = state.db.lock().unwrap();
+            let (rewards, ranked_void, touched) = apply_mp_rewards_to_db(
+                &mut db,
+                started_at,
+                &participants,
+                is_ranked_setting,
+                &players_list,
+                sim_score,
+                &player_stats,
+            );
+            let synced: Vec<(String, crate::db::User)> = touched
+                .into_iter()
+                .filter_map(|k| db.data.users.get(&k).cloned().map(|u| (k, u)))
+                .collect();
+            (rewards, ranked_void, synced)
+        };
+        for (k, u) in synced_users {
+            crate::cluster::fanout_user_sync(Arc::clone(state), k, Some(u));
+        }
+        let rt = state.rt.lock().unwrap();
+        let db = state.db.lock().unwrap();
+        if let Some(lb) = rt.lobbies.get(lobby_code) {
+            let msg = json!({
+                "type": "match_finished",
+                "score": [blue_score, orange_score],
+                "winnerTeam": winner_team,
+                "rewards": rewards,
+                "rankedVoid": ranked_void,
+                "lobby": lobby_snapshot(&db, lb)
+            });
+            broadcast_lobby(&rt, lb, &msg, None);
+        }
+    } else {
+        let state_clone = Arc::clone(state);
+        let code_owned = lobby_code.to_string();
+        tokio::spawn(async move {
+            let req = crate::cluster::MpResultRequest {
+                started_at,
+                participants: participants.clone(),
+                is_ranked_setting,
+                players_list: players_list.clone(),
+                sim_score,
+                player_stats: player_stats.clone(),
+            };
+            let (rewards, ranked_void) = if let Some(res) =
+                crate::cluster::apply_mp_result_via_primary(&state_clone, &req).await
+            {
+                let mut db = state_clone.db.lock().unwrap();
+                for (k, u) in res.updated_users {
+                    db.data.users.insert(k, u);
+                }
+                (res.rewards, res.ranked_void)
+            } else {
+                let mut db = state_clone.db.lock().unwrap();
+                let (r, rv, _) = apply_mp_rewards_to_db(
+                    &mut db,
+                    started_at,
+                    &participants,
+                    is_ranked_setting,
+                    &players_list,
+                    sim_score,
+                    &player_stats,
+                );
+                (r, rv)
+            };
+            let rt = state_clone.rt.lock().unwrap();
+            let db = state_clone.db.lock().unwrap();
+            if let Some(lb) = rt.lobbies.get(&code_owned) {
+                let msg = json!({
+                    "type": "match_finished",
+                    "score": [blue_score, orange_score],
+                    "winnerTeam": winner_team,
+                    "rewards": rewards,
+                    "rankedVoid": ranked_void,
+                    "lobby": lobby_snapshot(&db, lb)
+                });
+                broadcast_lobby(&rt, lb, &msg, None);
+            }
         });
-        broadcast_lobby(&rt, lb, &msg, None);
     }
 }
 
@@ -1321,7 +1541,7 @@ impl MatchEventSink for SoloEventSink {
     }
 }
 
-fn handle_ws_message(
+async fn handle_ws_message(
     state: &Arc<AppState>,
     conn_id: u64,
     msg: Value,
@@ -1351,7 +1571,7 @@ fn handle_ws_message(
                 .map(|c| (c.ip.clone(), c.user_agent.clone()))
                 .unwrap_or_default()
         };
-        let user_info = {
+        let user_info = if state.config.is_primary() {
             let mut db = state.db.lock().unwrap();
             let info = db.get_user_by_token(token).map(|u| {
                 (
@@ -1365,6 +1585,31 @@ fn handle_ws_message(
                 db.touch_session(token, &conn_ip, &conn_ua);
             }
             info
+        } else if let Some((user, session)) =
+            crate::cluster::auth_token_via_primary(state, token, &conn_ip, &conn_ua).await
+        {
+            let ulower = user.username.to_ascii_lowercase();
+            let info = (
+                user.id.clone(),
+                user.username.clone(),
+                ulower.clone(),
+                public_user(&user),
+            );
+            let mut db = state.db.lock().unwrap();
+            db.data.users.insert(ulower, user);
+            db.data.sessions.insert(token.to_string(), session);
+            Some(info)
+        } else {
+            // Fallback to local mirror if primary is momentarily unreachable
+            let mut db = state.db.lock().unwrap();
+            db.get_user_by_token(token).map(|u| {
+                (
+                    u.id.clone(),
+                    u.username.clone(),
+                    u.username.to_ascii_lowercase(),
+                    public_user(u),
+                )
+            })
         };
         let Some((uid, uname, ulower, pub_u)) = user_info else {
             let rt = state.rt.lock().unwrap();
@@ -1409,8 +1654,17 @@ fn handle_ws_message(
             c.username_lower = Some(ulower);
             c.session_token = Some(token.to_string());
         }
-        rt.clients_by_user_id.insert(uid, conn_id);
-        let online = rt.clients_by_user_id.len();
+        rt.clients_by_user_id.insert(uid.clone(), conn_id);
+        drop(db);
+        drop(rt);
+        crate::cluster::fanout_kick_user(
+            Arc::clone(state),
+            uid,
+            "Signed in from another tab/device.".into(),
+        );
+        state.cluster.notify_changed();
+        let online = crate::cluster::global_online_count(state);
+        let rt = state.rt.lock().unwrap();
         send_to_conn(
             &rt,
             conn_id,
@@ -1477,6 +1731,9 @@ fn handle_ws_message(
                 c.squad_code = Some(code);
             }
             send_to_conn(&rt, conn_id, &json!({ "type": "squad_update", "squad": snap }));
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "squad_join" => {
@@ -1486,6 +1743,27 @@ fn handle_ws_message(
                 .unwrap_or("")
                 .trim()
                 .to_uppercase();
+            let local_exists = {
+                let rt = state.rt.lock().unwrap();
+                rt.squads.contains_key(&code)
+            };
+            if !local_exists
+                && let Some(target_region) =
+                    crate::cluster::find_remote_code_region(state, "squad", &code).await
+            {
+                let rt = state.rt.lock().unwrap();
+                send_to_conn(
+                    &rt,
+                    conn_id,
+                    &json!({
+                        "type": "region_redirect",
+                        "region": target_region,
+                        "action": "squad_join",
+                        "code": code
+                    }),
+                );
+                return;
+            }
             let mut rt = state.rt.lock().unwrap();
             let db = state.db.lock().unwrap();
             let Some(sq_len) = rt.squads.get(&code).map(|s| s.members.len()) else {
@@ -1552,6 +1830,9 @@ fn handle_ws_message(
                 conn_id,
                 &json!({ "type": "squad_update", "squad": Value::Null }),
             );
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "squad_kick" => {
@@ -1601,38 +1882,16 @@ fn handle_ws_message(
 
         // ---- LOBBIES ----
         "lobby_list" => {
+            let list = crate::cluster::global_public_lobbies(state);
+            let online = crate::cluster::global_online_count(state);
             let rt = state.rt.lock().unwrap();
-            let list: Vec<Value> = rt
-                .lobbies
-                .values()
-                .filter(|lb| lb.settings.is_public)
-                .map(|lb| {
-                    let host = lb
-                        .players
-                        .get(&lb.host_id)
-                        .map(|p| p.username.as_str())
-                        .unwrap_or("HOST");
-                    json!({
-                        "code": lb.code,
-                        "name": lb.settings.name,
-                        "host": host,
-                        "players": lb.players.len(),
-                        "maxPlayers": lb.settings.team_size * 2,
-                        "status": lb.status.as_str(),
-                        "ranked": lb.settings.ranked,
-                        "mode": lb.settings.mode,
-                        "teamSize": lb.settings.team_size,
-                        "arena": lb.settings.arena
-                    })
-                })
-                .collect();
             send_to_conn(
                 &rt,
                 conn_id,
                 &json!({
                     "type": "lobby_list",
                     "lobbies": list,
-                    "online": rt.clients_by_user_id.len()
+                    "online": online
                 }),
             );
         }
@@ -1677,6 +1936,9 @@ fn handle_ws_message(
             );
             join_lobby_internal(&mut rt, &db, conn_id, &code, Some(0));
             pull_squad_into_lobby(&mut rt, &db, conn_id, &code, Some(0));
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "lobby_join" => {
@@ -1686,6 +1948,37 @@ fn handle_ws_message(
                 .unwrap_or("")
                 .trim()
                 .to_uppercase();
+            let local_exists = {
+                let rt = state.rt.lock().unwrap();
+                rt.lobbies.contains_key(&code)
+            };
+            if !local_exists
+                && let Some(target_region) =
+                    crate::cluster::find_remote_code_region(state, "lobby", &code).await
+            {
+                let rt = state.rt.lock().unwrap();
+                let redirect = json!({
+                    "type": "region_redirect",
+                    "region": target_region,
+                    "action": "lobby_join",
+                    "code": code
+                });
+                send_to_conn(&rt, conn_id, &redirect);
+                // If this player is a squad leader, also redirect their local squadmates!
+                if let Some(sq_code) = rt.conns.get(&conn_id).and_then(|c| c.squad_code.as_deref())
+                    && let Some(sq) = rt.squads.get(sq_code)
+                    && sq.leader_id == user_id
+                {
+                    for m in sq.members.values() {
+                        if m.user_id != user_id
+                            && let Some(&mcid) = rt.clients_by_user_id.get(&m.user_id)
+                        {
+                            send_to_conn(&rt, mcid, &redirect);
+                        }
+                    }
+                }
+                return;
+            }
             let mut rt = state.rt.lock().unwrap();
             let db = state.db.lock().unwrap();
             let Some(status) = rt.lobbies.get(&code).map(|lb| lb.status) else {
@@ -1712,6 +2005,9 @@ fn handle_ws_message(
                 .and_then(|lb| lb.players.get(&user_id))
                 .map(|p| p.team);
             pull_squad_into_lobby(&mut rt, &db, conn_id, &code, my_team);
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "lobby_leave" => {
@@ -1719,6 +2015,9 @@ fn handle_ws_message(
             let db = state.db.lock().unwrap();
             leave_lobby(&mut rt, &db, conn_id, "left");
             send_to_conn(&rt, conn_id, &json!({ "type": "lobby_left" }));
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "lobby_settings" => {
@@ -1753,6 +2052,9 @@ fn handle_ws_message(
                 let upd = json!({ "type": "lobby_update", "lobby": lobby_snapshot(&db, lb) });
                 broadcast_lobby(&rt, lb, &upd, None);
             }
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "lobby_team" => {
@@ -1855,6 +2157,9 @@ fn handle_ws_message(
                 let upd = json!({ "type": "lobby_update", "lobby": lobby_snapshot(&db, lb) });
                 broadcast_lobby(&rt, lb, &upd, None);
             }
+            drop(db);
+            drop(rt);
+            state.cluster.notify_changed();
         }
 
         "lobby_kick" => {
@@ -2021,6 +2326,7 @@ fn handle_ws_message(
 
                 (code, match_gen, settings, match_players)
             };
+            state.cluster.notify_changed();
 
             let (code, match_gen, settings, match_players) = start_prep;
             let state_clone = Arc::clone(state);
@@ -2442,12 +2748,12 @@ fn handle_ws_message(
                 };
                 if !rate_ok {
                     if pkt_count == AC_INPUT_STRIKE_AT {
-                        add_solo_strike(&mut rt, &mut db, conn_id, "Input packet flood", 2);
+                        add_solo_strike(state, &mut rt, &mut db, conn_id, "Input packet flood", 2);
                     }
                     return;
                 }
                 if !sim.push_input(&user_id, seq, packed) {
-                    add_solo_strike(&mut rt, &mut db, conn_id, "Malformed input packet", 1);
+                    add_solo_strike(state, &mut rt, &mut db, conn_id, "Malformed input packet", 1);
                 }
                 return;
             }
@@ -2479,12 +2785,13 @@ fn handle_ws_message(
             };
             if !rate_ok {
                 if pkt_count == AC_INPUT_STRIKE_AT {
-                    add_lobby_strike(&mut rt, &mut db, &code, conn_id, "Input packet flood", 2);
+                    add_lobby_strike(state, &mut rt, &mut db, &code, conn_id, "Input packet flood", 2);
                 }
                 return;
             }
             if !lb_sim.push_input(&user_id, seq, packed) {
                 add_lobby_strike(
+                    state,
                     &mut rt,
                     &mut db,
                     &code,

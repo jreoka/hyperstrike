@@ -12,7 +12,7 @@ services:
       NODE_ENV: production
       PORT: "8080"
       DATA_DIR: /data
-      URL: "https://hyperstrike.dill.moe"
+      URL: "https://hyperstrike.win"
       TRUST_PROXY: 1
     volumes:
       - ./data:/data

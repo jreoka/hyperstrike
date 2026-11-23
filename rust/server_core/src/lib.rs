@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod cluster;
 pub mod config;
 pub mod db;
 pub mod http;
@@ -36,11 +37,16 @@ pub struct AppState {
     pub rt: Mutex<RuntimeState>,
     pub backend: Arc<dyn MatchBackend>,
     pub metrics: admin::MetricsState,
+    pub cluster: cluster::ClusterState,
 }
 
 impl AppState {
     pub fn new(config: Config, backend: Arc<dyn MatchBackend>) -> Arc<Self> {
-        let database = Database::load(config.db_file.clone());
+        let database = if config.is_primary() {
+            Database::load(config.db_file.clone())
+        } else {
+            Database::new_empty(config.db_file.clone())
+        };
         let state = Arc::new(Self {
             config,
             started_at: Instant::now(),
@@ -50,12 +56,16 @@ impl AppState {
             rt: Mutex::new(RuntimeState::default()),
             backend,
             metrics: admin::MetricsState::default(),
+            cluster: cluster::ClusterState::default(),
         });
         state.metrics.record_sample(&state);
         state
     }
 
     pub fn flush_db_sync(&self) {
+        if !self.config.is_primary() {
+            return;
+        }
         let mut db = self.db.lock().unwrap();
         db.flush_sync();
     }
@@ -64,6 +74,7 @@ impl AppState {
         let (shutdown_tx, mut shutdown_rx_db) = tokio::sync::watch::channel(false);
         let mut shutdown_rx_rl = shutdown_tx.subscribe();
         let mut shutdown_rx_metrics = shutdown_tx.subscribe();
+        let mut shutdown_rx_cluster = shutdown_tx.subscribe();
 
         let state_db = Arc::clone(self);
         let db_task = tokio::spawn(async move {
@@ -77,6 +88,9 @@ impl AppState {
                         }
                     }
                     _ = interval.tick() => {
+                        if !state_db.config.is_primary() {
+                            continue;
+                        }
                         let payload = {
                             let mut db = state_db.db.lock().unwrap();
                             db.take_flush_payload()
@@ -129,11 +143,50 @@ impl AppState {
             }
         });
 
+        let state_cluster = Arc::clone(self);
+        let cluster_task = tokio::spawn(async move {
+            if !state_cluster.config.is_clustered() {
+                return;
+            }
+            if !state_cluster.config.is_primary() {
+                for _ in 0..5 {
+                    if cluster::pull_db_snapshot_from_primary(&state_cluster).await {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+            let mut sync_interval = tokio::time::interval(Duration::from_secs(2));
+            let mut db_refresh_interval = tokio::time::interval(Duration::from_secs(60));
+            db_refresh_interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx_cluster.changed() => {
+                        if *shutdown_rx_cluster.borrow() {
+                            break;
+                        }
+                    }
+                    _ = sync_interval.tick() => {
+                        cluster::sync_peers_once(&state_cluster).await;
+                    }
+                    _ = state_cluster.cluster.change_notify.notified() => {
+                        cluster::sync_peers_once(&state_cluster).await;
+                    }
+                    _ = db_refresh_interval.tick() => {
+                        if !state_cluster.config.is_primary() {
+                            cluster::pull_db_snapshot_from_primary(&state_cluster).await;
+                        }
+                    }
+                }
+            }
+        });
+
         BackgroundTasks {
             shutdown_tx,
             db_task: Some(db_task),
             rl_task: Some(rl_task),
             metrics_task: Some(metrics_task),
+            cluster_task: Some(cluster_task),
         }
     }
 }
@@ -143,6 +196,7 @@ pub struct BackgroundTasks {
     db_task: Option<tokio::task::JoinHandle<()>>,
     rl_task: Option<tokio::task::JoinHandle<()>>,
     metrics_task: Option<tokio::task::JoinHandle<()>>,
+    cluster_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl BackgroundTasks {
@@ -157,6 +211,9 @@ impl BackgroundTasks {
         if let Some(t) = self.metrics_task.take() {
             let _ = t.await;
         }
+        if let Some(t) = self.cluster_task.take() {
+            let _ = t.await;
+        }
     }
 }
 
@@ -169,6 +226,16 @@ async fn count_http_requests(
         .metrics
         .http_requests_total
         .fetch_add(1, Ordering::Relaxed);
+    if !state.config.is_primary()
+        && req.method() != axum::http::Method::OPTIONS
+        && req.uri().path().starts_with("/api/")
+        && req.uri().path() != "/api/health"
+    {
+        if !state.config.is_request_allowed(req.headers(), false) {
+            return http::forbidden_origin_response();
+        }
+        return cluster::fly_replay_region(&state.config.primary_region);
+    }
     next.run(req).await
 }
 
@@ -278,6 +345,28 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/broadcast",
             post(admin::broadcast).options(http::options_handler),
         )
+        .route("/internal/cluster/state", post(cluster::internal_cluster_state))
+        .route("/internal/cluster/find", get(cluster::internal_cluster_find))
+        .route("/internal/cluster/live", get(cluster::internal_cluster_live))
+        .route("/internal/cluster/kick-user", post(cluster::internal_kick_user))
+        .route("/internal/cluster/kick-tokens", post(cluster::internal_kick_tokens))
+        .route("/internal/cluster/close-lobby", post(cluster::internal_close_lobby))
+        .route("/internal/cluster/broadcast", post(cluster::internal_broadcast))
+        .route("/internal/db/snapshot", get(cluster::internal_db_snapshot))
+        .route("/internal/db/auth", post(cluster::internal_db_auth))
+        .route("/internal/db/user-sync", post(cluster::internal_db_user_sync))
+        .route(
+            "/internal/db/apply-solo-result",
+            post(cluster::internal_db_apply_solo_result),
+        )
+        .route(
+            "/internal/db/apply-mp-result",
+            post(cluster::internal_db_apply_mp_result),
+        )
+        .route(
+            "/internal/db/ac-penalize",
+            post(cluster::internal_db_ac_penalize),
+        )
         .route("/api/{*rest}", any(http::api_not_found))
         .fallback(http::fallback_handler)
         .layer(middleware::from_fn_with_state(
@@ -312,6 +401,10 @@ mod tests {
             db_file: dir.join("db.json"),
             index_file,
             region: "test".into(),
+            primary_region: String::new(),
+            cluster_regions: Vec::new(),
+            fly_app_name: String::new(),
+            peer_urls: std::collections::HashMap::new(),
             allowed_origin: String::new(),
             allowed_host: String::new(),
             client_secret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),

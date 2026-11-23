@@ -52,9 +52,12 @@ async fn main() {
     let bg_tasks = state.spawn_background_tasks();
 
     let app = server_core::router(Arc::clone(&state));
-    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
-        .await
-        .expect("binding the port");
+    let listener = match tokio::net::TcpListener::bind(SocketAddr::from(([0u16; 8], port))).await {
+        Ok(l) => l,
+        Err(_) => tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
+            .await
+            .expect("binding the port"),
+    };
     let listener = listener.tap_io(|tcp| {
         let _ = tcp.set_nodelay(true);
     });

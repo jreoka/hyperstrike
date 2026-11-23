@@ -151,13 +151,28 @@ pub async fn options_handler(State(state): State<Arc<AppState>>, headers: Header
     resp
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RootQuery {
+    pub region: Option<String>,
+}
+
 pub async fn root_get(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     extensions: Extensions,
+    Query(query): Query<RootQuery>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
     if let Ok(upgrade) = ws {
+        if let Some(target) = query.region.as_deref() {
+            let target_lower = target.trim().to_ascii_lowercase();
+            if !target_lower.is_empty()
+                && target_lower != state.config.region
+                && state.config.has_region(&target_lower)
+            {
+                return crate::cluster::fly_replay_region(&target_lower);
+            }
+        }
         let remote = extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
         return crate::ws::handle_ws_upgrade(state, headers, remote, upgrade);
     }
@@ -610,7 +625,8 @@ pub async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
             existed
         };
         if removed {
-            crate::ws::disconnect_session_tokens(&state, &[token], "Signed out.");
+            crate::ws::disconnect_session_tokens(&state, std::slice::from_ref(&token), "Signed out.");
+            crate::cluster::fanout_kick_tokens(Arc::clone(&state), vec![token], "Signed out.".into());
         }
     }
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
@@ -739,6 +755,11 @@ pub async fn change_password(
             &removed,
             "Password changed on another device.",
         );
+        crate::cluster::fanout_kick_tokens(
+            Arc::clone(&state),
+            removed,
+            "Password changed on another device.".into(),
+        );
     }
 
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
@@ -778,10 +799,8 @@ pub async fn me(
         );
     };
     let is_admin = state.config.is_admin_username(&user.username);
-    let (online, lobbies) = {
-        let rt = state.rt.lock().unwrap();
-        (rt.clients_by_user_id.len(), rt.lobbies.len())
-    };
+    let online = crate::cluster::global_online_count(&state);
+    let lobbies = crate::cluster::global_lobby_count(&state);
     json_response(
         &state,
         StatusCode::OK,
@@ -833,7 +852,7 @@ pub async fn list_sessions(
     };
 
     let now = now_ms();
-    let active_ws: HashSet<String> = crate::ws::active_session_tokens(&state);
+    let active_ws: HashSet<String> = crate::cluster::global_active_session_tokens(&state);
 
     let mut sessions: Vec<(bool, i64, Value)> = {
         let db = state.db.lock().unwrap();
@@ -928,7 +947,8 @@ pub async fn revoke_session(
     };
 
     let revoked_current = removed_token == token;
-    crate::ws::disconnect_session_tokens(&state, &[removed_token], "Session revoked.");
+    crate::ws::disconnect_session_tokens(&state, std::slice::from_ref(&removed_token), "Session revoked.");
+    crate::cluster::fanout_kick_tokens(Arc::clone(&state), vec![removed_token], "Session revoked.".into());
 
     json_response(
         &state,
@@ -974,6 +994,11 @@ pub async fn revoke_other_sessions(
             &removed,
             "Signed out from another device.",
         );
+        crate::cluster::fanout_kick_tokens(
+            Arc::clone(&state),
+            removed,
+            "Signed out from another device.".into(),
+        );
     }
     json_response(
         &state,
@@ -1015,10 +1040,19 @@ pub async fn save_car(
     };
 
     let car = sanitize_car(parsed.get("car"));
-    let mut db = state.db.lock().unwrap();
-    if let Some(u) = db.data.users.get_mut(&key) {
-        u.car = car.clone();
-        db.mark_dirty();
+    let updated_user = {
+        let mut db = state.db.lock().unwrap();
+        if let Some(u) = db.data.users.get_mut(&key) {
+            u.car = car.clone();
+            let cloned = u.clone();
+            db.mark_dirty();
+            Some(cloned)
+        } else {
+            None
+        }
+    };
+    if let Some(u) = updated_user {
+        crate::cluster::fanout_user_sync(Arc::clone(&state), key, Some(u));
     }
     json_response(&state, StatusCode::OK, &json!({ "car": car }))
 }

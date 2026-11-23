@@ -208,7 +208,7 @@ pub struct LobbyPlayer {
     pub squad_code: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchParticipant {
     pub user_id: String,
     pub username_lower: String,

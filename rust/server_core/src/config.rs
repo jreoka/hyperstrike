@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use rand::RngCore;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,10 @@ pub struct Config {
     pub db_file: PathBuf,
     pub index_file: PathBuf,
     pub region: String,
+    pub primary_region: String,
+    pub cluster_regions: Vec<String>,
+    pub fly_app_name: String,
+    pub peer_urls: HashMap<String, String>,
     pub allowed_origin: String,
     pub allowed_host: String,
     pub client_secret: String,
@@ -39,7 +44,47 @@ impl Config {
         let region = std::env::var("FLY_REGION")
             .ok()
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "local".to_string());
+            .unwrap_or_else(|| "local".to_string())
+            .to_ascii_lowercase();
+
+        let primary_region = std::env::var("PRIMARY_REGION")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        let cluster_regions: Vec<String> = std::env::var("CLUSTER_REGIONS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let fly_app_name = std::env::var("FLY_APP_NAME")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
+
+        let mut peer_urls: HashMap<String, String> = HashMap::new();
+        if let Ok(raw_peers) = std::env::var("CLUSTER_PEER_URLS") {
+            for entry in raw_peers.split(',') {
+                if let Some((r, url)) = entry.split_once('=') {
+                    let r_clean = r.trim().to_ascii_lowercase();
+                    let u_clean = url.trim().trim_end_matches('/').to_string();
+                    if !r_clean.is_empty() && !u_clean.is_empty() && r_clean != region {
+                        peer_urls.insert(r_clean, u_clean);
+                    }
+                }
+            }
+        } else if !fly_app_name.is_empty() {
+            for r in &cluster_regions {
+                if r != &region {
+                    peer_urls.insert(
+                        r.clone(),
+                        format!("http://{r}.{fly_app_name}.internal:{port}"),
+                    );
+                }
+            }
+        }
 
         let allowed_url_raw = std::env::var("URL").unwrap_or_default();
         let (allowed_origin, allowed_host) = if allowed_url_raw.trim().is_empty() {
@@ -89,6 +134,10 @@ impl Config {
             db_file,
             index_file,
             region,
+            primary_region,
+            cluster_regions,
+            fly_app_name,
+            peer_urls,
             allowed_origin,
             allowed_host,
             client_secret,
@@ -98,6 +147,26 @@ impl Config {
             afk_kick_secs,
             admin_users,
         }
+    }
+
+    pub fn is_clustered(&self) -> bool {
+        !self.primary_region.is_empty() && !self.peer_urls.is_empty()
+    }
+
+    pub fn is_primary(&self) -> bool {
+        self.primary_region.is_empty() || self.region == self.primary_region
+    }
+
+    pub fn primary_url(&self) -> Option<&str> {
+        self.peer_urls.get(&self.primary_region).map(|s| s.as_str())
+    }
+
+    pub fn has_region(&self, target: &str) -> bool {
+        let lower = target.trim().to_ascii_lowercase();
+        !lower.is_empty()
+            && (self.region == lower
+                || self.peer_urls.contains_key(&lower)
+                || self.cluster_regions.iter().any(|r| r == &lower))
     }
 
     pub fn is_admin_username(&self, username: &str) -> bool {
@@ -130,20 +199,17 @@ impl Config {
     }
 
     pub fn is_request_allowed(&self, headers: &HeaderMap, is_tls: bool) -> bool {
+        if !self.allowed_host.is_empty() {
+            let host = request_host_with_proxy(headers, self.trust_proxy);
+            if host != self.allowed_host {
+                return false;
+            }
+        }
         let origin = header_str(headers, "origin").trim().to_ascii_lowercase();
         if !origin.is_empty() {
             return origin == self.expected_origin(headers, is_tls);
         }
-        if self.allowed_origin.is_empty() {
-            return true;
-        }
-        let host = request_host_with_proxy(headers, self.trust_proxy);
-        if host == self.allowed_host {
-            return true;
-        }
-        let referer = header_str(headers, "referer").trim().to_ascii_lowercase();
-        !referer.is_empty() && (referer == self.allowed_origin
-                || referer.starts_with(&format!("{}/", self.allowed_origin)))
+        true
     }
 
     pub fn cors_origin_header(&self) -> Option<&str> {
@@ -325,6 +391,10 @@ mod tests {
             db_file: PathBuf::from("data/db.json"),
             index_file: PathBuf::from("index.html"),
             region: "local".into(),
+            primary_region: String::new(),
+            cluster_regions: Vec::new(),
+            fly_app_name: String::new(),
+            peer_urls: HashMap::new(),
             allowed_origin: "https://hyperstrike.fly.dev".into(),
             allowed_host: "hyperstrike.fly.dev".into(),
             client_secret: "secret".into(),
@@ -336,6 +406,7 @@ mod tests {
         };
 
         let mut h = HeaderMap::new();
+        h.insert("host", HeaderValue::from_static("hyperstrike.fly.dev"));
         h.insert("origin", HeaderValue::from_static("https://hyperstrike.fly.dev"));
         assert!(cfg.is_request_allowed(&h, false));
 
@@ -349,11 +420,16 @@ mod tests {
         h.insert("host", HeaderValue::from_static("other.host"));
         assert!(!cfg.is_request_allowed(&h, false));
 
+        // Spoofed Origin or Referer on a foreign Host must still be rejected
+        h.insert("origin", HeaderValue::from_static("https://hyperstrike.fly.dev"));
+        assert!(!cfg.is_request_allowed(&h, false));
+
+        h.remove("origin");
         h.insert(
             "referer",
             HeaderValue::from_static("https://hyperstrike.fly.dev/index.html"),
         );
-        assert!(cfg.is_request_allowed(&h, false));
+        assert!(!cfg.is_request_allowed(&h, false));
     }
 
     #[test]
@@ -364,6 +440,10 @@ mod tests {
             db_file: PathBuf::from("data/db.json"),
             index_file: PathBuf::from("index.html"),
             region: "local".into(),
+            primary_region: String::new(),
+            cluster_regions: Vec::new(),
+            fly_app_name: String::new(),
+            peer_urls: HashMap::new(),
             allowed_origin: String::new(),
             allowed_host: String::new(),
             client_secret: "secret".into(),

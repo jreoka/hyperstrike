@@ -333,6 +333,14 @@ pub struct Database {
 }
 
 impl Database {
+    pub fn new_empty(db_file: PathBuf) -> Self {
+        Self {
+            db_file,
+            data: DbData::default(),
+            dirty: false,
+        }
+    }
+
     pub fn load(db_file: PathBuf) -> Self {
         if let Some(parent) = db_file.parent() {
             let _ = std::fs::create_dir_all(parent);

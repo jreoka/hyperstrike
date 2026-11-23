@@ -170,15 +170,11 @@ pub async fn overview(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
     let now = now_ms();
     let sim = state.backend.stats();
     let uptime = state.started_at.elapsed().as_secs();
-    let (online, lobbies, squads, ws_conns) = {
-        let rt = state.rt.lock().unwrap();
-        (
-            rt.clients_by_user_id.len(),
-            rt.lobbies.len(),
-            rt.squads.len(),
-            rt.conns.len(),
-        )
-    };
+    let online = crate::cluster::global_online_count(&state);
+    let lobbies = crate::cluster::global_lobby_count(&state);
+    let squads = crate::cluster::global_squad_count(&state);
+    let ws_conns = crate::cluster::global_ws_conn_count(&state);
+    let active_matches_global = crate::cluster::global_active_matches(&state);
 
     let (
         total_users,
@@ -397,7 +393,7 @@ pub async fn overview(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
                 "lobbies": lobbies,
                 "squads": squads,
                 "workers": sim.ready_workers,
-                "activeMatches": sim.active_matches,
+                "activeMatches": active_matches_global,
                 "memRssKb": mem_rss_kb,
                 "adminUsers": state.config.admin_users,
                 "now": now
@@ -589,7 +585,10 @@ pub async fn update_user(
     if parsed.get("resetStats").and_then(|v| v.as_bool()) == Some(true) {
         u.stats = Default::default();
     }
+    let updated_user = u.clone();
     db.mark_dirty();
+    drop(db);
+    crate::cluster::fanout_user_sync(Arc::clone(&state), key, Some(updated_user));
 
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
 }
@@ -629,7 +628,7 @@ pub async fn ban_user(
         );
     }
 
-    let target_uid = {
+    let (target_uid, updated_user) = {
         let mut db = state.db.lock().unwrap();
         let Some(u) = db.data.users.get_mut(&key) else {
             return json_response(
@@ -647,16 +646,16 @@ pub async fn ban_user(
             ac_log(u, &format!("ADMIN BAN {minutes}m: {reason}"));
         }
         let uid = u.id.clone();
+        let cloned = u.clone();
         db.mark_dirty();
-        uid
+        (uid, cloned)
     };
+    crate::cluster::fanout_user_sync(Arc::clone(&state), key, Some(updated_user));
 
     if minutes > 0 {
-        crate::ws::disconnect_user(
-            &state,
-            &target_uid,
-            &format!("Banned by admin ({minutes}m): {reason}"),
-        );
+        let ban_msg = format!("Banned by admin ({minutes}m): {reason}");
+        crate::ws::disconnect_user(&state, &target_uid, &ban_msg);
+        crate::cluster::fanout_kick_user(Arc::clone(&state), target_uid, ban_msg);
     }
 
     json_response(
@@ -699,8 +698,13 @@ pub async fn kick_user(
         );
     };
 
-    let kicked = crate::ws::disconnect_user(&state, &uid, reason);
-    json_response(&state, StatusCode::OK, &json!({ "ok": true, "kicked": kicked }))
+    let kicked_local = crate::ws::disconnect_user(&state, &uid, reason);
+    let kicked_remote = crate::cluster::fanout_kick_user_await(&state, &uid, reason).await;
+    json_response(
+        &state,
+        StatusCode::OK,
+        &json!({ "ok": true, "kicked": kicked_local || kicked_remote }),
+    )
 }
 
 pub async fn revoke_user_sessions(
@@ -726,6 +730,11 @@ pub async fn revoke_user_sessions(
     let count = removed.len();
     if !removed.is_empty() {
         crate::ws::disconnect_session_tokens(&state, &removed, "Session revoked by admin.");
+        crate::cluster::fanout_kick_tokens(
+            Arc::clone(&state),
+            removed,
+            "Session revoked by admin.".into(),
+        );
     }
     json_response(
         &state,
@@ -796,6 +805,11 @@ pub async fn reset_user_password(
     };
     if !removed.is_empty() {
         crate::ws::disconnect_session_tokens(&state, &removed, "Password reset by admin.");
+        crate::cluster::fanout_kick_tokens(
+            Arc::clone(&state),
+            removed,
+            "Password reset by admin.".into(),
+        );
     }
 
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
@@ -833,9 +847,16 @@ pub async fn delete_user(
         (u.id, rem)
     };
 
+    crate::cluster::fanout_user_sync(Arc::clone(&state), key, None);
     crate::ws::disconnect_user(&state, &uid, "Account deleted by admin.");
+    crate::cluster::fanout_kick_user(Arc::clone(&state), uid, "Account deleted by admin.".into());
     if !removed_tokens.is_empty() {
         crate::ws::disconnect_session_tokens(&state, &removed_tokens, "Account deleted by admin.");
+        crate::cluster::fanout_kick_tokens(
+            Arc::clone(&state),
+            removed_tokens,
+            "Account deleted by admin.".into(),
+        );
     }
 
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
@@ -851,7 +872,7 @@ pub async fn list_all_sessions(
     };
 
     let now = now_ms();
-    let active_ws_tokens: HashSet<String> = crate::ws::active_session_tokens(&state);
+    let active_ws_tokens: HashSet<String> = crate::cluster::global_active_session_tokens(&state);
 
     let mut sessions: Vec<(i64, Value)> = {
         let db = state.db.lock().unwrap();
@@ -934,7 +955,16 @@ pub async fn revoke_any_session(
     };
 
     let revoked_current = removed_token == current_token;
-    crate::ws::disconnect_session_tokens(&state, &[removed_token], "Session revoked by admin.");
+    crate::ws::disconnect_session_tokens(
+        &state,
+        std::slice::from_ref(&removed_token),
+        "Session revoked by admin.",
+    );
+    crate::cluster::fanout_kick_tokens(
+        Arc::clone(&state),
+        vec![removed_token],
+        "Session revoked by admin.".into(),
+    );
 
     json_response(
         &state,
@@ -1037,6 +1067,43 @@ pub async fn live_state(State(state): State<Arc<AppState>>, headers: HeaderMap) 
         (lobbies, squads, connections)
     };
 
+    let mut lobbies = lobbies;
+    let mut squads = squads;
+    let mut connections = connections;
+    let local_region = state.config.region.clone();
+    for lb in &mut lobbies {
+        if let Some(obj) = lb.as_object_mut() {
+            obj.insert("region".into(), json!(local_region));
+        }
+    }
+    for sq in &mut squads {
+        if let Some(obj) = sq.as_object_mut() {
+            obj.insert("region".into(), json!(local_region));
+        }
+    }
+    for conn in &mut connections {
+        if let Some(obj) = conn.as_object_mut() {
+            obj.insert("region".into(), json!(local_region));
+        }
+    }
+    for peer_live in crate::cluster::fetch_all_peer_live(&state).await {
+        if let Some(arr) = peer_live.get("lobbies").and_then(|v| v.as_array()) {
+            lobbies.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = peer_live.get("squads").and_then(|v| v.as_array()) {
+            squads.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = peer_live.get("connections").and_then(|v| v.as_array()) {
+            connections.extend(arr.iter().cloned());
+        }
+    }
+    connections.sort_by(|a, b| {
+        b["connectedAt"]
+            .as_i64()
+            .unwrap_or(0)
+            .cmp(&a["connectedAt"].as_i64().unwrap_or(0))
+    });
+
     json_response(
         &state,
         StatusCode::OK,
@@ -1057,8 +1124,13 @@ pub async fn close_lobby(
         return *resp;
     }
     let clean = code.trim().to_ascii_uppercase();
-    let closed = crate::ws::force_close_lobby(&state, &clean);
-    if !closed {
+    let closed_local = crate::ws::force_close_lobby(&state, &clean);
+    let closed_remote = if !closed_local {
+        crate::cluster::fanout_close_lobby(&state, &clean).await
+    } else {
+        false
+    };
+    if !closed_local && !closed_remote {
         return json_response(
             &state,
             StatusCode::NOT_FOUND,
@@ -1092,6 +1164,11 @@ pub async fn broadcast(
             &json!({ "error": "Message must be 1 to 200 characters." }),
         );
     }
-    let sent = crate::ws::broadcast_toast(&state, text);
-    json_response(&state, StatusCode::OK, &json!({ "ok": true, "sent": sent }))
+    let sent_local = crate::ws::broadcast_toast(&state, text);
+    let sent_remote = crate::cluster::fanout_broadcast(&state, text).await;
+    json_response(
+        &state,
+        StatusCode::OK,
+        &json!({ "ok": true, "sent": sent_local + sent_remote }),
+    )
 }
