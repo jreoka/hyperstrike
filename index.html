@@ -2725,6 +2725,7 @@ class Renderer {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.1, 2500);
     this.fsScene = new THREE.Scene(); this.fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null); this.quad.frustumCulled = false; this.fsScene.add(this.quad);
+    this.compiling = 0;
     const caps = r.capabilities;
     this.halfFloat = caps.isWebGL2;
     this.fx = { bloom: 1, thresh: 0.85, exposure: 1, contrast: 1.05, sat: 1.1, tint: new THREE.Vector3(1, 1, 1), aberr: 0, radial: 0, vignette: 0.26, flash: 0, grain: 0.012, lift: new THREE.Vector3(0, 0, 0) };
@@ -3122,31 +3123,53 @@ class Renderer {
       requestAnimationFrame(() => setTimeout(fin, 0));
       setTimeout(fin, 50);
     });
+    // Scene materials are drawn into the offscreen HDR target, whose programs are a different variant (linear
+    // output colour space) from the canvas one, so compile them with that target bound or the warm-up misses.
+    const r = this.r;
+    const sceneCompile = (obj, async) => {
+      const prev = r.getRenderTarget(); if (this.rt) r.setRenderTarget(this.rt);
+      try { return async ? r.compileAsync(obj, this.camera, this.scene) : r.compile(obj, this.camera, this.scene); }
+      finally { r.setRenderTarget(prev); }
+    };
+    const fsCompile = (m) => { this.quad.material = m; r.compile(this.quad, this.fsCam, this.fsScene); };
     const targets = this.compileTargets();
     const total = targets.length || 1;
     let lastYield = performance.now();
     if (onProgress) onProgress(0);
     await paintTick();
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i];
-      try {
-        if (t.fsMat) {
-          this.quad.material = t.fsMat;
-          this.r.compile(this.quad, this.fsCam, this.fsScene);
-        } else {
-          this.r.compile(t.obj, this.camera, this.scene);
+    this.compiling++;
+    try {
+      // With KHR_parallel_shader_compile the driver compiles in the GPU process: queue every program at once and
+      // poll for completion. Touching a program before it's done (getProgramInfoLog / getUniformLocation on first
+      // draw) blocks the main thread until the driver finishes — that froze the page for seconds per arena.
+      if (r.compileAsync && r.extensions.has('KHR_parallel_shader_compile')) {
+        let done = 0;
+        const tick = () => { done++; if (onProgress) onProgress(done / total); };
+        const jobs = [];
+        for (const t of targets) {
+          try {
+            if (t.fsMat) { fsCompile(t.fsMat); tick(); }
+            else jobs.push(sceneCompile(t.obj, true).then(tick, tick));
+          } catch (e) { tick(); }
         }
-      } catch (e) { }
-      const p = (i + 1) / total;
-      const now = performance.now();
-      if (now - lastYield >= 24 || i === targets.length - 1) {
-        if (onProgress) onProgress(p);
-        await paintTick();
-        lastYield = performance.now();
+        this.quad.material = null;
+        await Promise.race([Promise.all(jobs), new Promise(res => setTimeout(res, 30000))]);
+        return;
       }
-    }
-    this.quad.material = null;
-    try { this.r.compile(this.scene, this.camera); } catch (e) { }
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        try { if (t.fsMat) fsCompile(t.fsMat); else sceneCompile(t.obj, false); } catch (e) { }
+        const p = (i + 1) / total;
+        const now = performance.now();
+        if (now - lastYield >= 24 || i === targets.length - 1) {
+          if (onProgress) onProgress(p);
+          await paintTick();
+          lastYield = performance.now();
+        }
+      }
+      this.quad.material = null;
+      try { sceneCompile(this.scene, false); } catch (e) { }
+    } finally { this.compiling--; }
   }
   // Planar mirror for glossy floors (y = 0). Fills `refl.tex` + `refl.mat` uniforms; returns false when unavailable.
   renderReflection(refl, hide) {
@@ -3366,10 +3389,10 @@ function buildEnvMap(renderer, def, skyMat) {
 
 // Real-time-accurate image based lighting: capture the actual arena (sky, stands, walls, signage) into a
 // cubemap from mid-pitch, add bright stadium floodlight emitters, and prefilter it for PBR reflections.
-function captureArenaEnv(renderer, def, arenaGroup, fog) {
+// `alive` (optional) is polled after the async shader compile; returning false abandons the capture.
+async function captureArenaEnv(renderer, def, arenaGroup, fog, alive = () => true) {
   const r = renderer.r;
   const sc = new THREE.Scene(); sc.fog = fog;
-  const parent = arenaGroup.parent; if (parent) parent.remove(arenaGroup); sc.add(arenaGroup);
   const extras = [];
   const emitter = (pos, w, h, col) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, fog: false }));
@@ -3381,20 +3404,78 @@ function captureArenaEnv(renderer, def, arenaGroup, fog) {
   for (const [fx, fz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) emitter(new V3(fx * 70, 62, fz * 82), 22, 7, flood);
   const cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
   const cam = new THREE.CubeCamera(0.3, 3200, cubeRT); cam.position.set(0, 5, 0); sc.add(cam);
-  let tex = null;
+  let tex = null, parent = null, moved = false;
   try {
+    // The capture has its own light set (no FX/ball lights), so every arena material needs a separate program
+    // variant here. Compile them in parallel off the main thread first, with a render target bound so the
+    // linear-output variant is the one built, otherwise cam.update() compiles them all synchronously.
+    if (r.compileAsync && r.extensions.has('KHR_parallel_shader_compile')) {
+      const prev = r.getRenderTarget(); let jobs;
+      r.setRenderTarget(cubeRT);
+      try { jobs = [r.compileAsync(sc, cam), r.compileAsync(arenaGroup, cam, sc)]; } finally { r.setRenderTarget(prev); }
+      await Promise.race([Promise.all(jobs), new Promise(res => setTimeout(res, 20000))]);
+      if (!alive()) return null;
+    }
+    parent = arenaGroup.parent; if (parent) parent.remove(arenaGroup); sc.add(arenaGroup); moved = true;
     cam.update(r, sc);
     const pm = new THREE.PMREMGenerator(r);
     tex = pm.fromCubemap(cubeRT.texture).texture;
     pm.dispose();
   } finally {
-    sc.remove(arenaGroup); if (parent) parent.add(arenaGroup);
+    if (moved) { sc.remove(arenaGroup); if (parent) parent.add(arenaGroup); }
     for (const m of extras) { m.geometry.dispose(); m.material.dispose(); }
     cubeRT.dispose(); r.setRenderTarget(null);
   }
   return tex;
 }
 
+// The arena floor/wall shaders are uber-shaders with one big branch per arena type (`if(uType == N){...}`).
+// Left as a runtime uniform, every arena's program contains every other arena's noise/voronoi code, and
+// ANGLE/D3D (Chrome/Edge on Windows) spends seconds compiling it on the main thread → browser freezes.
+// Bake uType in as a constant and drop every branch that can't run, so each arena compiles only its own code.
+function specializeArenaType(src, n) {
+  const isTypeCond = c => /uType/.test(c) && /^[\d\s=!<>|&()]+$/.test(c.replace(/uType/g, String(n)));
+  // eslint-disable-next-line no-new-func
+  const evalCond = c => !!Function('return (' + c.replace(/uType/g, String(n)) + ');')();
+  const matchClose = (s, i, open, close) => { let depth = 0; for (let j = i; j < s.length; j++) { if (s[j] === open) depth++; else if (s[j] === close && --depth === 0) return j; } return -1; };
+  const skipWs = (s, i) => { while (i < s.length && /\s/.test(s[i])) i++; return i; };
+  const re = /\bif\s*\(/g;
+  let out = '', pos = 0, m;
+  while ((m = re.exec(src))) {
+    if (m.index < pos) continue;
+    // Parse the whole if / else if / else chain; bail (leave untouched) unless every condition is a pure uType test
+    const chain = []; let elseBody = null, i = m.index, ok = true, end = -1;
+    for (;;) {
+      const p0 = src.indexOf('(', i), p1 = matchClose(src, p0, '(', ')');
+      if (p1 < 0) { ok = false; break; }
+      const cond = src.slice(p0 + 1, p1);
+      if (!isTypeCond(cond)) { ok = false; break; }
+      const b0 = skipWs(src, p1 + 1); if (src[b0] !== '{') { ok = false; break; }
+      const b1 = matchClose(src, b0, '{', '}'); if (b1 < 0) { ok = false; break; }
+      chain.push({ cond, body: src.slice(b0, b1 + 1) }); end = b1 + 1;
+      const e0 = skipWs(src, end);
+      if (src.startsWith('else', e0)) {
+        const a = skipWs(src, e0 + 4);
+        if (/^if\s*\(/.test(src.slice(a, a + 8))) { i = a; continue; }
+        if (src[a] === '{') { const c1 = matchClose(src, a, '{', '}'); if (c1 < 0) { ok = false; break; } elseBody = src.slice(a, c1 + 1); end = c1 + 1; }
+        else ok = false;
+      }
+      break;
+    }
+    if (!ok) continue;
+    let pick = elseBody;
+    for (const c of chain) if (evalCond(c.cond)) { pick = c.body; break; }
+    out += src.slice(pos, m.index) + (pick ? specializeArenaType(pick, n) : '');
+    pos = end; re.lastIndex = end;
+  }
+  out += src.slice(pos);
+  return out;
+}
+function bakeArenaType(src, n) {
+  return specializeArenaType(src, n)
+    .replace(/uniform int uType\s*;/, '\n#define uType ' + n + '\n')
+    .replace(/uniform int uType\s*,\s*/, '\n#define uType ' + n + '\nuniform int ');
+}
 function injectStandard(mat, key, uniforms, { vertexDecl = '', vertexMain = '', fragDecl = '', mapFrag = '', roughFrag = null, metalFrag = null, normalFrag = '', emisFrag = '' }) {
   mat.customProgramCacheKey = () => key; mat.userData.noiseLOD = true;
   mat.onBeforeCompile = (sh) => {
@@ -3407,6 +3488,7 @@ function injectStandard(mat, key, uniforms, { vertexDecl = '', vertexMain = '', 
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + emisFrag);
     if (roughFrag !== null) sh.fragmentShader = sh.fragmentShader.replace('#include <roughnessmap_fragment>', roughFrag);
     if (metalFrag !== null) sh.fragmentShader = sh.fragmentShader.replace('#include <metalnessmap_fragment>', metalFrag);
+    if (uniforms.uType) sh.fragmentShader = bakeArenaType(sh.fragmentShader, uniforms.uType.value | 0);
     mat.userData.shader = sh;
   };
   return mat;
@@ -4251,15 +4333,21 @@ class ArenaVisual {
       const bm = new THREE.ShaderMaterial({
         uniforms: Object.assign({}, U, { uBakeMin: bakeMin, uBakeSize: bakeSize }),
         vertexShader: FS_VERT, depthTest: false, depthWrite: false,
-        fragmentShader: 'varying vec2 vUv;' + GLSL_NOISE + FLOOR_FRAG +
-          'void main(){ vec4 a; floorStatic(uBakeMin + vUv * uBakeSize, a); gl_FragColor = a; }'
+        fragmentShader: bakeArenaType('varying vec2 vUv;' + GLSL_NOISE + FLOOR_FRAG +
+          'void main(){ vec4 a; floorStatic(uBakeMin + vUv * uBakeSize, a); gl_FragColor = a; }', U.uType.value | 0)
       });
-      const prev = R.r.getRenderTarget();
-      R.pass(bm, A);
-      R.r.setRenderTarget(prev); R.quad.material = null; bm.dispose();
-      Object.assign(U, { tFloorA: { value: A.texture }, uBakeMin: bakeMin, uBakeSize: bakeSize });
-      mat.defines = Object.assign(mat.defines || {}, { FLOOR_BAKED: 1 });
-      this.floorBake = [A];
+      // Deferred: Game.finishArenaPrep compiles the bake shader off the main thread before running the pass
+      this.pendingBake = { bm, A, run: () => {
+        this.pendingBake = null;
+        try {
+          const prev = R.r.getRenderTarget();
+          R.pass(bm, A);
+          R.r.setRenderTarget(prev); R.quad.material = null; bm.dispose();
+          Object.assign(U, { tFloorA: { value: A.texture }, uBakeMin: bakeMin, uBakeSize: bakeSize });
+          mat.defines = Object.assign(mat.defines || {}, { FLOOR_BAKED: 1 }); mat.needsUpdate = true;
+          this.floorBake = [A];
+        } catch (e) { console.warn('Floor bake failed, using live floor shader', e); R.quad.material = null; bm.dispose(); A.dispose(); }
+      } };
     } catch (e) { console.warn('Floor bake failed, using live floor shader', e); }
   }
   wallProfile(y0, includeFloorFillet) {
@@ -6773,6 +6861,7 @@ class ArenaVisual {
   }
   dispose() {
     if (this.floorBake) { this.floorBake.forEach(rt => rt.dispose()); this.floorBake = null; }
+    if (this.pendingBake) { this.pendingBake.bm.dispose(); this.pendingBake.A.dispose(); this.pendingBake = null; }
     this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => { for (const k in m) if (m[k] && m[k].isTexture) m[k].dispose(); if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k] && m.uniforms[k].value; if (v && v.isCanvasTexture) v.dispose(); } m.dispose(); }); } });
   }
 }
@@ -12988,7 +13077,7 @@ class GameEngine {
     this.startExhibition();
     this.ui.progress(0.8, 'Compiling shaders 0%'); await tick();
     this.applyLightBudget();
-    await this.renderer.compileShaders(p => {
+    await this.warmArena(p => {
       this.ui.progress(0.8 + p * 0.16, `Compiling shaders ${Math.round(p * 100)}%`);
     });
     this.ui.progress(0.97, 'Warming GPU & HUD'); await tick();
@@ -13035,16 +13124,52 @@ class GameEngine {
     this.applyLightBudget();
     if (sc.environment) sc.environment.dispose();
     sc.fog = new THREE.FogExp2(def.c.fog, def.fogDensity);
-    let env = null;
-    if (this.renderer.halfFloat && this.renderer.quality !== 'low') {
-      try { env = captureArenaEnv(this.renderer, def, this.arenaVisual.group, sc.fog); } catch (e) { console.warn('Arena env capture failed', e); env = null; }
-    }
-    sc.environment = env || buildEnvMap(this.renderer, def, this.arenaVisual.skyMat);
+    sc.environment = null;
+    // Floor bake + environment capture need fresh shader programs; they run in warmArena() so compilation happens
+    // off the main thread. Rendering is held (see renderFrame) until that's done.
+    this._arenaPrep = { av: this.arenaVisual, def };
     const fx = this.renderer.fx, gr = def.grade;
     // Natural grade: keep each arena's mood but pull stylised saturation/contrast/tint toward neutral
     fx.exposure = gr.exposure; fx.contrast = 1 + (gr.contrast - 1) * 0.6; fx.sat = 1 + (gr.sat - 1) * 0.45;
     fx.tint.set(...gr.tint.map(t => 1 + (t - 1) * 0.6)); fx.bloom = gr.bloom * 0.8; fx.thresh = gr.thresh * 1.1;
     this.fx.setAmbient(def.ambient); this.audio.setArena(def);
+  }
+  async finishArenaPrep() {
+    const prep = this._arenaPrep; if (!prep) return;
+    const R = this.renderer, r = R.r, sc = R.scene, av = prep.av, def = prep.def;
+    const alive = () => this._arenaPrep === prep && this.arenaVisual === av;
+    try {
+      const b = av.pendingBake;
+      if (b) {
+        if (r.compileAsync && r.extensions.has('KHR_parallel_shader_compile')) {
+          let job = null; const prev = r.getRenderTarget();
+          try { R.quad.material = b.bm; r.setRenderTarget(b.A); job = r.compileAsync(R.quad, R.fsCam, R.fsScene); } catch (e) { }
+          finally { R.quad.material = null; r.setRenderTarget(prev); }
+          if (job) await Promise.race([job.catch(() => { }), new Promise(res => setTimeout(res, 15000))]);
+          if (!alive()) return;
+        }
+        if (av.pendingBake === b) b.run();
+      }
+      let env = null;
+      if (R.halfFloat && R.quality !== 'low') {
+        try { env = await captureArenaEnv(R, def, av.group, sc.fog, alive); } catch (e) { console.warn('Arena env capture failed', e); env = null; }
+      }
+      if (!alive()) { if (env) env.dispose(); return; }
+      if (sc.environment) sc.environment.dispose();
+      sc.environment = env || buildEnvMap(R, def, av.skyMat);
+    } finally { if (this._arenaPrep === prep) this._arenaPrep = null; }
+  }
+  // Finish any pending arena prep, then compile every scene shader without blocking the main thread.
+  // Calls are serialised; rendering is held while one is pending.
+  warmArena(onProgress) {
+    this._warmPending = (this._warmPending || 0) + 1;
+    const run = async () => {
+      if (this._arenaPrep) await this.finishArenaPrep();
+      await this.renderer.compileShaders(onProgress);
+    };
+    const p = (this._warmChain || Promise.resolve()).then(run).catch(e => console.warn('Arena warm-up failed', e)).finally(() => { this._warmPending--; });
+    this._warmChain = p;
+    return p;
   }
   applyLightBudget() {
     // Hidden lights drop out of the shader light count entirely (zero-intensity ones still cost per pixel)
@@ -13294,7 +13419,7 @@ class GameEngine {
     if (seq !== this._matchLoadSeq || this.mode !== mode) return;
 
     // Compile any new arena/car/power shaders incrementally so the loading screen stays responsive
-    await this.renderer.compileShaders(p => {
+    await this.warmArena(p => {
       if (seq === this._matchLoadSeq && this.mode === mode) {
         this.ui.setMatchLoadProgress(0.7 + p * 0.16, 'WARMING SHADERS & LIGHTING');
       }
@@ -13379,7 +13504,7 @@ class GameEngine {
     await this._yieldFrame();
     if (seq !== this._matchLoadSeq) return;
 
-    await this.renderer.compileShaders(p => {
+    await this.warmArena(p => {
       if (seq === this._matchLoadSeq) this.ui.setMatchLoadProgress(0.76 + p * 0.16, 'WARMING SHADERS & LIGHTING');
     });
     if (seq !== this._matchLoadSeq) return;
@@ -13434,7 +13559,7 @@ class GameEngine {
     await this._yieldFrame();
     if (seq !== this._matchLoadSeq) return;
 
-    await this.renderer.compileShaders(p => {
+    await this.warmArena(p => {
       if (seq === this._matchLoadSeq) this.ui.setMatchLoadProgress(0.76 + p * 0.16, 'WARMING SHADERS & LIGHTING');
     });
     if (seq !== this._matchLoadSeq) return;
@@ -13528,7 +13653,7 @@ class GameEngine {
     this.renderer.syncPipelineIfDirty();
     this.startExhibition();
     if (this.showroom) { this.exitShowroom(); this.enterShowroom(); }
-    await this.renderer.compileShaders();
+    await this.warmArena();
     if (seq !== this._arenaLoadSeq || this.inGame || this._matchLoading) return;
     this.renderFrame(0.016);
     await this._yieldFrame();
@@ -13912,6 +14037,16 @@ class GameEngine {
     return true;
   }
   renderFrame(vdt) {
+    // Drawing a material whose program is still compiling stalls the main thread until it's done, so hold
+    // rendering (a loading overlay is up) while an arena warms. Arena loads with no explicit warm get one here.
+    if (this._arenaPrep || this._warmPending || this.renderer.compiling) {
+      if (!this._warmPending) {
+        const overlay = !this.inGame && !this._matchLoading && !(this.ui && this.ui.matchLoadOpen);
+        if (overlay) this.ui.showArenaLoad(this.arenaDef, { layout: this.arenaOpts && this.arenaOpts.layout });
+        this.warmArena().then(() => { if (overlay && !this._warmPending) this.ui.hideArenaLoad(); });
+      }
+      return false;
+    }
     const w = this.world, R = this.renderer, cam = this.camera;
     const alpha = clamp(this.acc / PHYS.dt, 0, 1);
     const replaying = this.replay.active && this.mode && this.mode.state === 'replay';
