@@ -146,14 +146,14 @@ button{font-family:inherit;color:inherit}
 .ml-desc{max-width:560px;font-size:clamp(13px,1.15vw,16px);line-height:1.55;color:#cfdcf5;font-weight:500;text-shadow:0 1px 10px rgba(0,0,0,.55)}
 .ml-specs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-width:560px;margin-top:4px}
 .ml-spec{padding:10px 12px;background:rgba(7,11,24,.72);border:1px solid rgba(140,185,255,.18);border-top:2px solid color-mix(in srgb,var(--ml-line) 65%,transparent);
-  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);backdrop-filter:blur(10px)}
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
 .ml-spec span{display:block;font-size:9px;font-weight:800;letter-spacing:.26em;color:var(--ink3);text-transform:uppercase}
 .ml-spec b{display:block;margin-top:3px;font-family:var(--mono);font-size:clamp(11px,1vw,13.5px);font-weight:800;color:#fff;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .ml-side{display:flex;flex-direction:column;gap:14px;min-width:0;max-height:100%;animation:mlSlideR .55s cubic-bezier(.2,.9,.2,1) both}
 @keyframes mlSlideR{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
-.ml-panel{position:relative;background:linear-gradient(155deg,rgba(16,24,52,.78),rgba(6,10,22,.9));border:1px solid rgba(140,185,255,.22);
-  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:14px 18px;
+.ml-panel{position:relative;background:linear-gradient(155deg,rgba(16,24,52,.9),rgba(6,10,22,.95));border:1px solid rgba(140,185,255,.22);
+  padding:14px 18px;
   clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
 .ml-panel::before{content:"";position:absolute;left:0;top:0;right:14px;height:2px;background:linear-gradient(90deg,var(--ml-line),transparent 75%);opacity:.85}
 .ml-panel-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:10px;font-weight:800;letter-spacing:.3em;color:var(--ink2);text-transform:uppercase}
@@ -1753,6 +1753,72 @@ class InputManager {
 function makeControls() { return { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false, airRollFree: false, item: false }; }
 
 let Game = null;
+
+/* ---------------- Opt-in performance diagnostics (?perf) ----------------
+   Logs long frames with Chrome's Long Animation Frame attribution, shader programs compiled during each stall,
+   and the timing of the game's heavy entry points, then offers a copyable report. Does nothing without ?perf. */
+const PerfDiag = {
+  on: /[?&]perf\b/.test(location.search),
+  lines: [],
+  mark(s) { if (this.on) this.lines.push(`${performance.now().toFixed(0).padStart(7)}  ${s}`); if (this._cnt) this._cnt.textContent = this.lines.length + ' lines'; },
+  // Times a method in place; sync calls over `min` ms and every async call (on settle) are logged
+  wrap(obj, name, label, min = 25) {
+    const f = obj && obj[name]; if (typeof f !== 'function') return;
+    const me = this;
+    obj[name] = function (...a) {
+      const t = performance.now(); const r = f.apply(this, a); const dt = performance.now() - t;
+      if (r && typeof r.then === 'function') { if (dt > min) me.mark(`${label} (sync part) ${dt.toFixed(0)}ms`); r.then(() => me.mark(`${label} done after ${(performance.now() - t).toFixed(0)}ms`), () => { }); }
+      else if (dt > min) me.mark(`${label} ${dt.toFixed(0)}ms`);
+      return r;
+    };
+  },
+  init(g) {
+    if (!this.on) return;
+    const R = g.renderer, gl = R.r.getContext();
+    let gpu = ''; try { const e = gl.getExtension('WEBGL_debug_renderer_info'); gpu = e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : ''; } catch (e) { }
+    this.mark(`env: ${navigator.userAgent}`);
+    this.mark(`env: gpu=${gpu} webgl2=${R.r.capabilities.isWebGL2} parallelCompile=${R.r.extensions.has('KHR_parallel_shader_compile')} dpr=${devicePixelRatio} window=${innerWidth}x${innerHeight}`);
+    this.mark(`env: quality=${Settings.data.quality} autoTier=${Settings.data.autoTier} fullscreen=${Settings.data.fullscreen} targetFps=${Settings.data.targetFps} arenaSetup=${JSON.stringify(g.ui.setup.arena)}`);
+    try {
+      new PerformanceObserver(l => {
+        for (const e of l.getEntries()) {
+          if (e.duration < 80) continue;
+          const scripts = (e.scripts || []).slice().sort((a, b) => b.duration - a.duration);
+          const js = scripts.reduce((a, x) => a + x.duration, 0);
+          const sl = e.styleAndLayoutStart ? e.startTime + e.duration - e.styleAndLayoutStart : 0;
+          const top = scripts.slice(0, 4).map(x => `${x.invokerType || ''}:${x.invoker || ''} ${x.sourceFunctionName || '?'}@${(x.sourceURL || '').split('/').pop()}:${x.sourceCharPosition} ${x.duration.toFixed(0)}ms`).join(' | ');
+          this.mark(`LONG FRAME ${e.duration.toFixed(0)}ms (js ${js.toFixed(0)}, style+layout ${sl.toFixed(0)}, other ${(e.duration - js - sl).toFixed(0)}) ${top}`);
+        }
+      }).observe({ type: 'long-animation-frame', buffered: true });
+    } catch (e) { this.mark('long-animation-frame API unavailable'); }
+    let last = performance.now(), progs = R.r.info.programs ? R.r.info.programs.length : 0;
+    const loop = t => {
+      const dt = t - last; last = t;
+      const list = R.r.info.programs || [], n = list.length;
+      if (dt > 80) this.mark(`frame gap ${dt.toFixed(0)}ms  shader programs ${progs}->${n}${n > progs ? '  new: ' + list.slice(progs).slice(0, 10).map(p => p.name || ('#' + p.id)).join(', ') : ''}`);
+      progs = n; requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    for (const [o, m, l] of [[g, 'update', 'game.update'], [g, 'renderFrame', 'renderFrame'], [g, 'warmArena', 'warmArena'], [g, 'warmSceneDraw', 'warmSceneDraw'], [g, 'startExhibition', 'startExhibition'], [g, 'loadArena', 'loadArena'],
+      [R, 'render', 'renderer.render'], [R, 'renderReflection', 'renderReflection'], [R, 'applyQuality', 'applyQuality'], [R, 'setTier', 'setTier'], [R, 'resize', 'resize'], [R, 'compileShaders', 'compileShaders'],
+      [g.audio, 'init', 'audio.init'], [g.audio, 'setArena', 'audio.setArena'], [g.audio, 'startMusic', 'audio.startMusic'], [g.online, 'restoreSession', 'restoreSession'], [g.online, 'connectWs', 'connectWs'],
+      [g.ui, 'showMenu', 'ui.showMenu'], [g.ui, 'renderPanel', 'ui.renderPanel'], [g.ui, 'updateProfileCard', 'ui.updateProfileCard'], [g.ui, 'warmHud', 'ui.warmHud']]) this.wrap(o, m, l);
+    const startMark = () => { if (!this._started && !$('loading').classList.contains('hidden') && !$('startBtn').classList.contains('hidden')) { this._started = true; this.mark('=== START pressed ==='); } };
+    $('startBtn').addEventListener('click', startMark, true); addEventListener('keydown', startMark, true);
+    Events.on('settings', k => this.mark(`settings changed: ${k}`));
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:1000;display:flex;gap:6px;align-items:center;padding:6px 8px;background:rgba(0,0,0,.8);border:1px solid #3ef2ff;font:11px monospace;color:#3ef2ff;pointer-events:auto';
+    box.innerHTML = '<b>PERF</b><span></span><button style="font:inherit;padding:3px 8px;cursor:pointer">Copy report</button>';
+    this._cnt = box.querySelector('span');
+    box.querySelector('button').onclick = async () => {
+      const txt = this.lines.join('\n');
+      try { await navigator.clipboard.writeText(txt); box.querySelector('button').textContent = 'Copied!'; }
+      catch (e) { const ta = document.createElement('textarea'); ta.value = txt; ta.style.cssText = 'position:fixed;inset:10%;z-index:1001;font:11px monospace'; document.body.appendChild(ta); ta.select(); }
+    };
+    document.body.appendChild(box);
+    this.mark('perf diagnostics on');
+  }
+};
 
 // ===== 02_arena_shape.js =====
 const ARENAS = [
@@ -12833,6 +12899,18 @@ class UIManager {
     if (pop) pop.style.opacity = '';
     if (rt) rt.classList.add('hidden');
     this.showHud(false);
+    // The match loading screen's first paint makes Chrome compile GPU shaders for its gradients, filters and
+    // animation (~0.2-1s in the GPU process, which also stalls frame presentation). Paint it a few times here,
+    // hidden behind the boot screen, with arenas covering the different background styles.
+    const ml = $('matchLoad'); if (ml) { ml.style.zIndex = '101'; ml.style.opacity = '0.01'; ml.style.transition = 'none'; }
+    try {
+      for (const idx of [0, 1, 4, 5]) {
+        this.showMatchLoad({ arenaIdx: idx, kind: 'match', teamSize: 2, mode: idx === 4 ? 'mayhem' : 'standard', status: 'WARMING', progress: 0.5 });
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
+    } catch (e) { }
+    this.hideMatchLoad(true);
+    if (ml) { ml.style.zIndex = ''; ml.style.opacity = ''; ml.style.transition = ''; }
   }
   showHud(v) { $('hud').classList.toggle('hidden', !v); if (!v) { this.clearTags(); this.clearHudFX(); } }
   updateScore(score, bumpTeam) {
@@ -13485,6 +13563,7 @@ class GameEngine {
     this.renderer.getSun = () => this.arenaVisual && this.arenaVisual.sun;
     this.input = new InputManager(); this.audio = new AudioSystem(); this.camera = new CameraSystem(this.renderer.camera);
     this.replay = new ReplayPlayer(this);
+    PerfDiag.init(this);
     this.ui.progress(0.15, 'Synthesising materials'); await tick();
     TexGen.carbon(); TexGen.tread();
     this.fx = new FX(this.renderer.scene);
