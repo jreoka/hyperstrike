@@ -347,11 +347,6 @@ button{font-family:inherit;color:inherit}
 .card.on .shp{right:30px}
 .card.on::after{content:"✓";position:absolute;top:0;right:0;z-index:3;width:26px;height:24px;display:flex;align-items:center;justify-content:center;padding-left:4px;
   background:var(--accent);color:#03141c;font-weight:900;font-size:13px;clip-path:polygon(0 0,100% 0,100% 100%,30% 100%)}
-.card:disabled{cursor:default;opacity:.7}
-.card:disabled:hover{transform:none;--cbd:var(--line)}
-.card:disabled.on{opacity:1;--cbd:var(--accent)}
-.card:disabled:hover .art{transform:none;filter:saturate(.85) brightness(.85)}
-.card:disabled.on .art{transform:scale(1.06);filter:saturate(1.05) brightness(.95)}
 .cta{position:relative;margin:22px 7px 0;width:calc(100% - 14px);padding:16px;border:0;cursor:pointer;font-size:19px;font-weight:900;font-style:italic;font-stretch:85%;letter-spacing:.22em;color:#03141c;
   background:linear-gradient(90deg,var(--accent),#c4fcff 50%,var(--accent));background-size:220% 100%;transition:all .25s;outline:none;overflow:hidden;
   transform:skewX(-14deg);text-transform:uppercase;filter:drop-shadow(0 0 18px rgba(62,242,255,.3))}
@@ -400,42 +395,6 @@ body.pad-ui .dock .cta>span::after{content:"START";font-size:10px;font-style:nor
 .tabs button.on::after{transform:scaleX(1);left:0;right:0}
 .tabs button:hover,.tabs button:focus-visible,body.gp-nav .tabs button:focus{color:#fff;background:rgba(62,242,255,.08)}
 .tabs button:focus-visible,body.gp-nav .tabs button:focus{box-shadow:inset 0 0 0 1px rgba(62,242,255,.7)}
-.tabs button .tb-tag{display:inline-block;margin-left:6px;padding:1px 5px;font-family:var(--mono);font-size:9.5px;font-weight:800;letter-spacing:.04em;color:var(--accent);background:rgba(62,242,255,.12);border:1px solid rgba(62,242,255,.28);vertical-align:middle}
-.tabs button.on .tb-tag{background:rgba(62,242,255,.24);border-color:var(--accent);color:#fff}
-.sum-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px}
-.sum-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:rgba(255,255,255,.045);border:1px solid var(--line);color:var(--ink2);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .14s;outline:none}
-.sum-chip b{color:#fff;font-weight:800}
-.sum-chip:hover,.sum-chip:focus-visible,body.gp-nav .sum-chip:focus{border-color:var(--accent);color:#fff;background:rgba(62,242,255,.12)}
-.sum-chip.hi{border-color:rgba(62,242,255,.45);background:rgba(62,242,255,.09)}
-.sum-chip.hi b{color:var(--accent)}
-.arena-cur{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:10px;background:rgba(3,6,15,.55);border:1px solid var(--line);border-left:3px solid var(--accent);clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
-.arena-cur-art{position:relative;width:54px;height:42px;flex:none;border:1px solid var(--line2);overflow:hidden}
-.arena-cur-art .shp{position:absolute;inset:3px;width:calc(100% - 6px);height:calc(100% - 6px);opacity:.9;filter:drop-shadow(0 1px 3px #000)}
-.arena-cur-txt{min-width:0;flex:1}
-.arena-cur-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.arena-cur-top b{font-size:15px;font-weight:900;font-style:italic;font-stretch:84%;letter-spacing:.06em;color:#fff;text-transform:uppercase}
-.arena-cur-top small{font-size:9px;font-weight:800;letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
-.arena-cur-desc{font-size:12px;color:var(--ink2);line-height:1.35;margin-top:2px}
-.arena-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
-.arena-filters{display:flex;gap:4px;flex-wrap:wrap}
-.afilt{padding:5px 11px;border:1px solid var(--line);background:rgba(255,255,255,.035);color:var(--ink2);font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;transition:all .14s;outline:none}
-.afilt:hover,.afilt:focus-visible,body.gp-nav .afilt:focus{color:#fff;border-color:rgba(62,242,255,.6);background:rgba(62,242,255,.1)}
-.afilt.on{background:rgba(62,242,255,.2);border-color:var(--accent);color:#fff}
-.afilt.labs.on{background:rgba(255,63,216,.2);border-color:#ff3fd8;color:#ffb8f0}
-.arena-cnt{font-family:var(--mono);font-size:10.5px;color:var(--ink3);letter-spacing:.1em}
-.train-arena-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;margin-bottom:12px;background:rgba(3,6,15,.5);border:1px solid var(--line);border-left:3px solid var(--accent)}
-.train-arena-bar .ta-info{min-width:0}
-.train-arena-bar .ta-k{font-size:9px;font-weight:800;letter-spacing:.26em;color:var(--ink3);text-transform:uppercase}
-.train-arena-bar .ta-v{font-size:13.5px;font-weight:900;font-style:italic;letter-spacing:.06em;color:#fff;text-transform:uppercase}
-.mech-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:4px}
-.mech-card{padding:12px 14px;background:rgba(3,6,15,.52);border:1px solid var(--line);border-top:2px solid var(--accent);clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
-.mech-card h4{font-size:13px;font-weight:900;font-style:italic;letter-spacing:.12em;color:#fff;text-transform:uppercase;margin-bottom:5px}
-.mech-card p{font-size:12.5px;color:var(--ink2);line-height:1.48}
-.fp-keys{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
-.fp-keys>div{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(3,6,15,.5);border:1px solid var(--line);font-size:12px;color:var(--ink2)}
-.mp-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;background:rgba(3,6,15,.55);border:1px solid var(--line)}
-.mp-dock-acts{display:flex;gap:8px;align-items:center}
-.mp-dock-acts .cta{margin:0;flex:1;padding:13px 16px;font-size:16px}
 .set{display:flex;align-items:center;gap:14px;padding:11px 10px;border-bottom:1px solid rgba(140,185,255,.07);transition:background .12s}
 .set:hover{background:rgba(255,255,255,.025)}
 body.gp-nav .set:has(:focus){background:rgba(62,242,255,.1);box-shadow:inset 3px 0 0 var(--accent)}
@@ -889,11 +848,6 @@ table.stats .mvp{color:#140818;background:var(--gold);font-size:9px;letter-spaci
   #menuPanel,#menuPanel.wide,#menuPanel.garage{width:100%;padding:16px 16px 0}
   .dock{margin:8px -16px 0;padding:8px 16px 10px}
   .dock .cta{padding:10px;font-size:15px}
-  .sum-bar{margin-bottom:6px;gap:4px}
-  .sum-chip{padding:3px 7px;font-size:9.5px}
-  .arena-cur{padding:8px 10px;gap:10px}
-  .arena-cur-desc{display:none}
-  .fp-keys{grid-template-columns:1fr}
   .ph h2{font-size:24px}
   .ph{margin-bottom:8px;padding-bottom:8px}
   .sect{margin:12px 0 7px}
@@ -11289,7 +11243,7 @@ class UIManager {
   constructor(game) {
     this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: -1, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
     if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = -1; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
-    this.settingsTab = 'camera'; this.garageTab = 'body'; this.playTab = 'match'; this.freeplayTab = 'arena'; this.trainTab = 'drills'; this.mpTab = 'lobby'; this.mpBrowseTab = 'lobbies'; this.ranksTab = 'overview'; this.controlsTab = 'bindings'; this.arenaFilter = 'all'; this.tags = new Map(); this._sb = false;
+    this.settingsTab = 'camera'; this.garageTab = 'body'; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
     $('boostTicks').innerHTML = t;
@@ -11853,67 +11807,15 @@ class UIManager {
     el.classList.add('fade');
     this._alHideT = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('fade'); }, 340);
   }
-  tabsHtml(attr, tabs, active) {
-    return `<div class="tabs">` + tabs.map(([k, l, tag]) => `<button class="${active === k ? 'on' : ''}" data-${attr}="${k}">${l}${tag !== undefined && tag !== '' ? `<span class="tb-tag">${tag}</span>` : ''}</button>`).join('') + '</div>';
-  }
-  sumBarHtml(chips) {
-    return `<div class="sum-bar">` + chips.map(([k, v, attr, val, hi]) => `<button type="button" class="sum-chip ${hi ? 'hi' : ''}" data-${attr}="${val}"><span>${k}</span><b>${this.esc(v)}</b></button>`).join('') + '</div>';
-  }
-  arenaLabel(idx) {
-    return idx < 0 || !ARENAS[idx] ? 'Random' : ARENAS[idx].name;
-  }
-  layoutLabel(id) {
-    const l = LAYOUTS.find(x => x.id === id);
-    return !l || id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase();
-  }
-  arenaPickerHtml({ key = 'arena', val = -1, layout = 'default', isLobby = false, disabled = false } = {}) {
+  arenaCards(key = 'arena') {
     const std = ARENAS.map((a, i) => [a, i]).filter(([a]) => !a.weird);
     const weird = ARENAS.map((a, i) => [a, i]).filter(([a]) => a.weird);
-    const f = this.arenaFilter || 'all';
-    const setAttr = isLobby ? 'data-lset' : 'data-set';
-    const valAttr = isLobby ? 'data-lval' : 'data-val';
-    const dis = disabled ? 'disabled' : '';
-    const cur = val >= 0 && ARENAS[val] ? ARENAS[val] : null;
-    const curArt = cur ? ARENA_ART[val] : RANDOM_ARENA_ART;
-    const curShp = cur ? this.shapeSvg(cur, layout) : '<svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg>';
-    const curDesc = cur ? cur.desc : 'A random standard arena is picked each time the match starts.';
-    const layOpts = LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()]);
-    const laySeg = `<div class="seg">` + layOpts.map(([v, l]) => `<button class="${layout === v ? 'on' : ''}" ${disabled ? 'disabled' : `${setAttr}="layout" ${valAttr}='${JSON.stringify(v)}'`}><span>${l}</span></button>`).join('') + `</div>`;
-    const card = (a, i) => `<button class="card ${val === i ? 'on' : ''}" ${disabled ? 'disabled' : `${setAttr}="${key}" ${valAttr}="${i}"`}><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`;
-    const randomCard = `<button class="card ${val === -1 ? 'on' : ''}" ${disabled ? 'disabled' : `${setAttr}="${key}" ${valAttr}="-1"`}><div class="art" style="background:${RANDOM_ARENA_ART}"></div><svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg><div class="lbl"><small>SURPRISE ME</small>RANDOM</div></button>`;
-    let grid = '';
-    let shown = 0;
-    if (f === 'all') {
-      shown = ARENAS.length;
-      grid = `<div class="cards">${randomCard}${std.map(([a, i]) => card(a, i)).join('')}</div>` +
-        `<div class="sect weird">Experimental Arenas <span class="sbadge">LABS</span></div>` +
-        `<div class="cards">${weird.map(([a, i]) => card(a, i)).join('')}</div>`;
-    } else if (f === 'std') {
-      shown = std.length;
-      grid = `<div class="cards">${randomCard}${std.map(([a, i]) => card(a, i)).join('')}</div>`;
-    } else {
-      shown = weird.length;
-      grid = `<div class="cards">${weird.map(([a, i]) => card(a, i)).join('')}</div>`;
-    }
-    return `<div class="arena-cur">
-        <div class="arena-cur-art" style="background:${curArt}">${curShp}</div>
-        <div class="arena-cur-txt">
-          <div class="arena-cur-top"><b>${cur ? cur.name : 'RANDOM ARENA'}</b><small>${cur ? cur.tag : 'SURPRISE ME'}${layout !== 'default' ? ` · ${this.layoutLabel(layout).toUpperCase()}` : ''}</small></div>
-          <div class="arena-cur-desc">${curDesc}</div>
-        </div>
-      </div>
-      <div class="sect" style="margin-top:8px">Layout</div>${laySeg}
-      <div class="arena-bar">
-        <div class="arena-filters">
-          <button type="button" class="afilt ${f === 'all' ? 'on' : ''}" data-afilt="all">All (${ARENAS.length})</button>
-          <button type="button" class="afilt ${f === 'std' ? 'on' : ''}" data-afilt="std">Standard (${std.length})</button>
-          <button type="button" class="afilt labs ${f === 'labs' ? 'on' : ''}" data-afilt="labs">Labs (${weird.length})</button>
-        </div>
-        <span class="arena-cnt">${shown} ARENAS</span>
-      </div>${grid}`;
-  }
-  arenaCards(key = 'arena') {
-    return this.arenaPickerHtml({ key, val: this.setup[key], layout: this.setup.layout });
+    const card = (a, i) => `<button class="card ${this.setup[key] === i ? 'on' : ''}" data-set="${key}" data-val="${i}"><div class="art" style="background:${ARENA_ART[i]}"></div>${this.shapeSvg(a, 'default')}<div class="lbl"><small>${a.tag}</small>${a.name}</div></button>`;
+    return '<div class="cards">' +
+      `<button class="card ${this.setup[key] === -1 ? 'on' : ''}" data-set="${key}" data-val="-1"><div class="art" style="background:${RANDOM_ARENA_ART}"></div><svg class="shp" viewBox="0 0 64 64"><text x="32" y="46" text-anchor="middle" font-size="44" font-weight="900" fill="#fff">?</text></svg><div class="lbl"><small>SURPRISE ME</small>RANDOM</div></button>` +
+      std.map(([a, i]) => card(a, i)).join('') + '</div>' +
+      `<div class="sect weird">Experimental Arenas <span class="sbadge">LABS</span></div>` +
+      '<div class="cards">' + weird.map(([a, i]) => card(a, i)).join('') + '</div>';
   }
   layoutSeg() { return this.seg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()])); }
   powerGrid() { return '<div class="pgrid">' + POWERS.map(pw => `<div title="${pw.desc}"><svg viewBox="0 0 24 24" style="color:${pw.color}">${pw.icon}</svg>${pw.name}</div>`).join('') + '</div>'; }
@@ -11925,23 +11827,14 @@ class UIManager {
     if (d.lset !== undefined) return `[data-lset="${esc(d.lset)}"][data-lval="${esc(d.lval ?? '')}"]`;
     if (d.set !== undefined) return `[data-set="${esc(d.set)}"][data-val="${esc(d.val ?? '')}"]`;
     if (d.car !== undefined) return `[data-car="${esc(d.car)}"][data-val="${esc(d.val ?? '')}"]`;
-    for (const k of ['lbt', 'lbkick', 'sqkick', 'joinlb', 'lbsort', 'gtab', 'stab', 'ptab', 'fptab', 'ttab', 'mptab', 'mpbtab', 'rtab', 'ctab', 'afilt', 'drill']) {
+    for (const k of ['lbt', 'lbkick', 'sqkick', 'joinlb', 'lbsort', 'gtab', 'stab', 'drill']) {
       if (d[k] !== undefined) return `[data-${k}="${esc(d[k])}"]`;
     }
     return null;
   }
   renderPanel(refocusSel = null) {
     const P = $('menuPanel'); const s = this.setup; P.classList.remove('wide', 'garage');
-    const subKey = this.menuScreen === 'play' ? this.playTab
-      : this.menuScreen === 'freeplay' ? this.freeplayTab
-      : this.menuScreen === 'training' ? this.trainTab
-      : this.menuScreen === 'multiplayer' ? (this.g.online && this.g.online.lobby ? 'in:' + this.mpTab : 'out:' + this.mpBrowseTab)
-      : this.menuScreen === 'ranks' ? this.ranksTab
-      : this.menuScreen === 'controls' ? this.controlsTab
-      : this.menuScreen === 'garage' ? this.garageTab
-      : this.menuScreen === 'settings' ? this.settingsTab : '';
-    const viewKey = this.menuScreen + ':' + subKey;
-    const sameScreen = this._renderedScreen === this.menuScreen;
+    const viewKey = this.menuScreen === 'multiplayer' ? (this.g.online && this.g.online.lobby ? 'mp:in' : 'mp:out') : this.menuScreen;
     const sameView = this._renderedViewKey === viewKey;
     const prevScroll = sameView ? P.scrollTop : 0;
     const prevEl = document.activeElement && P.contains(document.activeElement) ? document.activeElement : null;
@@ -11949,47 +11842,23 @@ class UIManager {
     const prevIdx = !refocusSel && sameView && prevEl ? this.focusables(P).indexOf(prevEl) : -1;
     const prevInput = sameView && prevEl && prevEl.tagName === 'INPUT' && prevEl.id
       ? { id: prevEl.id, value: prevEl.value, start: prevEl.selectionStart, end: prevEl.selectionEnd } : null;
-    this._renderedScreen = this.menuScreen;
     this._renderedViewKey = viewKey;
     let h = '';
-    const durLabel = d => d === 0 ? 'Unlimited' : `${Math.round(d / 60)} min`;
     switch (this.menuScreen) {
-      case 'play': {
-        const ptabs = [['match', 'Match'], ['arena', 'Arena', ARENAS.length], ['rules', 'Bots & Rules']];
-        h = `<div class="ph"><h2>Play Match</h2><span>vs AI</span></div>${this.tabsHtml('ptab', ptabs, this.playTab)}`;
-        if (this.playTab === 'match') {
-          h += `<div class="sect" style="margin-top:6px">Game mode</div>${this.seg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem · Power-ups']])}
-            ${s.mode === 'mayhem' ? `<div class="desc">Every few seconds each car receives a random power-up. Use it with <kbd>R</kbd> (gamepad <kbd>L3</kbd> / <kbd>D-pad ↑</kbd>). Hover an icon for details.</div>${this.powerGrid()}<div class="sect">New power-up every</div>${this.seg('interval', [[6, '6 sec'], [10, '10 sec'], [15, '15 sec']])}` : ''}
-            <div class="sect">Team size</div>${this.seg('teamSize', [[1, '1 v 1'], [2, '2 v 2'], [3, '3 v 3'], [4, '4 v 4'], [5, '5 v 5']])}
-            ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
-            <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}`;
-        } else if (this.playTab === 'arena') {
-          h += this.arenaPickerHtml({ key: 'arena', val: s.arena, layout: s.layout });
-        } else {
-          const diffInfo = [
-            'Relaxed pace, basic ground play and forgiving positioning.',
-            'Balanced competition with boost usage, flips and occasional aerials.',
-            'Fast rotations, strong shots and confident mid-air challenges.',
-            'High-speed reactions, crisp recoveries and relentless pressure.',
-            'Peak physics-planned shots, instant recoveries and full aerial mastery.'
-          ][s.difficulty] || '';
-          h += `<div class="sect" style="margin-top:6px">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
-            <div class="desc">${diffInfo}</div>
-            <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}`;
-        }
-        const diffName = (DIFFICULTY[s.difficulty] && DIFFICULTY[s.difficulty].name) || 'PRO';
-        h += `<div class="dock">
-          ${this.sumBarHtml([
-            ['Mode', s.mode === 'mayhem' ? 'Mayhem' : 'Standard', 'ptab', 'match', this.playTab === 'match'],
-            ['Teams', `${s.teamSize}v${s.teamSize}`, 'ptab', 'match', false],
-            ['Arena', this.arenaLabel(s.arena), 'ptab', 'arena', this.playTab === 'arena'],
-            ['Bots', diffName, 'ptab', 'rules', this.playTab === 'rules'],
-            ['Clock', durLabel(s.duration), 'ptab', 'rules', false]
-          ])}
-          <button class="cta ${s.mode === 'mayhem' ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${s.mode === 'mayhem' ? 'Mayhem' : 'Match'}</span></button>
-        </div>`;
-        break;
-      }
+      case 'play':
+        h = `<div class="ph"><h2>Play Match</h2><span>vs AI</span></div>
+          <div class="sect">Game mode</div>${this.seg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem · Power-ups']])}
+          ${s.mode === 'mayhem' ? `<div class="desc">Every few seconds each car receives a random power-up. Use it with <kbd>R</kbd> (gamepad <kbd>L3</kbd> / <kbd>D-pad ↑</kbd>). Hover an icon for details.</div>${this.powerGrid()}<div class="sect">New power-up every</div>${this.seg('interval', [[6, '6 sec'], [10, '10 sec'], [15, '15 sec']])}` : ''}
+          <div class="sect">Team size</div>${this.seg('teamSize', [[1, '1 v 1'], [2, '2 v 2'], [3, '3 v 3'], [4, '4 v 4'], [5, '5 v 5']])}
+          ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
+          <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}
+          <div class="sect">Arena</div>${this.arenaCards()}
+          <div class="desc">${s.arena < 0 ? 'A random arena is picked each time the match starts.' : ARENAS[s.arena].desc}</div>
+          <div class="sect">Layout</div>${this.layoutSeg()}
+          <div class="desc">${s.layout === 'default' ? 'Plays on the shape this arena was built with.' : LAYOUTS.find(l => l.id === s.layout).desc + ' The arena theme is rebuilt around this layout.'}</div>
+          <div class="sect">Bot difficulty</div>${this.seg('difficulty', DIFFICULTY.map((d, i) => [i, d.name]))}
+          <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
+          <div class="dock"><button class="cta ${s.mode === 'mayhem' ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${s.mode === 'mayhem' ? 'Mayhem' : 'Match'}</span></button></div>`; break;
       case 'tournament':
         h = `<div class="ph"><h2>Tournament</h2><span>8-team knockout</span></div>
           <div class="desc">Fight through the Quarterfinal, Semifinal and Grand Final. Every round the opposition gets sharper and the arena changes. Lose once and you're out.</div>
@@ -11998,60 +11867,27 @@ class UIManager {
           <div class="sect">Starting difficulty</div>${this.seg('tdiff', DIFFICULTY.slice(0, 4).map((d, i) => [i, d.name]))}
           <div class="sect">Rounds</div><div class="desc">3 min matches · Overtime decides ties · Arena rotates each round</div>
           <div class="dock"><button class="cta alt" id="goTourney"><span>${ico('trophy')}Begin Tournament</span></button></div>`; break;
-      case 'freeplay': {
-        const fptabs = [['arena', 'Arena', ARENAS.length], ['options', 'Options']];
-        h = `<div class="ph"><h2>Free Play</h2><span>practice</span></div>${this.tabsHtml('fptab', fptabs, this.freeplayTab)}`;
-        if (this.freeplayTab === 'arena') {
-          h += this.arenaPickerHtml({ key: 'arena', val: s.arena, layout: s.layout });
-        } else {
-          h += `<div class="desc" style="margin-top:0">No clock, no opponents — just you, the ball and the arena. Reset the ball, launch it skyward for aerial practice and toggle unlimited boost.</div>
-            <div class="sect">Boost</div>${this.seg('unlimited', [[false, 'Normal'], [true, 'Unlimited']])}
-            <div class="sect">Practice Shortcuts</div>
-            <div class="fp-keys">
-              <div><span>Reset ball</span><kbd>R</kbd></div>
-              <div><span>Reset car</span><kbd>T</kbd></div>
-              <div><span>Launch ball</span><kbd>L</kbd></div>
-              <div><span>Toggle boost</span><kbd>B</kbd></div>
-            </div>`;
-        }
-        h += `<div class="dock">
-          ${this.sumBarHtml([
-            ['Arena', this.arenaLabel(s.arena), 'fptab', 'arena', this.freeplayTab === 'arena'],
-            ['Layout', this.layoutLabel(s.layout), 'fptab', 'arena', false],
-            ['Boost', s.unlimited ? 'Unlimited' : 'Normal', 'fptab', 'options', this.freeplayTab === 'options']
-          ])}
-          <button class="cta" id="goFree"><span>${ico('ball')}Enter Free Play</span></button>
-        </div>`;
-        break;
-      }
-      case 'training': {
-        const ttabs = [['drills', 'Drills', DRILLS.length], ['arena', 'Arena', ARENAS.length]];
-        h = `<div class="ph"><h2>Training</h2><span>drills</span></div>${this.tabsHtml('ttab', ttabs, this.trainTab)}`;
-        if (this.trainTab === 'drills') {
-          h += `<div class="train-arena-bar">
-              <div class="ta-info"><div class="ta-k">Practice Arena</div><div class="ta-v">${this.esc(this.arenaLabel(s.arena))}${s.layout !== 'default' ? ` · ${this.esc(this.layoutLabel(s.layout))}` : ''}</div></div>
-              <button type="button" class="mp-btn ghost" style="padding:7px 13px;font-size:10px" data-ttab="arena">Change Arena</button>
-            </div>` +
-            DRILLS.map((d, i) => `<button class="drill" data-drill="${i}">${ico(d.icon, 'ic')}<div><b>${d.name}</b><span>${d.desc}</span></div><div class="best">BEST<em>${Settings.data.best[d.id] || 0}</em></div></button>`).join('');
-        } else {
-          h += this.arenaPickerHtml({ key: 'arena', val: s.arena, layout: s.layout });
-        }
-        break;
-      }
+      case 'freeplay':
+        h = `<div class="ph"><h2>Free Play</h2><span>practice</span></div>
+          <div class="desc">No clock, no opponents — just you, the ball and the arena. Reset the ball, launch it skyward for aerial practice and toggle unlimited boost.</div>
+          <div class="sect">Arena</div>${this.arenaCards()}
+          <div class="sect">Layout</div>${this.layoutSeg()}
+          <div class="sect">Boost</div>${this.seg('unlimited', [[false, 'Normal'], [true, 'Unlimited']])}
+          <div class="dock"><button class="cta" id="goFree"><span>${ico('ball')}Enter Free Play</span></button></div>`; break;
+      case 'training':
+        h = `<div class="ph"><h2>Training</h2><span>drills</span></div>
+          <div class="sect">Arena</div>${this.arenaCards()}
+          <div class="sect">Layout</div>${this.layoutSeg()}
+          <div class="sect">Choose a drill</div>` +
+          DRILLS.map((d, i) => `<button class="drill" data-drill="${i}">${ico(d.icon, 'ic')}<div><b>${d.name}</b><span>${d.desc}</span></div><div class="best">BEST<em>${Settings.data.best[d.id] || 0}</em></div></button>`).join(''); break;
       case 'multiplayer': h = this.multiplayerHtml(); P.classList.add('wide'); break;
       case 'ranks': h = this.ranksHtml(); P.classList.add('wide'); break;
       case 'garage': h = this.garageHtml(); P.classList.add('garage'); break;
       case 'settings': h = this.settingsHtml(); break;
       case 'controls': h = this.controlsHtml(); P.classList.add('wide'); break;
     }
-    P.innerHTML = h;
-    if (!sameScreen) { P.style.animation = 'none'; void P.offsetWidth; P.style.animation = ''; }
+    P.innerHTML = h; P.style.animation = 'none'; void P.offsetWidth; P.style.animation = '';
     P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); const sc = P.scrollTop; const key = b.dataset.set, raw = b.dataset.val; this.setup[key] = JSON.parse(raw); if (key === 'arena' && ARENAS[this.setup.arena] && ARENAS[this.setup.arena].weird) this.setup.layout = 'default'; Settings.data.lastSetup = this.setup; Settings.save(); this.renderPanel(`[data-set="${key}"][data-val='${raw}']`); P.scrollTop = sc; if (key === 'arena' || key === 'layout') this.g.previewArena(this.setup.arena); });
-    const bindTab = (attr, prop) => P.querySelectorAll(`[data-${attr}]`).forEach(b => b.onclick = () => { this.g.audio.ui('click'); this[prop] = b.dataset[attr]; this.renderPanel(`[data-${attr}="${b.dataset[attr]}"]`); });
-    bindTab('ptab', 'playTab');
-    bindTab('fptab', 'freeplayTab');
-    bindTab('ttab', 'trainTab');
-    bindTab('afilt', 'arenaFilter');
     const on = (id, fn) => { const e = $(id); if (e) e.onclick = () => { this.g.audio.ui('click'); fn(); }; };
     on('goMatch', () => this.g.startMatch({ teamSize: s.teamSize, side: s.side, arena: resolveArena(s.arena), difficulty: s.difficulty, duration: s.duration, mode: s.mode, interval: s.interval, layout: s.layout }));
     on('goTourney', () => this.g.startTournament({ teamSize: s.tsize, difficulty: s.tdiff, mode: s.tmode }));
@@ -12061,9 +11897,7 @@ class UIManager {
     if (this.menuScreen === 'ranks') this.bindRanks();
     if (this.menuScreen === 'garage') this.bindGarage();
     if (this.menuScreen === 'settings') this.bindSettings();
-    if (this.menuScreen === 'controls') this.bindControls();
     if (sameView) P.scrollTop = prevScroll;
-    else P.scrollTop = 0;
     if (prevInput) {
       const inp = $(prevInput.id);
       if (inp) {
@@ -12090,35 +11924,28 @@ class UIManager {
   multiplayerHtml() {
     const on = this.g.online, me = on.user, sq = on.squad, lb = on.lobby;
     let h = `<div class="ph"><h2>Multiplayer</h2><span>${on.connected ? `${on.onlineCount || 1} online` : 'connecting...'}</span></div>`;
-    const squadBoxHtml = () => {
-      let sh = `<div class="mp-box"><div class="mp-head gold"><span>Squad Party</span><small>Squad members auto-join lobbies together</small></div>`;
-      if (!sq) {
-        sh += `<div class="mp-row">
-          <button class="mp-btn alt" id="btnSqCreate">Create Squad</button>
-          <input class="mp-in" id="inSqCode" maxlength="8" placeholder="SQUAD CODE (e.g. SQ4K9P)">
-          <button class="mp-btn" id="btnSqJoin">Join Squad</button>
-        </div>`;
-      } else {
-        const amLeader = me && sq.leaderId === me.id;
-        sh += `<div class="mp-row" style="justify-content:space-between;margin-bottom:8px">
-          <div class="mp-code" id="copySqCode" title="Click to copy">${this.esc(sq.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
-          <button class="mp-btn danger" id="btnSqLeave">Leave Squad</button>
-        </div><div>` + sq.members.map(m => `
-          <div class="mp-pl ${me && m.id === me.id ? 'me' : ''}">
-            <span>${m.isLeader ? '★ ' : ''}<b>${this.esc(m.username)}</b> <small style="color:${m.rankColor}">${this.esc(m.rank)}</small> <small style="color:var(--ink2)">LVL ${m.level}</small></span>
-            ${amLeader && me && m.id !== me.id ? `<button class="mp-btn danger" style="padding:3px 7px;font-size:10px" data-sqkick="${m.id}">KICK</button>` : `<span style="font-size:10px;color:${m.online ? '#4dff88' : '#ff6b7a'}">${m.online ? 'ONLINE' : 'OFFLINE'}</span>`}
-          </div>`).join('') + `</div>`;
-      }
-      return sh + `</div>`;
-    };
+    // SQUAD BAR
+    h += `<div class="mp-box"><div class="mp-head gold"><span>Squad Party</span><small>Squad members auto-join lobbies together</small></div>`;
+    if (!sq) {
+      h += `<div class="mp-row">
+        <button class="mp-btn alt" id="btnSqCreate">Create Squad</button>
+        <input class="mp-in" id="inSqCode" maxlength="8" placeholder="SQUAD CODE (e.g. SQ4K9P)">
+        <button class="mp-btn" id="btnSqJoin">Join Squad</button>
+      </div>`;
+    } else {
+      const amLeader = me && sq.leaderId === me.id;
+      h += `<div class="mp-row" style="justify-content:space-between;margin-bottom:8px">
+        <div class="mp-code" id="copySqCode" title="Click to copy">${this.esc(sq.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
+        <button class="mp-btn danger" id="btnSqLeave">Leave Squad</button>
+      </div><div>` + sq.members.map(m => `
+        <div class="mp-pl ${me && m.id === me.id ? 'me' : ''}">
+          <span>${m.isLeader ? '★ ' : ''}<b>${this.esc(m.username)}</b> <small style="color:${m.rankColor}">${this.esc(m.rank)}</small> <small style="color:var(--ink2)">LVL ${m.level}</small></span>
+          ${amLeader && me && m.id !== me.id ? `<button class="mp-btn danger" style="padding:3px 7px;font-size:10px" data-sqkick="${m.id}">KICK</button>` : `<span style="font-size:10px;color:${m.online ? '#4dff88' : '#ff6b7a'}">${m.online ? 'ONLINE' : 'OFFLINE'}</span>`}
+        </div>`).join('') + `</div>`;
+    }
+    h += `</div>`;
 
     if (!lb) {
-      const btabs = [['lobbies', 'Lobbies', on.publicLobbies.length], ['squad', 'Squad', sq ? sq.members.length : '']];
-      h += this.tabsHtml('mpbtab', btabs, this.mpBrowseTab);
-      if (this.mpBrowseTab === 'squad') {
-        h += squadBoxHtml();
-        return h;
-      }
       // CREATE / JOIN LOBBY + PUBLIC BROWSER
       h += `<div class="mp-box">
         <div class="mp-head"><span>Create or join a lobby</span></div>
@@ -12167,87 +11994,62 @@ class UIManager {
     const lseg = (k, opts) => `<div class="seg">` + opts.map(([v, l]) =>
       `<button class="${S[k] === v ? 'on' : ''}" ${amHost ? `data-lset="${k}" data-lval='${JSON.stringify(v)}'` : 'disabled'}><span>${l}</span></button>`).join('') + `</div>`;
 
-    h += `<div class="mp-top">
-      <div class="mp-row">
-        <div class="mp-code" id="copyLbCode" title="Click to copy lobby code">${this.esc(lb.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
-        <span class="mp-pill ${S.isPublic ? 'pub' : ''}">${S.isPublic ? 'PUBLIC' : 'PRIVATE'}</span>
-        <span class="mp-pill ${S.ranked ? 'ranked' : ''}">${S.ranked ? 'RANKED' : 'CASUAL'}</span>
-        <span class="mp-pill">${amHost ? 'HOST' : 'GUEST'}</span>
+    h += `<div class="mp-box">
+      <div class="mp-row" style="justify-content:space-between;margin-bottom:10px">
+        <div class="mp-row">
+          <div class="mp-code" id="copyLbCode" title="Click to copy lobby code">${this.esc(lb.code)} <span style="font-size:10px;opacity:.8">COPY</span></div>
+          <span class="mp-pill ${S.isPublic ? 'pub' : ''}">${S.isPublic ? 'PUBLIC' : 'PRIVATE'}</span>
+          <span class="mp-pill ${S.ranked ? 'ranked' : ''}">${S.ranked ? 'RANKED' : 'CASUAL'}</span>
+        </div>
+        <button class="mp-btn danger" id="btnLbLeave">Leave Lobby</button>
       </div>
-      <button class="mp-btn danger" id="btnLbLeave">Leave Lobby</button>
+      <div class="mp-teams">${renderTeam(0, 'blue', 'BLUE TEAM')}${renderTeam(1, 'orange', 'ORANGE TEAM')}</div>
+      <div class="mp-row" style="justify-content:space-between;margin-top:6px">
+        <span style="font-size:11px;color:var(--ink2)">Spectators: ${specs.length ? specs.map(s => this.esc(s.username)).join(', ') : 'None'}</span>
+        <div class="mp-row">
+          <button class="mp-btn ghost" data-lbt="random">Random Team</button>
+          <button class="mp-btn ghost" data-lbt="-1">Spectate</button>
+          <button class="mp-btn ${myP && myP.ready ? 'alt' : ''}" id="btnLbReady">${myP && myP.ready ? 'Unready' : 'Ready Up'}</button>
+          ${amHost ? `<button class="mp-btn go" id="btnLbStart">START MATCH</button>` : ''}
+        </div>
+      </div>
     </div>`;
 
-    const ltabs = [
-      ['lobby', 'Lobby', `${lb.players.length}/${S.teamSize * 2}`],
-      ['rules', 'Rules'],
-      ['arena', 'Arena'],
-      ['squad', 'Squad', sq ? sq.members.length : '']
-    ];
-    h += this.tabsHtml('mptab', ltabs, this.mpTab);
-
-    if (this.mpTab === 'lobby') {
-      h += `<div class="mp-box">
-        <div class="mp-teams" style="margin-top:0">${renderTeam(0, 'blue', 'BLUE TEAM')}${renderTeam(1, 'orange', 'ORANGE TEAM')}</div>
-        <div class="mp-row" style="justify-content:space-between;margin-top:6px">
-          <span style="font-size:11px;color:var(--ink2)">Spectators: ${specs.length ? specs.map(s => this.esc(s.username)).join(', ') : 'None'}</span>
-          <div class="mp-row">
-            <button class="mp-btn ghost" data-lbt="random">Random Team</button>
-            <button class="mp-btn ghost" data-lbt="-1">Spectate</button>
-          </div>
-        </div>
+    // LOBBY SETTINGS
+    h += `<div class="mp-box">
+      <div class="mp-head"><span>Lobby Settings</span><span class="mp-pill">${amHost ? 'HOST' : 'VIEW ONLY'}</span></div>
+      <div class="sect">Visibility & Type</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('isPublic', [[true, 'Public'], [false, 'Private (Code)']])}</div>
+        <div style="flex:1">${lseg('ranked', [[false, 'Casual'], [true, 'Ranked (RP)']])}</div>
       </div>
-      <div class="mp-box">
-        <div class="mp-head" style="color:var(--ink2)"><span>Lobby Chat</span></div>
-        <div class="mp-chat" id="lbChatLog"></div>
-        <div class="mp-row">
-          <input class="mp-in" id="inLbChat" maxlength="160" style="text-transform:none;letter-spacing:.02em;font-weight:500" placeholder="Type message and press Enter...">
-          <button class="mp-btn" id="btnLbSend">Send</button>
-        </div>
-      </div>`;
-    } else if (this.mpTab === 'rules') {
-      h += `<div class="mp-box">
-        <div class="mp-head"><span>Match Rules</span><span class="mp-pill">${amHost ? 'HOST CONTROLS' : 'VIEW ONLY'}</span></div>
-        <div class="sect" style="margin-top:4px">Visibility & Type</div>
-        <div class="mp-row" style="gap:10px">
-          <div style="flex:1">${lseg('isPublic', [[true, 'Public'], [false, 'Private (Code)']])}</div>
-          <div style="flex:1">${lseg('ranked', [[false, 'Casual'], [true, 'Ranked (RP)']])}</div>
-        </div>
-        <div class="sect">Team Size</div>${lseg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [4, '4v4']])}
-        <div class="sect">Mode</div>${lseg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem']])}
-        <div class="sect">Match Length</div>${lseg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
-        <div class="sect">Bot Fill & Difficulty</div>
-        <div class="mp-row" style="gap:10px">
-          <div style="flex:1">${lseg('botFill', [[true, 'Bots On'], [false, 'Humans Only']])}</div>
-          <div style="flex:1">${lseg('botDiff', DIFFICULTY.map((d, i) => [i, d.name]))}</div>
-        </div>
-        ${!S.ranked ? `<div class="sect">Boost & Mutators (Casual)</div>
-        <div class="mp-row" style="gap:10px">
-          <div style="flex:1">${lseg('boostMode', [['normal', 'Normal'], ['recharge', 'Recharge'], ['unlimited', 'Unlimited']])}</div>
-          <div style="flex:1">${lseg('mutator', [['normal', 'Standard'], ['lowgrav', 'Low Gravity'], ['fastball', 'Fast Ball']])}</div>
-        </div>` : '<div class="desc">Ranked lobbies enforce standard physics & normal boost for competitive integrity.</div>'}
-      </div>`;
-    } else if (this.mpTab === 'arena') {
-      h += `${!amHost ? '<div class="desc" style="margin:0 0 8px">Only the lobby host can change the arena or layout.</div>' : ''}` +
-        this.arenaPickerHtml({ key: 'arena', val: S.arena, layout: S.layout || 'default', isLobby: true, disabled: !amHost });
-    } else if (this.mpTab === 'squad') {
-      h += squadBoxHtml();
-    }
+      <div class="sect">Team Size</div>${lseg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [4, '4v4']])}
+      <div class="sect">Mode</div>${lseg('mode', [['standard', 'Standard'], ['mayhem', 'Mayhem']])}
+      <div class="sect">Arena</div>
+      <div class="seg"><button class="rand ${S.arena === -1 ? 'on' : ''}" ${amHost ? 'data-lset="arena" data-lval="-1"' : 'disabled'}><span>Random</span></button>${ARENAS.map((a, i) => a.weird ? '' : `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name.split(' ')[0]}</span></button>`).join('')}</div>
+      <div class="sect weird">Experimental Arenas <span class="sbadge">LABS</span></div>
+      <div class="seg">${ARENAS.map((a, i) => !a.weird ? '' : `<button class="${S.arena === i ? 'on' : ''}" ${amHost ? `data-lset="arena" data-lval="${i}"` : 'disabled'}><span>${a.name}</span></button>`).join('')}</div>
+      <div class="sect">Layout</div>${lseg('layout', LAYOUTS.map(l => [l.id, l.id === 'default' ? 'Default' : l.name.charAt(0) + l.name.slice(1).toLowerCase()]))}
+      <div class="sect">Match Length</div>${lseg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}
+      <div class="sect">Bot Fill & Difficulty</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('botFill', [[true, 'Bots On'], [false, 'Humans Only']])}</div>
+        <div style="flex:1">${lseg('botDiff', DIFFICULTY.map((d, i) => [i, d.name]))}</div>
+      </div>
+      ${!S.ranked ? `<div class="sect">Boost & Mutators (Casual)</div>
+      <div class="mp-row" style="gap:10px">
+        <div style="flex:1">${lseg('boostMode', [['normal', 'Normal'], ['recharge', 'Recharge'], ['unlimited', 'Unlimited']])}</div>
+        <div style="flex:1">${lseg('mutator', [['normal', 'Standard'], ['lowgrav', 'Low Gravity'], ['fastball', 'Fast Ball']])}</div>
+      </div>` : '<div class="desc">Ranked lobbies enforce standard physics & normal boost for competitive integrity.</div>'}
+    </div>`;
 
-    const durLbl = S.duration === 0 ? 'Unlimited' : `${Math.round((S.duration || 300) / 60)} min`;
-    const bDiffLbl = S.botFill ? ((DIFFICULTY[S.botDiff] && DIFFICULTY[S.botDiff].name) || 'PRO') : 'Off';
-    h += `<div class="dock">
-      ${this.sumBarHtml([
-        ['Teams', `${S.teamSize}v${S.teamSize}`, 'mptab', 'rules', false],
-        ['Mode', S.mode === 'mayhem' ? 'Mayhem' : 'Standard', 'mptab', 'rules', this.mpTab === 'rules'],
-        ['Arena', this.arenaLabel(S.arena), 'mptab', 'arena', this.mpTab === 'arena'],
-        ['Bots', bDiffLbl, 'mptab', 'rules', false],
-        ['Clock', durLbl, 'mptab', 'rules', false]
-      ])}
-      <div class="mp-dock-acts">
-        ${amHost
-          ? `<button class="mp-btn ${myP && myP.ready ? 'alt' : 'ghost'}" id="btnLbReady">${myP && myP.ready ? 'Unready' : 'Ready Up'}</button>
-             <button class="cta ${S.mode === 'mayhem' ? 'alt' : ''}" id="btnLbStart"><span>${ico('play')}Start Match</span></button>`
-          : `<button class="cta ${myP && myP.ready ? 'alt' : ''}" id="btnLbReady"><span>${myP && myP.ready ? 'Unready' : 'Ready Up'}</span></button>`}
+    // LOBBY CHAT
+    h += `<div class="mp-box">
+      <div class="mp-head" style="color:var(--ink2)"><span>Lobby Chat</span></div>
+      <div class="mp-chat" id="lbChatLog"></div>
+      <div class="mp-row">
+        <input class="mp-in" id="inLbChat" maxlength="160" style="text-transform:none;letter-spacing:.02em;font-weight:500" placeholder="Type message and press Enter...">
+        <button class="mp-btn" id="btnLbSend">Send</button>
       </div>
     </div>`;
     return h;
@@ -12264,8 +12066,6 @@ class UIManager {
     const P = $('menuPanel'), on = this.g.online;
     const click = (id, fn) => { const e = $(id); if (e) e.onclick = () => { this.g.audio.ui('click'); fn(); }; };
     const copyTxt = (txt, label) => { try { navigator.clipboard.writeText(txt); } catch (_) {} this.toast(label + ' COPIED: ' + txt); };
-    P.querySelectorAll('[data-mptab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.mpTab = b.dataset.mptab; this.renderPanel(`[data-mptab="${b.dataset.mptab}"]`); });
-    P.querySelectorAll('[data-mpbtab]').forEach(b => b.onclick = () => { this.g.audio.ui('click'); this.mpBrowseTab = b.dataset.mpbtab; this.renderPanel(`[data-mpbtab="${b.dataset.mpbtab}"]`); });
     click('btnSqCreate', () => on.createSquad());
     click('btnSqJoin', () => { const v = $('inSqCode').value.trim(); if (v) on.joinSquad(v); });
     click('btnSqLeave', () => on.leaveSquad());
@@ -12301,10 +12101,8 @@ class UIManager {
     const pct = Math.min(100, Math.round((u.xpProgress || 0) * 100));
     const rpct = Math.min(100, Math.round((r.progress || 0) * 100));
     const emblem = `<svg class="rank-emblem" viewBox="0 0 64 64"><path d="M32 3 58 15v18c0 15-11 24-26 28C17 57 6 48 6 33V15z" fill="rgba(4,8,20,.85)" stroke="${r.color}" stroke-width="3"/><path d="M32 13 50 21v12c0 10-7 16-18 19-11-3-18-9-18-19V21z" fill="${r.color}" opacity=".22"/><path d="M32 19l4.2 8.5 9.3 1.4-6.8 6.6 1.6 9.3L32 40.4l-8.3 4.4 1.6-9.3-6.8-6.6 9.3-1.4z" fill="${r.color}"/></svg>`;
-    const rtabs = [['overview', 'Overview'], ['leaderboard', 'Leaderboard', on.leaderboard.length || '']];
-    let h = `<div class="ph"><h2>Ranks & Progression</h2><span>infinite levels · competitive rp</span></div>${this.tabsHtml('rtab', rtabs, this.ranksTab)}`;
-    if (this.ranksTab === 'overview') {
-      h += `<div class="rank-hero" style="--rc:${r.color}">
+    let h = `<div class="ph"><h2>Ranks & Progression</h2><span>infinite levels · competitive rp</span></div>
+      <div class="rank-hero" style="--rc:${r.color}">
         <div style="display:flex;align-items:center;gap:16px">
           ${emblem}
           <div>
@@ -12326,9 +12124,8 @@ class UIManager {
         <div style="--sc:var(--good)"><b>${st.wins || 0}</b><span>WINS</span></div>
         <div style="--sc:var(--gold)"><b>${st.goals || 0}</b><span>GOALS</span></div>
         <div style="--sc:var(--accent)"><b>${st.saves || 0}</b><span>SAVES</span></div>
-      </div>`;
-    } else {
-      h += `<div class="mp-row" style="justify-content:space-between;margin:2px 0 6px">
+      </div>
+      <div class="mp-row" style="justify-content:space-between;margin:10px 0 4px">
         <div class="sect" style="margin:0">Global Leaderboard</div>
         <div class="mp-row">
           <button class="mp-btn ${on.lbSort === 'rp' ? '' : 'ghost'}" data-lbsort="rp">By Rank</button>
@@ -12347,15 +12144,9 @@ class UIManager {
           <td>${row.goals}</td>
         </tr>`).join('') : '<tr><td colspan="7" style="color:var(--ink2);text-align:center;padding:16px">Loading leaderboard...</td></tr>') +
       `</table>`;
-    }
     return h;
   }
   bindRanks() {
-    $('menuPanel').querySelectorAll('[data-rtab]').forEach(b => b.onclick = () => {
-      this.g.audio.ui('click');
-      this.ranksTab = b.dataset.rtab;
-      this.renderPanel(`[data-rtab="${b.dataset.rtab}"]`);
-    });
     $('menuPanel').querySelectorAll('[data-lbsort]').forEach(b => b.onclick = () => {
       this.g.audio.ui('click');
       this.g.online.fetchLeaderboard(b.dataset.lbsort).then(() => this.renderPanel()).catch(() => {});
@@ -12610,28 +12401,8 @@ class UIManager {
       ['Boost', k('Shift') + ' or Left mouse', 'B'], ['Powerslide / Free air roll', k('Ctrl') + ' / ' + k('X'), 'X'], ['Directional air roll', k('Q', 'E'), 'LB / RB'], ['Ball cam toggle', k('C') + ' or middle mouse', 'Y'],
       ['Use power-up (Mayhem) / launch stuck ball', k('R'), 'L3 / D-pad ↑'], ['Rear view (hold)', k('F'), 'R3'], ['Camera swivel', 'Mouse (click canvas to lock)', 'Right stick'], ['Scoreboard', k('Tab'), 'Back'], ['Pause / Mute audio', k('Esc') + ' / ' + k('P') + ' · ' + k('M'), 'Start'], ['Skip replay', k('Space'), 'A'],
       ['Free play: reset ball / car', k('R') + ' / ' + k('T'), 'Back'], ['Free play: launch ball / unlimited boost', k('L') + ' / ' + k('B'), 'D-pad ↓'], ['Spectate: cycle camera', k('V'), 'Y']];
-    const ctabs = [['bindings', 'Bindings'], ['mechanics', 'Mechanics']];
-    let h = `<div class="ph"><h2>Controls</h2><span>keyboard · mouse · gamepad</span></div>${this.tabsHtml('ctab', ctabs, this.controlsTab)}`;
-    if (this.controlsTab === 'bindings') {
-      h += `<table class="keys"><tr><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">ACTION</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">KEYBOARD / MOUSE</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">GAMEPAD</td></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('') + `</table>`;
-    } else {
-      const mechs = [
-        ['Dodge', 'Jump, then press jump again while holding a direction — front, back, side and diagonal flips add a burst of speed and spin. Jump again with no direction for a double jump.'],
-        ['Aerials', 'Jump, tilt the nose up and boost. Watch the glowing target ring under the ball to read bounces and time your takeoff.'],
-        ['Wall Driving', 'Drive smoothly into any curved wall to climb it. Keep the throttle held to maintain grip and make high clears.'],
-        ['Demolition', 'Hit an opponent at supersonic speed (when your supersonic trail appears) to destroy them and open the lane.'],
-        ['Flip Cancel', 'Pull back immediately during a front flip to halt the forward rotation mid-air and keep your nose pointed at the ball.']
-      ];
-      h += `<div class="mech-grid">` + mechs.map(([t, d]) => `<div class="mech-card"><h4>${t}</h4><p>${d}</p></div>`).join('') + `</div>`;
-    }
-    return h;
-  }
-  bindControls() {
-    $('menuPanel').querySelectorAll('[data-ctab]').forEach(b => b.onclick = () => {
-      this.g.audio.ui('click');
-      this.controlsTab = b.dataset.ctab;
-      this.renderPanel(`[data-ctab="${b.dataset.ctab}"]`);
-    });
+    return `<div class="ph"><h2>Controls</h2><span>keyboard · mouse · gamepad</span></div><table class="keys"><tr><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">ACTION</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">KEYBOARD / MOUSE</td><td style="color:#fff;font-weight:800;letter-spacing:.2em;font-size:11px">GAMEPAD</td></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('') + `</table>
+      <div class="sect">Mechanics</div><div class="desc"><b>Dodge:</b> jump, then press jump again while holding a direction — front/back/side/diagonal flips add a burst of speed and spin. Jump again with no direction for a double jump.<br><b>Aerials:</b> jump, tilt the nose up and boost. Watch the glowing target ring under the ball to read bounces.<br><b>Wall driving:</b> drive into any curved wall to climb it. Hold throttle to maintain grip.<br><b>Demolition:</b> hit an opponent at supersonic speed (trail appears) to destroy them.<br><b>Flip cancel:</b> pull back during a front flip to stop the rotation.</div>`;
   }
   updatePing() {
     const on = this.g.online, ms = on && on.connected ? on.ping : null;
