@@ -7977,7 +7977,7 @@ class World {
     this.ball = new Ball(); this.cars = []; this.pads = makeBoostPads(this.shape);
     this.pred = new BallPredictor(); this.brain = new TeamBrain();
     this.tick = 0; this.time = 0; this.kickoff = false; this.frozen = false; this.allowDemos = true; this.unlimitedBoost = false;
-    this.events = []; this.lastThreat = { team: -1, time: 99 };
+    this.events = []; this.lastThreat = { team: -1, time: 99, at: 0 };
     this.recorder = new ReplayRecorder(this); this.powers = null; this._icePos = new V3();
   }
   get arena() { return this.shape; }
@@ -7989,7 +7989,8 @@ class World {
     const ball = this.ball;
     ball.savePrev(); for (const c of this.cars) c.savePrev();
     if (!this.isOnlineClient) {
-      if (this.tick % 4 === 0) { this.lastThreat = { team: this.pred.goalTeam, time: this.pred.goalTime }; this.pred.update(ball, this.shape); }
+      // Refresh first so lastThreat is the newest pre-touch prediction (at most 4 ticks old)
+      if (this.tick % 4 === 0) { this.pred.update(ball, this.shape); this.lastThreat = { team: this.pred.goalTeam, time: this.pred.goalTime, at: this.time }; }
       this.brain.update(dt, this);
       for (const c of this.cars) if (c.bot) c.bot.update(dt, this);
     }
@@ -8072,13 +8073,22 @@ class World {
     ball.touchHistory.push({ car, time: this.time }); if (ball.touchHistory.length > 12) ball.touchHistory.shift();
     car.stats.touches++;
     if (!this.isOnlineClient) {
-      const before = this.lastThreat;
+      const before = this.lastThreat, beforeT = before.time - (this.time - before.at);
       this.pred.update(ball, this.shape);
-      const after = { team: this.pred.goalTeam, time: this.pred.goalTime };
-      hit.shot = after.team === 1 - car.team; hit.save = before.team === car.team && after.team !== car.team && before.time < 4; hit.epic = hit.save && before.time < 0.7;
+      const after = { team: this.pred.goalTeam, time: this.pred.goalTime, at: this.time };
+      const opp = 1 - car.team;
+      // A shot is a touch that puts the ball on target, not one that keeps it there
+      hit.shot = after.team === opp && before.team !== opp;
+      hit.save = before.team === car.team && after.team !== car.team && beforeT < 4; hit.epic = hit.save && beforeT < 0.7;
       this.lastThreat = after;
     }
     this.events.push(Object.assign({ type: 'hit' }, hit));
+  }
+  // Discrete power-up strikes on the ball (magnet launch, blast, punch) count as touches for shots/saves
+  powerTouch(car) {
+    if (this.isOnlineClient) { this.registerTouch(car); return; }
+    const b = this.ball;
+    this.onTouch({ car, strength: 0, x: b.pos.x, y: b.pos.y, z: b.pos.z, ballSpeed: b.vel.length(), prevSpeed: 0, power: true });
   }
   demolish(victim, attacker, overdrive) {
     victim.demolished = true; victim.respawnT = 3; attacker.stats.demos++;
@@ -8339,7 +8349,7 @@ class PowerSystem {
   }
   release(launch) {
     const b = this.w.ball, c = b.stuckTo; if (!c) return; b.stuckTo = null;
-    if (launch) { b.vel.copy(c.vel).addScaledVector(c.basis.f, 17).addScaledVector(c.basis.u, 6.5); const sp = b.vel.length(); if (sp > PHYS.ballMax) b.vel.multiplyScalar(PHYS.ballMax / sp); this.w.registerTouch(c); }
+    if (launch) { b.vel.copy(c.vel).addScaledVector(c.basis.f, 17).addScaledVector(c.basis.u, 6.5); const sp = b.vel.length(); if (sp > PHYS.ballMax) b.vel.multiplyScalar(PHYS.ballMax / sp); this.w.powerTouch(c); }
     c.spikeT = launch ? 0 : Math.min(c.spikeT, 0.6);
     this.ev('release', { car: c, launch: !!launch, pos: b.pos.clone() });
   }
@@ -8387,7 +8397,7 @@ class PowerSystem {
     if (d < R && !b.frozen && b.stuckTo !== c) {
       if (b.iceT > 0) this.shatter(c); if (b.stuckTo) this.release(false);
       const k = 1 - d / R; to.multiplyScalar(1 / Math.max(d, 1e-3)); to.y = Math.max(to.y, 0) + 0.35; to.normalize();
-      b.vel.addScaledVector(to, 10 + 26 * k); w.registerTouch(c);
+      b.vel.addScaledVector(to, 10 + 26 * k); w.powerTouch(c);
     }
     this.ev('shock', { car: c, pos: c.pos.clone() });
   }
@@ -8476,7 +8486,7 @@ class PowerSystem {
       if (b.iceT > 0) this.shatter(c); if (b.stuckTo) this.release(false);
       const dir = _pw3.copy(b.pos).sub(c.pos); dir.y = Math.max(dir.y, 0); dir.normalize(); dir.y += 0.28; dir.normalize();
       b.vel.multiplyScalar(0.2).addScaledVector(dir, 34); const sp = b.vel.length(); if (sp > PHYS.ballMax) b.vel.multiplyScalar(PHYS.ballMax / sp);
-      w.registerTouch(c); this.ev('punchHit', { car: c, pos: b.pos.clone(), dir: dir.clone() });
+      w.powerTouch(c); this.ev('punchHit', { car: c, pos: b.pos.clone(), dir: dir.clone() });
     } else if (S.kind === 'boot') {
       this.shots.splice(i, 1); const v = S.to;
       const dir = _pw3.copy(v.pos).sub(c.pos); dir.y = 0; if (dir.lengthSq() < 1e-4) dir.copy(c.basis.f); dir.normalize();
@@ -8503,6 +8513,7 @@ class ReplayRecorder {
     for (const e of evs) {
       switch (e.type) {
         case 'hit':
+          if (e.power) break; // power-up strikes have their own power event/effects
           this.pendingEvents.push({ type: 'hit', x: e.x, y: e.y, z: e.z, strength: e.strength, team: e.car.team });
           break;
         case 'bounce':
@@ -8932,6 +8943,7 @@ class MatchMode extends ModeBase {
   beginKickoff() {
     const w = this.world, g = this.game;
     w.ball.reset(0, PHYS.ballR, 0); w.ball.frozen = false; g.ballVisual.mesh.visible = true;
+    this.lastShotCar = null; for (const c of w.cars) c.lastShotAt = -1e9;
     this.kickoffPositions(this.cfg.teamSize);
     w.resetPads(); w.frozen = true; w.kickoff = true; w.brain.chooseKickers(w.cars, w.ball); w.recorder.clear();
     if (w.powers) w.powers.reset();
@@ -8988,17 +9000,24 @@ class MatchMode extends ModeBase {
   onTouch(hit) {
     if (this.exhibition || this.state !== 'play') return;
     const g = this.game, car = hit.car;
-    if (hit.save) { car.stats.saves++; car.stats.score += hit.epic ? 75 : 50; g.ui.feed(`${car.name} ${hit.epic ? 'EPIC SAVE!' : 'SAVE!'}`, car.team); if (car === g.player) g.ui.popup(hit.epic ? 'EPIC SAVE!' : 'SAVE!'); }
-    if (hit.shot && (!this.lastShotCar || this.lastShotCar !== car || g.world.time - this.lastShotT > 2)) { car.stats.shots++; car.stats.score += 20; this.lastShotCar = car; this.lastShotT = g.world.time; if (car === g.player) g.ui.popup('SHOT ON GOAL'); }
+    if (hit.save) { car.stats.saves++; car.stats.score += hit.epic ? 75 : 50; this.announceSave(car, hit.epic); }
+    if (hit.shot && (!this.lastShotCar || this.lastShotCar !== car || g.world.time - this.lastShotT > 2)) { car.stats.shots++; car.stats.score += 20; this.lastShotCar = car; this.lastShotT = g.world.time; car.lastShotAt = g.world.time; this.announceShot(car); }
     car.stats.score += 2;
   }
+  // UI only: also driven by the server's 'shot' / 'save' events in online matches
+  announceSave(car, epic) { const g = this.game; if (!car) return; g.ui.feed(`${car.name} ${epic ? 'EPIC SAVE!' : 'SAVE!'}`, car.team); if (car === g.player) g.ui.popup(epic ? 'EPIC SAVE!' : 'SAVE!'); }
+  announceShot(car) { if (car && car === this.game.player) this.game.ui.popup('SHOT ON GOAL'); }
   onGoal(goalTeam) {
     const g = this.game, w = this.world; const scoringTeam = 1 - goalTeam;
     this.score[scoringTeam]++;
     const hist = w.ball.touchHistory; let scorer = null, assist = null;
     for (let i = hist.length - 1; i >= 0; i--) { const h = hist[i]; if (h.car.team === scoringTeam && w.time - h.time < 8) { scorer = h.car; for (let j = i - 1; j >= 0; j--) { const a = hist[j]; if (a.car !== scorer && a.car.team === scoringTeam && h.time - a.time < 5) { assist = a.car; break; } if (a.car.team !== scoringTeam) break; } break; } }
     const own = w.ball.lastTouch && w.ball.lastTouch.team === goalTeam;
-    if (scorer && !this.exhibition) { scorer.stats.goals++; scorer.stats.score += 100; }
+    if (scorer && !this.exhibition) {
+      scorer.stats.goals++; scorer.stats.score += 100;
+      // Every goal is a shot: credit one if the scorer's touch wasn't flagged (deflections, power-ups)
+      if (!(w.time - (scorer.lastShotAt ?? -1e9) < 8)) { scorer.stats.shots++; scorer.stats.score += 20; scorer.lastShotAt = w.time; }
+    }
     if (assist && !this.exhibition) { assist.stats.assists++; assist.stats.score += 50; }
     const speed = Math.round(w.ball.vel.length() * 3.6);
     const pos = w.ball.pos.clone();
@@ -12804,7 +12823,11 @@ class GameEngine {
     const isEx = this.mode && this.mode.exhibition;
     for (const e of w.events) {
       switch (e.type) {
+        // Server-side shot/save credit (online); offline these come through mode.onTouch
+        case 'shot': if (this.mode && this.mode.announceShot && !isEx) this.mode.announceShot(e.car); break;
+        case 'save': if (this.mode && this.mode.announceSave && !isEx) this.mode.announceSave(e.car, !!e.epic); break;
         case 'hit': {
+          if (e.power) { if (this.mode) this.mode.onTouch(e); break; } // stat credit only: the power event drew the effect
           const pos = tmpV.set(e.x, e.y, e.z); const tc = TEAM_GLOW[e.car.team];
           fx.ballHit(pos, e.strength, tc, null); au.ballHit(e.strength, pos); this.ballVisual.flash(e.strength);
           if (e.car === p) { this.camera.addShake(clamp(e.strength / 90, 0.05, 0.45)); this.vibrate(clamp(e.strength / 40, 0.2, 1), 120); }

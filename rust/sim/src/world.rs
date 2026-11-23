@@ -44,6 +44,8 @@ pub enum WorldEvent {
 pub struct Threat {
     pub team: i32,
     pub time: f64,
+    /// World time the prediction was made (to age `time` when it is read later)
+    pub at: f64,
 }
 
 pub struct World {
@@ -110,6 +112,7 @@ impl World {
             last_threat: Threat {
                 team: -1,
                 time: 99.0,
+                at: 0.0,
             },
             powers: None,
             rng,
@@ -135,12 +138,14 @@ impl World {
         }
 
         if !self.is_online_client {
+            // Refresh first so last_threat is the newest pre-touch prediction (at most 4 ticks old)
             if self.tick.is_multiple_of(4) {
+                self.pred.update(&self.ball, &self.shape, &self.phys);
                 self.last_threat = Threat {
                     team: self.pred.goal_team,
                     time: self.pred.goal_time,
+                    at: self.time,
                 };
-                self.pred.update(&self.ball, &self.shape, &self.phys);
             }
             self.brain
                 .update(dt, &self.cars, &self.ball, self.shape.goal_line_z());
@@ -346,15 +351,19 @@ impl World {
         self.cars[ci].stats.touches += 1;
         if !self.is_online_client {
             let before = self.last_threat;
+            let before_t = before.time - (self.time - before.at);
             self.pred.update(&self.ball, &self.shape, &self.phys);
             let after = Threat {
                 team: self.pred.goal_team,
                 time: self.pred.goal_time,
+                at: self.time,
             };
             let team = self.cars[ci].team as i32;
-            hit.shot = after.team == 1 - team;
-            hit.save = before.team == team && after.team != team && before.time < 4.0;
-            hit.epic = hit.save && before.time < 0.7;
+            let opp = 1 - team;
+            // A shot is a touch that puts the ball on target, not one that keeps it there
+            hit.shot = after.team == opp && before.team != opp;
+            hit.save = before.team == team && after.team != team && before_t < 4.0;
+            hit.epic = hit.save && before_t < 0.7;
             self.last_threat = after;
         }
         self.events.push(WorldEvent::Hit(hit));
@@ -375,6 +384,29 @@ impl World {
             pos,
             overdrive,
         });
+    }
+
+    /// Discrete power-up strikes on the ball (magnet launch, blast, punch): a full touch
+    /// so shots/saves are credited. Online clients only record the touch.
+    pub fn power_touch(&mut self, car_idx: usize) {
+        if self.is_online_client {
+            self.register_touch(car_idx);
+            return;
+        }
+        let b = &self.ball;
+        let hit = CarBallHit {
+            car_idx,
+            strength: 0.0,
+            x: b.pos.x,
+            y: b.pos.y,
+            z: b.pos.z,
+            ball_speed: b.vel.length(),
+            prev_speed: 0.0,
+            shot: false,
+            save: false,
+            epic: false,
+        };
+        self.on_touch(hit);
     }
 
     pub fn register_touch(&mut self, car_idx: usize) {

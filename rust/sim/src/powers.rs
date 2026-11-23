@@ -499,7 +499,7 @@ impl PowerSystem {
             if sp > w.phys.ball_max {
                 w.ball.vel *= w.phys.ball_max / sp;
             }
-            w.register_touch(c_idx);
+            w.power_touch(c_idx);
         }
         w.cars[c_idx].spike_t = if launch {
             0.0
@@ -668,7 +668,7 @@ impl PowerSystem {
             to.y = to.y.max(0.0) + 0.35;
             to = to.three_normalize();
             w.ball.vel += to * (10.0 + 26.0 * k);
-            w.register_touch(car_idx);
+            w.power_touch(car_idx);
         }
         w.events.push(WorldEvent::Power(PowerEvent::Shock {
             car_idx,
@@ -1028,7 +1028,7 @@ impl PowerSystem {
             if sp > w.phys.ball_max {
                 w.ball.vel *= w.phys.ball_max / sp;
             }
-            w.register_touch(c_idx);
+            w.power_touch(c_idx);
             w.events.push(WorldEvent::Power(PowerEvent::PunchHit {
                 car_idx: c_idx,
                 pos: w.ball.pos,

@@ -208,6 +208,8 @@ pub struct ServerMatch {
     events: Vec<Value>,
     last_shot_car: Option<usize>,
     last_shot_t: f64,
+    /// Per car: world time of its last credited shot (goal fallback credit)
+    last_shot_at: Vec<f64>,
     stats_dirty: bool,
     last_instant: Instant,
     acc: f64,
@@ -365,6 +367,7 @@ impl ServerMatch {
             events: Vec::new(),
             last_shot_car: None,
             last_shot_t: 0.0,
+            last_shot_at: Vec::new(),
             stats_dirty: false,
             last_instant: Instant::now(),
             acc: 0.0,
@@ -842,7 +845,16 @@ impl ServerMatch {
         }
     }
 
+    fn mark_shot(last_shot_at: &mut Vec<f64>, car_idx: usize, t: f64) {
+        if last_shot_at.len() <= car_idx {
+            last_shot_at.resize(car_idx + 1, f64::NEG_INFINITY);
+        }
+        last_shot_at[car_idx] = t;
+    }
+
     fn begin_kickoff(&mut self) {
+        self.last_shot_car = None;
+        self.last_shot_at.clear();
         let ball_r = self.world.phys.ball_r;
         self.world.ball.reset(0.0, ball_r, 0.0);
         self.world.ball.frozen = false;
@@ -878,6 +890,11 @@ impl ServerMatch {
                         if hit.save {
                             car.stats.saves += 1;
                             car.stats.score += if hit.epic { 75 } else { 50 };
+                            self.events.push(json!({
+                                "type": "save",
+                                "car": { "$c": hit.car_idx },
+                                "epic": hit.epic,
+                            }));
                         }
                         if hit.shot
                             && (self.last_shot_car != Some(hit.car_idx)
@@ -887,6 +904,14 @@ impl ServerMatch {
                             car.stats.score += 20;
                             self.last_shot_car = Some(hit.car_idx);
                             self.last_shot_t = self.world.time;
+                            Self::mark_shot(&mut self.last_shot_at, hit.car_idx, self.world.time);
+                            self.events.push(json!({
+                                "type": "shot",
+                                "car": { "$c": hit.car_idx },
+                            }));
+                        }
+                        if hit.save || hit.shot {
+                            self.stats_dirty = true;
                         }
                         car.stats.score += 2;
                     }
@@ -959,6 +984,13 @@ impl ServerMatch {
         if let Some(sc) = scorer {
             self.world.cars[sc].stats.goals += 1;
             self.world.cars[sc].stats.score += 100;
+            // Every goal is a shot: credit one if the scorer's touch wasn't flagged (deflections, power-ups)
+            let last = self.last_shot_at.get(sc).copied().unwrap_or(f64::NEG_INFINITY);
+            if self.world.time - last >= 8.0 {
+                self.world.cars[sc].stats.shots += 1;
+                self.world.cars[sc].stats.score += 20;
+                Self::mark_shot(&mut self.last_shot_at, sc, self.world.time);
+            }
         }
         if let Some(asst) = assist {
             self.world.cars[asst].stats.assists += 1;
@@ -1640,5 +1672,78 @@ mod tests {
             MatchState::Countdown,
             "leaving player must unblock pending goal replay"
         );
+    }
+
+    /// Aims the ball straight at a goal and returns the team whose goal it will enter.
+    fn aim_ball_at_goal(m: &mut ServerMatch) -> i32 {
+        for dir in [1.0, -1.0] {
+            let ball_r = m.world.phys.ball_r;
+            m.world.ball.reset(0.0, ball_r, 0.0);
+            m.world.ball.vel.z = 40.0 * dir;
+            m.world.pred.update(&m.world.ball, &m.world.shape, &m.world.phys);
+            if m.world.pred.goal_team >= 0 {
+                return m.world.pred.goal_team;
+            }
+        }
+        panic!("ball never predicted into a goal");
+    }
+
+    fn touch_and_take_hit(m: &mut ServerMatch, car_idx: usize) -> sim::CarBallHit {
+        m.world.events.clear();
+        let b = &m.world.ball;
+        let hit = sim::CarBallHit {
+            car_idx,
+            strength: 10.0,
+            x: b.pos.x,
+            y: b.pos.y,
+            z: b.pos.z,
+            ball_speed: b.vel.length(),
+            prev_speed: 0.0,
+            shot: false,
+            save: false,
+            epic: false,
+        };
+        m.world.on_touch(hit);
+        m.world
+            .events
+            .iter()
+            .find_map(|e| match e {
+                WorldEvent::Hit(h) => Some(*h),
+                _ => None,
+            })
+            .expect("hit event")
+    }
+
+    #[test]
+    fn shot_requires_touch_to_put_ball_on_target() {
+        let mut m = make_test_match();
+        let goal_team = aim_ball_at_goal(&mut m);
+        m.world.cars[0].team = (1 - goal_team) as u8;
+        // Ball was not threatening before the touch: the touch created the shot
+        m.world.last_threat = sim::Threat { team: -1, time: 99.0, at: m.world.time };
+        assert!(touch_and_take_hit(&mut m, 0).shot);
+        // Ball already on target (last_threat now says so): another touch is not a new shot
+        aim_ball_at_goal(&mut m);
+        assert!(!touch_and_take_hit(&mut m, 0).shot);
+    }
+
+    #[test]
+    fn goal_without_flagged_shot_still_counts_as_shot_once() {
+        let mut m = make_test_match();
+        let team = m.world.cars[0].team as usize;
+        let t = m.world.time;
+        m.world.ball.touch_history.push(sim::TouchRecord { car_idx: 0, time: t });
+        m.on_goal(1 - team);
+        assert_eq!(m.world.cars[0].stats.goals, 1);
+        assert_eq!(m.world.cars[0].stats.shots, 1, "deflection/power goal gets a shot");
+
+        // A goal right after a credited shot is not double counted
+        let mut m = make_test_match();
+        let t = m.world.time;
+        ServerMatch::mark_shot(&mut m.last_shot_at, 0, t);
+        m.world.cars[0].stats.shots = 1;
+        m.world.ball.touch_history.push(sim::TouchRecord { car_idx: 0, time: t });
+        m.on_goal(1 - team);
+        assert_eq!(m.world.cars[0].stats.shots, 1);
     }
 }
