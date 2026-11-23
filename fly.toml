@@ -10,6 +10,7 @@ primary_region = 'ord'
   dockerfile = 'Dockerfile'
 
 [env]
+  ADMIN_USER = 'jreoka'
   DATA_DIR = '/data'
   NODE_ENV = 'production'
   PORT = '8080'

@@ -57,7 +57,12 @@ self.addEventListener('fetch', (event) => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
 
   if (url.origin === self.location.origin) {
-    if (url.pathname.startsWith('/api/') || url.pathname === '/sw.js') {
+    if (
+      url.pathname.startsWith('/api/') ||
+      url.pathname === '/sw.js' ||
+      url.pathname === '/admin' ||
+      url.pathname.startsWith('/admin/')
+    ) {
       return;
     }
 

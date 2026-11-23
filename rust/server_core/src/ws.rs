@@ -35,6 +35,9 @@ pub enum WsOut {
 pub struct ClientHandle {
     pub conn_id: u64,
     pub ip: String,
+    pub user_agent: String,
+    pub connected_at: i64,
+    pub session_token: Option<String>,
     pub tx: mpsc::UnboundedSender<WsOut>,
     pub backlog_bytes: Arc<AtomicUsize>,
     pub user_id: Option<String>,
@@ -99,6 +102,110 @@ impl Default for RuntimeState {
     }
 }
 
+pub fn disconnect_user(state: &AppState, user_id: &str, reason: &str) -> bool {
+    let mut rt = state.rt.lock().unwrap();
+    let db = state.db.lock().unwrap();
+    let Some(&cid) = rt.clients_by_user_id.get(user_id) else {
+        return false;
+    };
+    send_to_conn(&rt, cid, &json!({ "type": "kicked", "reason": reason }));
+    stop_solo_match(&mut rt, cid);
+    leave_lobby(&mut rt, &db, cid, "kicked");
+    leave_squad(&mut rt, &db, cid);
+    rt.clients_by_user_id.remove(user_id);
+    if let Some(c) = rt.conns.get(&cid) {
+        c.close();
+    }
+    true
+}
+
+pub fn disconnect_session_tokens(state: &AppState, tokens: &[String], reason: &str) -> usize {
+    if tokens.is_empty() {
+        return 0;
+    }
+    let token_set: HashSet<&str> = tokens.iter().map(|s| s.as_str()).collect();
+    let mut rt = state.rt.lock().unwrap();
+    let db = state.db.lock().unwrap();
+    let targets: Vec<(u64, Option<String>)> = rt
+        .conns
+        .values()
+        .filter(|c| {
+            c.session_token
+                .as_deref()
+                .is_some_and(|t| token_set.contains(t))
+        })
+        .map(|c| (c.conn_id, c.user_id.clone()))
+        .collect();
+    let count = targets.len();
+    for (cid, uid) in targets {
+        send_to_conn(&rt, cid, &json!({ "type": "kicked", "reason": reason }));
+        stop_solo_match(&mut rt, cid);
+        leave_lobby(&mut rt, &db, cid, "kicked");
+        leave_squad(&mut rt, &db, cid);
+        if let Some(u) = uid
+            && rt.clients_by_user_id.get(&u).copied() == Some(cid)
+        {
+            rt.clients_by_user_id.remove(&u);
+        }
+        if let Some(c) = rt.conns.get(&cid) {
+            c.close();
+        }
+    }
+    count
+}
+
+pub fn active_session_tokens(state: &AppState) -> HashSet<String> {
+    let rt = state.rt.lock().unwrap();
+    rt.conns
+        .values()
+        .filter_map(|c| c.session_token.clone())
+        .collect()
+}
+
+pub fn force_close_lobby(state: &AppState, code: &str) -> bool {
+    let mut rt = state.rt.lock().unwrap();
+    let Some(mut lb) = rt.lobbies.shift_remove(code) else {
+        return false;
+    };
+    if let Some(sim) = lb.sim.take() {
+        sim.stop();
+    }
+    let player_ids: Vec<String> = lb.players.keys().cloned().collect();
+    for uid in player_ids {
+        if let Some(&cid) = rt.clients_by_user_id.get(&uid) {
+            if let Some(c) = rt.conns.get_mut(&cid)
+                && c.lobby_code.as_deref() == Some(code)
+            {
+                c.lobby_code = None;
+            }
+            send_to_conn(
+                &rt,
+                cid,
+                &json!({ "type": "lobby_left", "reason": "Lobby closed by admin." }),
+            );
+            send_to_conn(
+                &rt,
+                cid,
+                &json!({ "type": "toast", "text": "LOBBY CLOSED BY ADMIN" }),
+            );
+        }
+    }
+    true
+}
+
+pub fn broadcast_toast(state: &AppState, text: &str) -> usize {
+    let rt = state.rt.lock().unwrap();
+    let msg = json!({ "type": "toast", "text": text });
+    let mut count = 0;
+    for c in rt.conns.values() {
+        if c.user_id.is_some() {
+            c.send_json(&msg);
+            count += 1;
+        }
+    }
+    count
+}
+
 pub fn handle_ws_upgrade(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -112,12 +219,13 @@ pub fn handle_ws_upgrade(
     }
 
     let ip = state.config.get_client_ip(&headers, remote_addr);
+    let user_agent = crate::config::header_str(&headers, "user-agent").to_string();
     let expected = state.config.expected_origin(&headers, false);
     let cookie = issue_client_cookie(&state.config.client_secret, &expected);
 
     let mut resp = ws
         .max_message_size(16_384)
-        .on_upgrade(move |socket| run_socket(state, socket, ip));
+        .on_upgrade(move |socket| run_socket(state, socket, ip, user_agent));
 
     if let Ok(val) = HeaderValue::from_str(&cookie) {
         resp.headers_mut().insert(header::SET_COOKIE, val);
@@ -125,7 +233,11 @@ pub fn handle_ws_upgrade(
     resp
 }
 
-async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String) {
+async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String, user_agent: String) {
+    state
+        .metrics
+        .ws_connections_total
+        .fetch_add(1, Ordering::Relaxed);
     let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<WsOut>();
     let backlog_bytes = Arc::new(AtomicUsize::new(0));
@@ -140,6 +252,9 @@ async fn run_socket(state: Arc<AppState>, socket: WebSocket, ip: String) {
             ClientHandle {
                 conn_id: id,
                 ip,
+                user_agent,
+                connected_at: now_ms(),
+                session_token: None,
                 tx: tx.clone(),
                 backlog_bytes,
                 user_id: None,
@@ -1229,10 +1344,27 @@ fn handle_ws_message(
     // Auth
     if msg_type == "auth" {
         let token = msg.get("token").and_then(|v| v.as_str()).unwrap_or("");
+        let (conn_ip, conn_ua) = {
+            let rt = state.rt.lock().unwrap();
+            rt.conns
+                .get(&conn_id)
+                .map(|c| (c.ip.clone(), c.user_agent.clone()))
+                .unwrap_or_default()
+        };
         let user_info = {
             let mut db = state.db.lock().unwrap();
-            db.get_user_by_token(token)
-                .map(|u| (u.id.clone(), u.username.clone(), u.username.to_ascii_lowercase(), public_user(u)))
+            let info = db.get_user_by_token(token).map(|u| {
+                (
+                    u.id.clone(),
+                    u.username.clone(),
+                    u.username.to_ascii_lowercase(),
+                    public_user(u),
+                )
+            });
+            if info.is_some() {
+                db.touch_session(token, &conn_ip, &conn_ua);
+            }
+            info
         };
         let Some((uid, uname, ulower, pub_u)) = user_info else {
             let rt = state.rt.lock().unwrap();
@@ -1275,6 +1407,7 @@ fn handle_ws_message(
             c.user_id = Some(uid.clone());
             c.username = Some(uname);
             c.username_lower = Some(ulower);
+            c.session_token = Some(token.to_string());
         }
         rt.clients_by_user_id.insert(uid, conn_id);
         let online = rt.clients_by_user_id.len();

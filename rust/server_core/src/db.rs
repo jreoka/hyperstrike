@@ -1,4 +1,4 @@
-use crate::auth::{SESSION_TTL_MS, now_ms, random_hex};
+use crate::auth::{SESSION_TTL_MS, now_ms, parse_user_agent, random_hex, session_public_id};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -300,6 +300,22 @@ pub struct Session {
     pub username_lower: String,
     pub created_at: i64,
     pub expires_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -380,18 +396,123 @@ impl Database {
     }
 
     pub fn create_session(&mut self, username_lower: &str) -> String {
+        self.create_session_with_meta(username_lower, "", "")
+    }
+
+    pub fn create_session_with_meta(
+        &mut self,
+        username_lower: &str,
+        ip: &str,
+        user_agent: &str,
+    ) -> String {
         let token = random_hex(32);
         let now = now_ms();
+        let ua_clean: String = user_agent.trim().chars().take(240).collect();
+        let ip_clean = ip.trim().to_string();
+        let info = parse_user_agent(&ua_clean);
         self.data.sessions.insert(
             token.clone(),
             Session {
                 username_lower: username_lower.to_string(),
                 created_at: now,
                 expires_at: now + SESSION_TTL_MS,
+                id: Some(random_hex(6)),
+                ip: (!ip_clean.is_empty()).then_some(ip_clean.clone()),
+                user_agent: (!ua_clean.is_empty()).then_some(ua_clean),
+                device_type: Some(info.device_type),
+                os: Some(info.os),
+                browser: Some(info.browser),
+                last_seen_at: Some(now),
+                last_ip: (!ip_clean.is_empty()).then_some(ip_clean),
             },
         );
         self.dirty = true;
         token
+    }
+
+    pub fn touch_session(&mut self, token: &str, ip: &str, user_agent: &str) {
+        let now = now_ms();
+        let Some(sess) = self.data.sessions.get_mut(token) else {
+            return;
+        };
+        if sess.expires_at < now {
+            return;
+        }
+        let mut changed = false;
+        let ip_clean = ip.trim();
+        let ua_clean: String = user_agent.trim().chars().take(240).collect();
+
+        if sess.id.is_none() {
+            sess.id = Some(session_public_id(token, None));
+            changed = true;
+        }
+        if !ip_clean.is_empty() {
+            if sess.ip.is_none() {
+                sess.ip = Some(ip_clean.to_string());
+                changed = true;
+            }
+            if sess.last_ip.as_deref() != Some(ip_clean) {
+                sess.last_ip = Some(ip_clean.to_string());
+                changed = true;
+            }
+        }
+        if !ua_clean.is_empty() && sess.user_agent.is_none() {
+            let info = parse_user_agent(&ua_clean);
+            sess.user_agent = Some(ua_clean);
+            sess.device_type = Some(info.device_type);
+            sess.os = Some(info.os);
+            sess.browser = Some(info.browser);
+            changed = true;
+        }
+        if sess.last_seen_at.is_none_or(|prev| now - prev >= 60_000) {
+            sess.last_seen_at = Some(now);
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    pub fn find_token_by_session_id(
+        &self,
+        session_id: &str,
+        username_lower: Option<&str>,
+    ) -> Option<String> {
+        let now = now_ms();
+        for (tok, sess) in &self.data.sessions {
+            if sess.expires_at < now {
+                continue;
+            }
+            if let Some(u) = username_lower
+                && sess.username_lower != u
+            {
+                continue;
+            }
+            if session_public_id(tok, sess.id.as_deref()) == session_id {
+                return Some(tok.clone());
+            }
+        }
+        None
+    }
+
+    pub fn remove_user_sessions(
+        &mut self,
+        username_lower: &str,
+        except_token: Option<&str>,
+    ) -> Vec<String> {
+        let mut removed = Vec::new();
+        self.data.sessions.retain(|tok, sess| {
+            let should_remove =
+                sess.username_lower == username_lower && except_token != Some(tok.as_str());
+            if should_remove {
+                removed.push(tok.clone());
+            }
+            !should_remove
+        });
+        if !removed.is_empty() {
+            self.dirty = true;
+        }
+        removed
     }
 
     pub fn get_username_by_token(&mut self, token: &str) -> Option<String> {

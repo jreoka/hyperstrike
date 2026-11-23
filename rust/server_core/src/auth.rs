@@ -4,7 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use rand::RngCore;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
@@ -171,6 +171,100 @@ pub fn get_bearer_token(headers: &HeaderMap) -> Option<String> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub device_type: String,
+    pub os: String,
+    pub browser: String,
+}
+
+pub fn parse_user_agent(ua: &str) -> DeviceInfo {
+    let trimmed = ua.trim();
+    if trimmed.is_empty() {
+        return DeviceInfo {
+            device_type: "Unknown".to_string(),
+            os: "Unknown".to_string(),
+            browser: "Unknown".to_string(),
+        };
+    }
+    let lower = trimmed.to_ascii_lowercase();
+
+    let is_bot = lower.contains("bot")
+        || lower.contains("crawler")
+        || lower.contains("spider")
+        || lower.contains("headless");
+
+    let os = if lower.contains("iphone") || lower.contains("ipad") || lower.contains("ipod") {
+        "iOS"
+    } else if lower.contains("android") {
+        "Android"
+    } else if lower.contains("cros") {
+        "ChromeOS"
+    } else if lower.contains("windows") {
+        "Windows"
+    } else if lower.contains("mac os x") || lower.contains("macintosh") {
+        "macOS"
+    } else if lower.contains("linux") {
+        "Linux"
+    } else {
+        "Unknown"
+    };
+
+    let device_type = if is_bot {
+        "Bot"
+    } else if lower.contains("ipad")
+        || lower.contains("tablet")
+        || (lower.contains("android") && !lower.contains("mobile"))
+    {
+        "Tablet"
+    } else if lower.contains("mobile")
+        || lower.contains("iphone")
+        || lower.contains("ipod")
+        || lower.contains("android")
+    {
+        "Mobile"
+    } else if os != "Unknown" {
+        "Desktop"
+    } else {
+        "Unknown"
+    };
+
+    let browser = if lower.contains("edg/") || lower.contains("edga/") || lower.contains("edgios/")
+    {
+        "Edge"
+    } else if lower.contains("opr/") || lower.contains("opera") {
+        "Opera"
+    } else if lower.contains("samsungbrowser") {
+        "Samsung Internet"
+    } else if lower.contains("firefox/") || lower.contains("fxios/") {
+        "Firefox"
+    } else if lower.contains("chrome/") || lower.contains("crios/") {
+        "Chrome"
+    } else if lower.contains("safari/") {
+        "Safari"
+    } else if lower.contains("curl/") {
+        "curl"
+    } else {
+        "Unknown"
+    };
+
+    DeviceInfo {
+        device_type: device_type.to_string(),
+        os: os.to_string(),
+        browser: browser.to_string(),
+    }
+}
+
+pub fn session_public_id(token: &str, stored_id: Option<&str>) -> String {
+    if let Some(id) = stored_id
+        && !id.is_empty()
+    {
+        return id.to_string();
+    }
+    let digest = Sha256::digest(token.as_bytes());
+    hex::encode(&digest[..6])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +323,35 @@ mod tests {
             cookie_val,
             now_ms() + CLIENT_COOKIE_TTL_MS + 1000
         ));
+    }
+
+    #[test]
+    fn parses_common_user_agents() {
+        let win_chrome = parse_user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        );
+        assert_eq!(win_chrome.device_type, "Desktop");
+        assert_eq!(win_chrome.os, "Windows");
+        assert_eq!(win_chrome.browser, "Chrome");
+
+        let ios_safari = parse_user_agent(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+        );
+        assert_eq!(ios_safari.device_type, "Mobile");
+        assert_eq!(ios_safari.os, "iOS");
+        assert_eq!(ios_safari.browser, "Safari");
+
+        let mac_ff = parse_user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
+        );
+        assert_eq!(mac_ff.device_type, "Desktop");
+        assert_eq!(mac_ff.os, "macOS");
+        assert_eq!(mac_ff.browser, "Firefox");
+
+        let ipad = parse_user_agent(
+            "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        );
+        assert_eq!(ipad.device_type, "Tablet");
+        assert_eq!(ipad.os, "iOS");
     }
 }

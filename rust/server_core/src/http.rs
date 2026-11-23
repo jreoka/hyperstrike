@@ -1,8 +1,9 @@
 use crate::{AppState, CachedIndexHtml};
 use crate::auth::{
     get_bearer_token, has_valid_client_cookie, hash_password, issue_client_cookie, now_ms,
-    random_hex, verify_password,
+    random_hex, session_public_id, verify_password,
 };
+use crate::config::header_str;
 use crate::db::{CarCustomization, User, UserStats, compute_rank, public_user, sanitize_car};
 use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
@@ -12,8 +13,10 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 const MAX_JSON_BODY_BYTES: usize = 32_768;
 
@@ -57,14 +60,14 @@ pub fn forbidden_origin_response() -> Response {
     resp
 }
 
-fn check_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+pub(crate) fn check_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     if !state.config.is_request_allowed(headers, false) {
         return Err(Box::new(forbidden_origin_response()));
     }
     Ok(())
 }
 
-fn check_api_access(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+pub(crate) fn check_api_access(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     check_origin(state, headers)?;
     if !has_valid_client_cookie(&state.config.client_secret, headers) {
         return Err(Box::new(json_response(
@@ -76,7 +79,7 @@ fn check_api_access(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Res
     Ok(())
 }
 
-fn parse_json_body(state: &AppState, body: &Bytes) -> Result<Value, Box<Response>> {
+pub(crate) fn parse_json_body(state: &AppState, body: &Bytes) -> Result<Value, Box<Response>> {
     if body.len() > MAX_JSON_BODY_BYTES {
         return Err(Box::new(json_response(
             state,
@@ -493,14 +496,21 @@ pub async fn register(
         ac_log: Vec::new(),
     };
     let pub_u = public_user(&user);
+    let is_admin = state.config.is_admin_username(&user.username);
+    let ua = header_str(&headers, "user-agent");
     db.data.users.insert(key.clone(), user);
-    let token = db.create_session(&key);
+    let token = db.create_session_with_meta(&key, &ip, ua);
     db.mark_dirty();
+    drop(db);
+    state
+        .metrics
+        .registrations_total
+        .fetch_add(1, Ordering::Relaxed);
 
     json_response(
         &state,
         StatusCode::CREATED,
-        &json!({ "token": token, "user": pub_u }),
+        &json!({ "token": token, "user": pub_u, "isAdmin": is_admin }),
     )
 }
 
@@ -574,11 +584,15 @@ pub async fn login(
             &json!({ "error": "Invalid username or password." }),
         );
     };
-    let token = db.create_session(&key);
+    let is_admin = state.config.is_admin_username(&pub_u.username);
+    let ua = header_str(&headers, "user-agent");
+    let token = db.create_session_with_meta(&key, &ip, ua);
+    drop(db);
+    state.metrics.logins_total.fetch_add(1, Ordering::Relaxed);
     json_response(
         &state,
         StatusCode::OK,
-        &json!({ "token": token, "user": pub_u }),
+        &json!({ "token": token, "user": pub_u, "isAdmin": is_admin }),
     )
 }
 
@@ -587,9 +601,16 @@ pub async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
         return *resp;
     }
     if let Some(token) = get_bearer_token(&headers) {
-        let mut db = state.db.lock().unwrap();
-        if db.data.sessions.shift_remove(&token).is_some() {
-            db.mark_dirty();
+        let removed = {
+            let mut db = state.db.lock().unwrap();
+            let existed = db.data.sessions.shift_remove(&token).is_some();
+            if existed {
+                db.mark_dirty();
+            }
+            existed
+        };
+        if removed {
+            crate::ws::disconnect_session_tokens(&state, &[token], "Signed out.");
         }
     }
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
@@ -702,20 +723,32 @@ pub async fn change_password(
         }
     };
 
-    let mut db = state.db.lock().unwrap();
-    if let Some(u) = db.data.users.get_mut(&key) {
-        u.salt = new_salt;
-        u.pass_hash = new_hash;
+    let removed = {
+        let mut db = state.db.lock().unwrap();
+        if let Some(u) = db.data.users.get_mut(&key) {
+            u.salt = new_salt;
+            u.pass_hash = new_hash;
+        }
+        let rem = db.remove_user_sessions(&key, Some(&token));
+        db.mark_dirty();
+        rem
+    };
+    if !removed.is_empty() {
+        crate::ws::disconnect_session_tokens(
+            &state,
+            &removed,
+            "Password changed on another device.",
+        );
     }
-    db.data
-        .sessions
-        .retain(|tok, sess| !(sess.username_lower == key && tok != &token));
-    db.mark_dirty();
 
     json_response(&state, StatusCode::OK, &json!({ "ok": true }))
 }
 
-pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn me(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    extensions: Extensions,
+) -> Response {
     if let Err(resp) = check_api_access(&state, &headers) {
         return *resp;
     }
@@ -726,9 +759,16 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             &json!({ "error": "Not authenticated" }),
         );
     };
+    let remote = extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
+    let ip = state.config.get_client_ip(&headers, remote);
+    let ua = header_str(&headers, "user-agent");
     let pub_u = {
         let mut db = state.db.lock().unwrap();
-        db.get_user_by_token(&token).map(public_user)
+        let u = db.get_user_by_token(&token).map(public_user);
+        if u.is_some() {
+            db.touch_session(&token, &ip, ua);
+        }
+        u
     };
     let Some(user) = pub_u else {
         return json_response(
@@ -737,6 +777,7 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             &json!({ "error": "Not authenticated" }),
         );
     };
+    let is_admin = state.config.is_admin_username(&user.username);
     let (online, lobbies) = {
         let rt = state.rt.lock().unwrap();
         (rt.clients_by_user_id.len(), rt.lobbies.len())
@@ -746,12 +787,198 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
         StatusCode::OK,
         &json!({
             "user": user,
+            "isAdmin": is_admin,
             "server": {
                 "region": state.config.region,
                 "online": online,
                 "lobbies": lobbies
             }
         }),
+    )
+}
+
+pub async fn list_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    extensions: Extensions,
+) -> Response {
+    if let Err(resp) = check_api_access(&state, &headers) {
+        return *resp;
+    }
+    let Some(token) = get_bearer_token(&headers) else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+    let remote = extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
+    let ip = state.config.get_client_ip(&headers, remote);
+    let ua = header_str(&headers, "user-agent");
+
+    let key = {
+        let mut db = state.db.lock().unwrap();
+        let k = db.get_username_by_token(&token);
+        if k.is_some() {
+            db.touch_session(&token, &ip, ua);
+        }
+        k
+    };
+    let Some(key) = key else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+
+    let now = now_ms();
+    let active_ws: HashSet<String> = crate::ws::active_session_tokens(&state);
+
+    let mut sessions: Vec<(bool, i64, Value)> = {
+        let db = state.db.lock().unwrap();
+        db.data
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.username_lower == key && s.expires_at >= now)
+            .map(|(tok, s)| {
+                let is_current = tok == &token;
+                let last_seen = s.last_seen_at.unwrap_or(s.created_at);
+                let sid = session_public_id(tok, s.id.as_deref());
+                let val = json!({
+                    "id": sid,
+                    "isCurrent": is_current,
+                    "isOnline": active_ws.contains(tok),
+                    "deviceType": s.device_type.as_deref().unwrap_or("Unknown"),
+                    "os": s.os.as_deref().unwrap_or("Unknown"),
+                    "browser": s.browser.as_deref().unwrap_or("Unknown"),
+                    "ip": s.ip.as_deref().unwrap_or("unknown"),
+                    "lastIp": s.last_ip.as_deref().or(s.ip.as_deref()).unwrap_or("unknown"),
+                    "userAgent": s.user_agent.as_deref().unwrap_or(""),
+                    "createdAt": s.created_at,
+                    "lastSeenAt": last_seen,
+                    "expiresAt": s.expires_at
+                });
+                (is_current, last_seen, val)
+            })
+            .collect()
+    };
+
+    sessions.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let list: Vec<Value> = sessions.into_iter().map(|x| x.2).collect();
+    json_response(&state, StatusCode::OK, &json!({ "sessions": list }))
+}
+
+pub async fn revoke_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(resp) = check_api_access(&state, &headers) {
+        return *resp;
+    }
+    let Some(token) = get_bearer_token(&headers) else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+    let key = {
+        let mut db = state.db.lock().unwrap();
+        db.get_username_by_token(&token)
+    };
+    let Some(key) = key else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+
+    let parsed = match parse_json_body(&state, &body) {
+        Ok(v) => v,
+        Err(resp) => return *resp,
+    };
+    let session_id = parsed
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .unwrap_or("");
+    if session_id.is_empty() {
+        return json_response(
+            &state,
+            StatusCode::BAD_REQUEST,
+            &json!({ "error": "Missing sessionId" }),
+        );
+    }
+
+    let removed_token = {
+        let mut db = state.db.lock().unwrap();
+        let Some(tok) = db.find_token_by_session_id(session_id, Some(&key)) else {
+            return json_response(
+                &state,
+                StatusCode::NOT_FOUND,
+                &json!({ "error": "Session not found" }),
+            );
+        };
+        db.data.sessions.shift_remove(&tok);
+        db.mark_dirty();
+        tok
+    };
+
+    let revoked_current = removed_token == token;
+    crate::ws::disconnect_session_tokens(&state, &[removed_token], "Session revoked.");
+
+    json_response(
+        &state,
+        StatusCode::OK,
+        &json!({ "ok": true, "revokedCurrent": revoked_current }),
+    )
+}
+
+pub async fn revoke_other_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(resp) = check_api_access(&state, &headers) {
+        return *resp;
+    }
+    let Some(token) = get_bearer_token(&headers) else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+    let key = {
+        let mut db = state.db.lock().unwrap();
+        db.get_username_by_token(&token)
+    };
+    let Some(key) = key else {
+        return json_response(
+            &state,
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": "Not authenticated" }),
+        );
+    };
+
+    let removed = {
+        let mut db = state.db.lock().unwrap();
+        db.remove_user_sessions(&key, Some(&token))
+    };
+    let count = removed.len();
+    if !removed.is_empty() {
+        crate::ws::disconnect_session_tokens(
+            &state,
+            &removed,
+            "Signed out from another device.",
+        );
+    }
+    json_response(
+        &state,
+        StatusCode::OK,
+        &json!({ "ok": true, "revokedCount": count }),
     )
 }
 

@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hyperstrike — Admin</title>
+<style>
+:root{
+  --bg:#0b0d11;
+  --surf:#11141b;
+  --surf2:#161b24;
+  --line:#202634;
+  --line2:#2c3548;
+  --ink:#e6ebf5;
+  --ink2:#8e98ad;
+  --ink3:#5c667a;
+  --acc:#38bdf8;
+  --acc-dim:rgba(56,189,248,.12);
+  --green:#22c55e;
+  --green-dim:rgba(34,197,94,.12);
+  --amber:#f59e0b;
+  --amber-dim:rgba(245,158,11,.12);
+  --red:#ef4444;
+  --red-dim:rgba(239,68,68,.12);
+  --purple:#a78bfa;
+  --r:6px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select{font-family:inherit;font-size:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+
+/* Auth gate */
+.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.gate-card{width:100%;max-width:360px;background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:28px}
+.gate-brand{font-size:11px;font-weight:700;letter-spacing:.18em;color:var(--acc);text-transform:uppercase;margin-bottom:6px}
+.gate-title{font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.gate-sub{color:var(--ink2);font-size:12px;margin-bottom:20px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--ink2);margin-bottom:5px;letter-spacing:.03em}
+.field input,.field select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:9px 11px;outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus{border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 13px;border-radius:var(--r);border:1px solid var(--line2);background:var(--surf2);color:var(--ink);font-weight:600;font-size:12px;cursor:pointer;transition:background .12s,border-color .12s,opacity .12s;white-space:nowrap}
+.btn:hover{background:#1d2330;border-color:#3a465e}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--acc);color:#06121b;border-color:var(--acc)}
+.btn-primary:hover{background:#56c8fa;border-color:#56c8fa}
+.btn-danger{background:var(--red-dim);color:var(--red);border-color:rgba(239,68,68,.3)}
+.btn-danger:hover{background:rgba(239,68,68,.22);border-color:var(--red)}
+.btn-amber{background:var(--amber-dim);color:var(--amber);border-color:rgba(245,158,11,.3)}
+.btn-amber:hover{background:rgba(245,158,11,.22);border-color:var(--amber)}
+.btn-green{background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,.3)}
+.btn-green:hover{background:rgba(34,197,94,.22);border-color:var(--green)}
+.btn-sm{padding:5px 9px;font-size:11px}
+.btn-block{width:100%}
+.err-text{color:var(--red);font-size:12px;margin-bottom:12px;min-height:16px}
+
+/* App Shell */
+.shell{display:grid;grid-template-columns:224px 1fr;min-height:100vh}
+.side{background:var(--surf);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.side-top{padding:18px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.logo{font-weight:800;font-size:13px;letter-spacing:.14em;display:flex;align-items:center;gap:8px}
+.logo-dot{width:8px;height:8px;border-radius:2px;background:var(--acc)}
+.env-tag{font-family:var(--mono);font-size:10px;color:var(--ink2);background:var(--bg);border:1px solid var(--line);padding:2px 6px;border-radius:4px}
+.nav{padding:10px 8px;display:flex;flex-direction:column;gap:2px;flex:1}
+.nav-btn{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 11px;border-radius:var(--r);border:1px solid transparent;background:transparent;color:var(--ink2);font-weight:600;font-size:12.5px;cursor:pointer;text-align:left;transition:background .12s,color .12s}
+.nav-btn:hover{background:var(--surf2);color:var(--ink)}
+.nav-btn.on{background:var(--acc-dim);color:var(--acc);border-color:rgba(56,189,248,.22)}
+.nav-cnt{font-family:var(--mono);font-size:11px;color:var(--ink3);background:var(--bg);padding:1px 6px;border-radius:10px}
+.nav-btn.on .nav-cnt{color:var(--acc);background:rgba(56,189,248,.14)}
+.side-foot{padding:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.me-row{display:flex;align-items:center;justify-content:space-between;font-size:12px}
+.me-name{font-weight:700;color:var(--ink)}
+.me-role{font-family:var(--mono);font-size:10px;color:var(--acc);background:var(--acc-dim);padding:2px 6px;border-radius:4px}
+.side-links{display:flex;gap:6px}
+.side-links a,.side-links button{flex:1}
+
+/* Main */
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{height:54px;border-bottom:1px solid var(--line);background:var(--surf);padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:20}
+.topbar-l{display:flex;align-items:center;gap:12px}
+.topbar h1{font-size:15px;font-weight:700;letter-spacing:-.01em}
+.live-pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink2);padding:3px 8px;border:1px solid var(--line);border-radius:99px;background:var(--bg)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+.dot.off{background:var(--ink3)}
+.topbar-r{display:flex;align-items:center;gap:8px}
+.content{padding:22px 24px 48px;max-width:1440px;width:100%}
+
+/* Grid & Cards */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.kpi-label{font-size:11px;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.kpi-val{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi-sub{font-size:11px;color:var(--ink3);margin-top:4px;font-variant-numeric:tabular-nums}
+
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.card{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+.card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.card-title{font-size:12.5px;font-weight:700;letter-spacing:.02em}
+.card-sub{font-size:11px;color:var(--ink3);font-family:var(--mono)}
+.chart-wrap{position:relative;height:190px;width:100%}
+.chart-wrap canvas{width:100%;height:100%;display:block}
+.chart-tip{position:absolute;pointer-events:none;background:#0b0d11;border:1px solid var(--line2);border-radius:4px;padding:6px 8px;font-size:11px;font-family:var(--mono);color:var(--ink);white-space:nowrap;z-index:5;display:none}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--ink2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+
+/* Bars */
+.bar-list{display:flex;flex-direction:column;gap:9px}
+.bar-row{display:grid;grid-template-columns:110px 1fr 44px;align-items:center;gap:10px;font-size:12px}
+.bar-lbl{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.bar-track{height:8px;background:var(--bg);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;min-width:2px}
+.bar-num{text-align:right;font-family:var(--mono);font-size:11.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* Toolbar & Tables */
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.toolbar-l,.toolbar-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.input{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:7px 11px;outline:none;min-width:210px}
+.input:focus{border-color:var(--acc)}
+.select{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:7px 10px;outline:none;cursor:pointer}
+.pills{display:inline-flex;background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:2px;gap:2px}
+.pill{background:transparent;border:0;color:var(--ink2);padding:5px 10px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer}
+.pill.on{background:var(--surf2);color:var(--ink)}
+
+.tbl-wrap{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:12.5px}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surf2)}
+.mono{font-family:var(--mono);font-size:11.5px}
+.muted{color:var(--ink2)}
+.dim{color:var(--ink3)}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:var(--mono)}
+.b-acc{background:var(--acc-dim);color:var(--acc)}
+.b-green{background:var(--green-dim);color:var(--green)}
+.b-amber{background:var(--amber-dim);color:var(--amber)}
+.b-red{background:var(--red-dim);color:var(--red)}
+.b-muted{background:var(--bg);color:var(--ink2);border:1px solid var(--line)}
+
+/* Drawer */
+.drawer-bg{position:fixed;inset:0;background:rgba(4,6,10,.7);z-index:50;display:none;justify-content:flex-end}
+.drawer-bg.open{display:flex}
+.drawer{width:100%;max-width:460px;background:var(--surf);border-left:1px solid var(--line);height:100%;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+.drawer-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.drawer-sec{border:1px solid var(--line);background:var(--bg);border-radius:var(--r);padding:14px}
+.drawer-sec h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin-bottom:10px}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat-mini{background:var(--surf);border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+.stat-mini span{display:block;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em}
+.stat-mini b{font-size:15px;font-family:var(--mono)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.act-row{display:flex;gap:8px;flex-wrap:wrap}
+.ac-item{padding:7px 0;border-bottom:1px solid var(--line);font-size:11.5px;display:flex;justify-content:space-between;gap:10px}
+.ac-item:last-child{border-bottom:0}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--surf2);border:1px solid var(--line2);color:var(--ink);padding:10px 14px;border-radius:var(--r);font-size:12px;font-weight:600;z-index:90;display:none}
+.toast.show{display:block}
+.toast.ok{border-color:var(--green);color:var(--green)}
+.toast.err{border-color:var(--red);color:var(--red)}
+
+.empty{text-align:center;color:var(--ink3);padding:28px 12px;font-size:12px}
+.hidden{display:none!important}
+
+@media(max-width:1080px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid-2,.grid-3{grid-template-columns:1fr}
+}
+@media(max-width:780px){
+  .shell{grid-template-columns:1fr}
+  .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .nav{flex-direction:row;overflow-x:auto;padding:8px}
+  .nav-btn{width:auto;white-space:nowrap}
+  .content{padding:16px}
+  .topbar{padding:0 16px}
+}
+</style>
+</head>
+<body>
+
+<div id="gateView" class="gate">
+  <div class="gate-card" id="gateCard">
+    <div class="gate-brand">Hyperstrike</div>
+    <div class="gate-title">Admin Console</div>
+    <div class="gate-sub" id="gateSub">Checking session...</div>
+    <form id="loginForm" class="hidden">
+      <div class="field">
+        <label for="inUser">Username</label>
+        <input id="inUser" type="text" autocomplete="username" required placeholder="Admin username">
+      </div>
+      <div class="field">
+        <label for="inPass">Password</label>
+        <input id="inPass" type="password" autocomplete="current-password" required placeholder="Password">
+      </div>
+      <div class="err-text" id="loginErr"></div>
+      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">Sign In</button>
+    </form>
+    <div id="deniedBox" class="hidden">
+      <div class="err-text" id="deniedMsg">Your account does not have admin privileges.</div>
+      <div class="act-row">
+        <a href="/" class="btn" style="flex:1">Back to Game</a>
+        <button type="button" class="btn btn-danger" id="switchAccBtn" style="flex:1">Switch Account</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="appView" class="shell hidden">
+  <aside class="side">
+    <div class="side-top">
+      <div class="logo"><span class="logo-dot"></span>HYPERSTRIKE</div>
+      <span class="env-tag" id="regionTag">--</span>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-btn on" data-tab="overview"><span>Overview</span></button>
+      <button class="nav-btn" data-tab="users"><span>Users</span><span class="nav-cnt" id="cntUsers">0</span></button>
+      <button class="nav-btn" data-tab="live"><span>Live Server</span><span class="nav-cnt" id="cntLive">0</span></button>
+      <button class="nav-btn" data-tab="sessions"><span>Sessions</span><span class="nav-cnt" id="cntSessions">0</span></button>
+      <button class="nav-btn" data-tab="anticheat"><span>Anti-Cheat</span><span class="nav-cnt" id="cntAc">0</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="me-row">
+        <span class="me-name" id="meName">--</span>
+        <span class="me-role">ADMIN</span>
+      </div>
+      <div class="side-links">
+        <a href="/" class="btn btn-sm">Game</a>
+        <button class="btn btn-sm btn-danger" id="logoutBtn">Sign Out</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-l">
+        <h1 id="pageTitle">Overview</h1>
+        <span class="live-pill"><span class="dot" id="liveDot"></span><span id="liveText">Live</span></span>
+      </div>
+      <div class="topbar-r">
+        <button class="btn btn-sm" id="autoBtn">Auto: 10s</button>
+        <button class="btn btn-sm" id="refreshBtn">Refresh</button>
+      </div>
+    </header>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+
+<div class="drawer-bg" id="drawerBg">
+  <div class="drawer" id="drawer"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const state = {
+    token: localStorage.getItem('hyperstrike.token') || '',
+    user: null,
+    tab: 'overview',
+    auto: true,
+    timer: null,
+    overview: null,
+    users: [],
+    sessions: [],
+    live: null,
+    userSearch: '',
+    userFilter: 'all',
+    userSort: 'createdAt',
+    sessSearch: '',
+    selectedUser: null
+  };
+
+  function toast(msg, kind = 'ok') {
+    const el = $('toast');
+    el.textContent = msg;
+    el.className = 'toast show ' + kind;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove('show'), 2800);
+  }
+
+  async function api(path, opts = {}) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    const res = await fetch(path, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  function fmtUptime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  function fmtRel(ts) {
+    if (!ts) return '—';
+    const diff = Date.now() - ts;
+    if (diff < 0) return 'in ' + fmtUptime(-diff / 1000);
+    if (diff < 45_000) return 'just now';
+    if (diff < 3_600_000) return Math.floor(diff / 60_000) + 'm ago';
+    if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + 'h ago';
+    return Math.floor(diff / 86_400_000) + 'd ago';
+  }
+
+  function fmtDate(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtShortDay(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function fmtTime(ts) {
+    return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  // ---- Auth flow ----
+  function showLogin(sub = 'Sign in with an admin account to continue.') {
+    $('appView').classList.add('hidden');
+    $('gateView').classList.remove('hidden');
+    $('gateSub').textContent = sub;
+    $('loginForm').classList.remove('hidden');
+    $('deniedBox').classList.add('hidden');
+    $('loginErr').textContent = '';
+  }
+
+  function showDenied(username) {
+    $('appView').classList.add('hidden');
+    $('gateView').classList.remove('hidden');
+    $('gateSub').textContent = `Signed in as ${username}`;
+    $('loginForm').classList.add('hidden');
+    $('deniedBox').classList.remove('hidden');
+    $('deniedMsg').textContent = `Account "${username}" is not listed in ADMIN_USER.`;
+  }
+
+  async function initAuth() {
+    if (!state.token) {
+      showLogin();
+      return;
+    }
+    try {
+      const me = await api('/api/me');
+      state.user = me.user;
+      if (!me.isAdmin) {
+        showDenied(me.user.username);
+        return;
+      }
+      enterApp();
+    } catch (_) {
+      state.token = '';
+      localStorage.removeItem('hyperstrike.token');
+      showLogin();
+    }
+  }
+
+  $('loginForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const u = $('inUser').value.trim();
+    const p = $('inPass').value;
+    const btn = $('loginBtn');
+    $('loginErr').textContent = '';
+    btn.disabled = true;
+    try {
+      const data = await api('/api/login', { method: 'POST', body: { username: u, password: p } });
+      state.token = data.token;
+      state.user = data.user;
+      localStorage.setItem('hyperstrike.token', data.token);
+      if (!data.isAdmin) {
+        showDenied(data.user.username);
+      } else {
+        enterApp();
+      }
+    } catch (err) {
+      $('loginErr').textContent = err.message || 'Sign in failed.';
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('switchAccBtn').onclick = () => {
+    state.token = '';
+    localStorage.removeItem('hyperstrike.token');
+    showLogin('Sign in with an admin account.');
+  };
+
+  $('logoutBtn').onclick = async () => {
+    try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
+    clearInterval(state.timer);
+    state.token = '';
+    state.user = null;
+    localStorage.removeItem('hyperstrike.token');
+    showLogin('Signed out.');
+  };
+
+  function enterApp() {
+    $('gateView').classList.add('hidden');
+    $('appView').classList.remove('hidden');
+    $('meName').textContent = state.user.username;
+    refreshCurrent();
+    resetAutoTimer();
+  }
+
+  function resetAutoTimer() {
+    clearInterval(state.timer);
+    $('autoBtn').textContent = state.auto ? 'Auto: 10s' : 'Auto: Off';
+    $('liveDot').classList.toggle('off', !state.auto);
+    state.auto && (state.timer = setInterval(() => {
+      if (!document.hidden && !$('drawerBg').classList.contains('open')) {
+        const ae = document.activeElement;
+        if (ae && ae.id === 'bcastIn' && ae.value) return;
+        refreshCurrent(true);
+      }
+    }, 10_000));
+  }
+
+  $('autoBtn').onclick = () => { state.auto = !state.auto; resetAutoTimer(); };
+  $('refreshBtn').onclick = () => refreshCurrent();
+
+  $('nav').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-tab]');
+    if (!btn) return;
+    state.tab = btn.dataset.tab;
+    document.querySelectorAll('#nav .nav-btn').forEach(b => b.classList.toggle('on', b === btn));
+    const titles = { overview: 'Overview', users: 'Users', live: 'Live Server', sessions: 'Sessions', anticheat: 'Anti-Cheat' };
+    $('pageTitle').textContent = titles[state.tab] || 'Admin';
+    refreshCurrent();
+  });
+
+  async function refreshCurrent(silent = false) {
+    try {
+      if (state.tab === 'overview' || state.tab === 'anticheat') {
+        state.overview = await api('/api/admin/overview');
+        updateNavCountsFromOverview(state.overview);
+        if (state.tab === 'anticheat') {
+          const u = await api('/api/admin/users?filter=flagged&sort=flags');
+          const b = await api('/api/admin/users?filter=banned&sort=flags');
+          const map = new Map();
+          for (const x of [...b.users, ...u.users]) map.set(x.username, x);
+          state.users = Array.from(map.values());
+        }
+      } else if (state.tab === 'users') {
+        const qs = new URLSearchParams({ q: state.userSearch, filter: state.userFilter, sort: state.userSort });
+        const [ov, res] = await Promise.all([api('/api/admin/overview'), api('/api/admin/users?' + qs)]);
+        state.overview = ov;
+        state.users = res.users || [];
+        updateNavCountsFromOverview(ov);
+      } else if (state.tab === 'sessions') {
+        const [ov, res] = await Promise.all([api('/api/admin/overview'), api('/api/admin/sessions')]);
+        state.overview = ov;
+        state.sessions = res.sessions || [];
+        updateNavCountsFromOverview(ov);
+      } else if (state.tab === 'live') {
+        const [ov, res] = await Promise.all([api('/api/admin/overview'), api('/api/admin/live')]);
+        state.overview = ov;
+        state.live = res;
+        updateNavCountsFromOverview(ov);
+      }
+      $('liveText').textContent = 'Updated ' + fmtTime(Date.now());
+      render();
+    } catch (err) {
+      if (err.status === 401) {
+        state.token = '';
+        localStorage.removeItem('hyperstrike.token');
+        showLogin('Session expired. Please sign in again.');
+        return;
+      }
+      if (!silent) toast(err.message || 'Failed to load data', 'err');
+    }
+  }
+
+  function updateNavCountsFromOverview(ov) {
+    if (!ov) return;
+    $('regionTag').textContent = ov.server.region || 'local';
+    $('cntUsers').textContent = ov.counts.users;
+    $('cntLive').textContent = ov.server.online;
+    $('cntSessions').textContent = ov.counts.sessions;
+    $('cntAc').textContent = ov.counts.banned + ov.counts.flagged;
+  }
+
+  // ---- HiDPI Canvas Charts ----
+  function drawLineChart(canvas, tipEl, samples, series) {
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(200, Math.floor(rect.width));
+    const h = Math.max(120, Math.floor(rect.height));
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const pad = { l: 34, r: 10, t: 10, b: 22 };
+    const pw = w - pad.l - pad.r;
+    const ph = h - pad.t - pad.b;
+
+    const pts = samples && samples.length ? samples : [];
+    let maxV = 1;
+    for (const s of pts) for (const sr of series) maxV = Math.max(maxV, Number(s[sr.key]) || 0);
+    maxV = Math.ceil(maxV * 1.15);
+
+    ctx.clearRect(0, 0, w, h);
+    // Horizontal gridlines
+    ctx.strokeStyle = '#1c222e';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#5c667a';
+    ctx.font = '10px ui-monospace,monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) {
+      const y = pad.t + ph - (ph * i / steps);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, Math.round(y) + 0.5);
+      ctx.lineTo(w - pad.r, Math.round(y) + 0.5);
+      ctx.stroke();
+      ctx.fillText(String(Math.round(maxV * i / steps)), pad.l - 6, y);
+    }
+
+    if (!pts.length) {
+      ctx.fillStyle = '#5c667a';
+      ctx.textAlign = 'center';
+      ctx.fillText('Waiting for telemetry samples...', pad.l + pw / 2, pad.t + ph / 2);
+      return;
+    }
+
+    const xFor = i => pts.length === 1 ? pad.l + pw / 2 : pad.l + (pw * i / (pts.length - 1));
+    const yFor = v => pad.t + ph - (ph * (Math.max(0, v) / maxV));
+
+    // X labels
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#5c667a';
+    const labelCount = Math.min(5, pts.length);
+    for (let i = 0; i < labelCount; i++) {
+      const idx = labelCount === 1 ? 0 : Math.round(i * (pts.length - 1) / (labelCount - 1));
+      const d = new Date(pts[idx].t);
+      const txt = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      ctx.fillText(txt, xFor(idx), h - 14);
+    }
+
+    // Series
+    for (const sr of series) {
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = xFor(i), y = yFor(Number(p[sr.key]) || 0);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = sr.color;
+      ctx.lineWidth = 1.75;
+      ctx.stroke();
+
+      if (sr.fill) {
+        ctx.lineTo(xFor(pts.length - 1), pad.t + ph);
+        ctx.lineTo(xFor(0), pad.t + ph);
+        ctx.closePath();
+        ctx.fillStyle = sr.fill;
+        ctx.fill();
+      }
+      if (pts.length <= 24) {
+        ctx.fillStyle = sr.color;
+        pts.forEach((p, i) => {
+          ctx.beginPath();
+          ctx.arc(xFor(i), yFor(Number(p[sr.key]) || 0), 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    // Hover tooltip
+    canvas.onmousemove = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const ratio = Math.max(0, Math.min(1, (mx - pad.l) / Math.max(1, pw)));
+      const idx = Math.round(ratio * (pts.length - 1));
+      const p = pts[idx];
+      if (!p) return;
+      const lines = [fmtTime(p.t), ...series.map(sr => `${sr.label}: ${p[sr.key] ?? 0}`)];
+      tipEl.textContent = lines.join('  ·  ');
+      tipEl.style.display = 'block';
+      const tx = Math.min(w - tipEl.offsetWidth - 8, Math.max(8, xFor(idx) - tipEl.offsetWidth / 2));
+      tipEl.style.left = tx + 'px';
+      tipEl.style.top = '6px';
+    };
+    canvas.onmouseleave = () => { tipEl.style.display = 'none'; };
+  }
+
+  function drawBarChart(canvas, tipEl, items, valueKey, labelFn, color = '#38bdf8') {
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(200, Math.floor(rect.width));
+    const h = Math.max(120, Math.floor(rect.height));
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const pad = { l: 30, r: 8, t: 10, b: 22 };
+    const pw = w - pad.l - pad.r;
+    const ph = h - pad.t - pad.b;
+
+    const maxV = Math.max(1, ...items.map(x => Number(x[valueKey]) || 0));
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = '#1c222e';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#5c667a';
+    ctx.font = '10px ui-monospace,monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const steps = Math.min(4, maxV);
+    for (let i = 0; i <= steps; i++) {
+      const y = pad.t + ph - (ph * i / steps);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, Math.round(y) + 0.5);
+      ctx.lineTo(w - pad.r, Math.round(y) + 0.5);
+      ctx.stroke();
+      ctx.fillText(String(Math.round(maxV * i / steps)), pad.l - 6, y);
+    }
+
+    if (!items.length) return;
+    const slot = pw / items.length;
+    const bw = Math.max(4, Math.min(24, slot * 0.62));
+    items.forEach((item, i) => {
+      const v = Number(item[valueKey]) || 0;
+      const bh = v > 0 ? Math.max(2, (v / maxV) * ph) : 0;
+      const x = pad.l + i * slot + (slot - bw) / 2;
+      const y = pad.t + ph - bh;
+      ctx.fillStyle = v > 0 ? color : '#1c222e';
+      ctx.fillRect(x, v > 0 ? y : pad.t + ph - 2, bw, v > 0 ? bh : 2);
+      if (i % Math.ceil(items.length / 7) === 0 || i === items.length - 1) {
+        ctx.fillStyle = '#5c667a';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(labelFn(item), x + bw / 2, h - 14);
+      }
+    });
+
+    canvas.onmousemove = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const idx = Math.max(0, Math.min(items.length - 1, Math.floor((mx - pad.l) / Math.max(1, slot))));
+      const it = items[idx];
+      if (!it) return;
+      tipEl.textContent = `${labelFn(it)}: ${it[valueKey] ?? 0}`;
+      tipEl.style.display = 'block';
+      const cx = pad.l + idx * slot + slot / 2;
+      tipEl.style.left = Math.min(w - tipEl.offsetWidth - 8, Math.max(8, cx - tipEl.offsetWidth / 2)) + 'px';
+      tipEl.style.top = '6px';
+    };
+    canvas.onmouseleave = () => { tipEl.style.display = 'none'; };
+  }
+
+  // ---- Render Views ----
+  function render() {
+    const ae = document.activeElement;
+    const focusId = ae && (ae.id === 'uSearch' || ae.id === 'sSearch' || ae.id === 'bcastIn') ? ae.id : null;
+    const selStart = focusId ? ae.selectionStart : null;
+    const selEnd = focusId ? ae.selectionEnd : null;
+    const bcastDraft = $('bcastIn') ? $('bcastIn').value : '';
+
+    if (state.tab === 'overview') renderOverview();
+    else if (state.tab === 'users') renderUsers();
+    else if (state.tab === 'live') renderLive();
+    else if (state.tab === 'sessions') renderSessions();
+    else if (state.tab === 'anticheat') renderAntiCheat();
+
+    if (bcastDraft && $('bcastIn')) $('bcastIn').value = bcastDraft;
+    if (focusId && $(focusId)) {
+      const el = $(focusId);
+      el.focus();
+      if (selStart !== null && selEnd !== null) {
+        try { el.setSelectionRange(selStart, selEnd); } catch (_) {}
+      }
+    }
+  }
+
+  function renderBars(list, colorFn) {
+    if (!list || !list.length) return '<div class="empty">No data yet</div>';
+    const max = Math.max(1, ...list.map(x => x.count || 0));
+    return '<div class="bar-list">' + list.map((x, i) => {
+      const pct = Math.round(((x.count || 0) / max) * 100);
+      const col = colorFn(x, i);
+      return `<div class="bar-row">
+        <div class="bar-lbl" title="${esc(x.tier || x.name)}">${esc(x.tier || x.name)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <div class="bar-num">${x.count || 0}</div>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  function renderOverview() {
+    const ov = state.overview;
+    if (!ov) return;
+    const s = ov.server, c = ov.counts, t = ov.totals, ctr = ov.counters;
+    const memStr = s.memRssKb ? (s.memRssKb / 1024).toFixed(1) + ' MB' : 'N/A';
+
+    $('content').innerHTML = `
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi-label"><span>Online Players</span><span class="badge b-green">${s.wsConns} ws</span></div>
+          <div class="kpi-val">${s.online}</div>
+          <div class="kpi-sub">${s.lobbies} lobbies · ${s.squads} squads</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>Active Matches</span><span class="badge b-acc">${s.workers} workers</span></div>
+          <div class="kpi-val">${s.activeMatches}</div>
+          <div class="kpi-sub">${t.matches.toLocaleString()} total · ${t.mpMatches.toLocaleString()} MP</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>Registered Users</span><span class="badge b-muted">+${ctr.registrations} boot</span></div>
+          <div class="kpi-val">${c.users.toLocaleString()}</div>
+          <div class="kpi-sub">${c.sessions} active sessions · ${c.banned} banned</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label"><span>Server Uptime</span><span class="badge b-muted">${esc(s.region)}</span></div>
+          <div class="kpi-val">${fmtUptime(s.uptime)}</div>
+          <div class="kpi-sub">RSS: ${memStr} · ${ctr.httpRequests.toLocaleString()} reqs</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title">Live Server Activity</div>
+            <div class="legend">
+              <span><i style="background:#38bdf8"></i>Online</span>
+              <span><i style="background:#22c55e"></i>Matches</span>
+              <span><i style="background:#a78bfa"></i>Lobbies</span>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chLive"></canvas>
+            <div class="chart-tip" id="tipLive"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title">HTTP Traffic</div>
+            <div class="card-sub">requests / 15s</div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chHttp"></canvas>
+            <div class="chart-tip" id="tipHttp"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title">User Signups (14 Days)</div>
+            <div class="card-sub">daily registrations</div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chSignups"></canvas>
+            <div class="chart-tip" id="tipSignups"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title">Rank Distribution</div>
+            <div class="card-sub">${c.users} players</div>
+          </div>
+          ${renderBars(ov.rankDistribution, x => x.color || '#38bdf8')}
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-h"><div class="card-title">Session Devices</div><div class="card-sub">${c.sessions} active</div></div>
+          ${renderBars(ov.devices, (_, i) => ['#38bdf8','#22c55e','#f59e0b','#a78bfa','#64748b'][i % 5])}
+        </div>
+        <div class="card">
+          <div class="card-h"><div class="card-title">Operating Systems</div><div class="card-sub">active sessions</div></div>
+          ${renderBars(ov.os, (_, i) => ['#38bdf8','#a78bfa','#22c55e','#f59e0b','#ef4444','#64748b'][i % 6])}
+        </div>
+        <div class="card">
+          <div class="card-h"><div class="card-title">Browsers</div><div class="card-sub">active sessions</div></div>
+          ${renderBars(ov.browsers, (_, i) => ['#22c55e','#38bdf8','#f59e0b','#a78bfa','#ef4444','#64748b'][i % 6])}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h"><div class="card-title">Top Ranked Players</div><div class="card-sub">by RP</div></div>
+          ${ov.topPlayers.length ? `
+            <table>
+              <thead><tr><th>Player</th><th>Rank</th><th>RP</th><th>Lvl</th><th>W / M</th><th>Goals</th></tr></thead>
+              <tbody>${ov.topPlayers.map(p => `
+                <tr>
+                  <td><b>${esc(p.username)}</b></td>
+                  <td><span class="mono" style="color:${esc(p.rankColor)}">${esc(p.rank)}</span></td>
+                  <td class="mono">${p.rp}</td>
+                  <td class="mono">${p.level}</td>
+                  <td class="mono muted">${p.wins}/${p.matches}</td>
+                  <td class="mono muted">${p.goals}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="empty">No players yet</div>'}
+        </div>
+        <div class="card">
+          <div class="card-h"><div class="card-title">All-Time Gameplay Totals</div><div class="card-sub">aggregate</div></div>
+          <div class="stat-grid" style="margin-bottom:14px">
+            <div class="stat-mini"><span>Matches</span><b>${t.matches.toLocaleString()}</b></div>
+            <div class="stat-mini"><span>Goals</span><b>${t.goals.toLocaleString()}</b></div>
+            <div class="stat-mini"><span>Assists</span><b>${t.assists.toLocaleString()}</b></div>
+            <div class="stat-mini"><span>Saves</span><b>${t.saves.toLocaleString()}</b></div>
+            <div class="stat-mini"><span>Shots</span><b>${t.shots.toLocaleString()}</b></div>
+            <div class="stat-mini"><span>Demos</span><b>${t.demos.toLocaleString()}</b></div>
+          </div>
+          <div class="card-h" style="margin-bottom:8px"><div class="card-title">Recent Anti-Cheat Events</div><div class="card-sub">${ov.recentAc.length}</div></div>
+          ${ov.recentAc.length ? ov.recentAc.slice(0, 6).map(e => `
+            <div class="ac-item">
+              <span><b>${esc(e.username)}</b> <span class="muted">${esc(e.reason)}</span></span>
+              <span class="mono dim">${fmtRel(e.t)}</span>
+            </div>`).join('') : '<div class="empty" style="padding:14px">No anti-cheat events recorded</div>'}
+        </div>
+      </div>
+    `;
+
+    drawLineChart($('chLive'), $('tipLive'), ov.samples, [
+      { key: 'online', label: 'Online', color: '#38bdf8', fill: 'rgba(56,189,248,.10)' },
+      { key: 'activeMatches', label: 'Matches', color: '#22c55e' },
+      { key: 'lobbies', label: 'Lobbies', color: '#a78bfa' }
+    ]);
+    drawLineChart($('chHttp'), $('tipHttp'), ov.samples, [
+      { key: 'httpReqDelta', label: 'Requests', color: '#38bdf8', fill: 'rgba(56,189,248,.12)' }
+    ]);
+    drawBarChart($('chSignups'), $('tipSignups'), ov.signupsByDay, 'count', d => fmtShortDay(d.dayTs), '#22c55e');
+  }
+
+  function renderUsers() {
+    const users = state.users || [];
+    $('content').innerHTML = `
+      <div class="toolbar">
+        <div class="toolbar-l">
+          <input class="input" id="uSearch" placeholder="Search username or ID..." value="${esc(state.userSearch)}">
+          <div class="pills" id="uFilter">
+            ${[['all','All'],['online','Online'],['banned','Banned'],['flagged','Flagged']].map(([k,l]) =>
+              `<button class="pill ${state.userFilter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
+          </div>
+        </div>
+        <div class="toolbar-r">
+          <select class="select" id="uSort">
+            ${[['createdAt','Newest'],['rp','Highest RP'],['level','Highest Level'],['matches','Most Matches'],['flags','Most Flags'],['username','Username']].map(([k,l]) =>
+              `<option value="${k}" ${state.userSort===k?'selected':''}>Sort: ${l}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>User</th><th>Status</th><th>Rank / RP</th><th>Level</th><th>Matches</th><th>Sessions</th><th>Flags</th><th>Joined</th><th></th></tr></thead>
+          <tbody>
+            ${users.length ? users.map(u => {
+              const banned = u.banRemainingMs > 0;
+              return `<tr>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <b>${esc(u.username)}</b>
+                    ${u.isAdmin ? '<span class="badge b-acc">ADMIN</span>' : ''}
+                  </div>
+                  <div class="mono dim">${esc(u.id)}${u.currentIp ? ' · ' + esc(u.currentIp) : ''}</div>
+                </td>
+                <td>
+                  ${u.isOnline ? '<span class="badge b-green">Online</span>' : '<span class="badge b-muted">Offline</span>'}
+                  ${banned ? `<span class="badge b-red">Ban ${Math.ceil(u.banRemainingMs/60000)}m</span>` : ''}
+                </td>
+                <td><span class="mono" style="color:${esc(u.rankColor)}">${esc(u.rank)}</span> <span class="mono muted">(${u.rp})</span></td>
+                <td class="mono">${u.level}</td>
+                <td class="mono muted">${u.stats.wins}W / ${u.stats.matches}M</td>
+                <td class="mono">${u.sessionCount}</td>
+                <td class="mono ${u.antiCheatFlags > 0 ? 'b-amber badge' : 'dim'}">${u.antiCheatFlags}</td>
+                <td class="mono muted">${fmtDate(u.createdAt)}</td>
+                <td style="text-align:right"><button class="btn btn-sm" data-manage="${esc(u.username)}">Manage</button></td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="9" class="empty">No matching users</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    let deb;
+    $('uSearch').oninput = (e) => {
+      state.userSearch = e.target.value;
+      clearTimeout(deb);
+      deb = setTimeout(() => refreshCurrent(true), 220);
+    };
+    $('uFilter').onclick = (e) => {
+      const b = e.target.closest('[data-f]');
+      if (!b) return;
+      state.userFilter = b.dataset.f;
+      refreshCurrent();
+    };
+    $('uSort').onchange = (e) => { state.userSort = e.target.value; refreshCurrent(); };
+    $('content').querySelectorAll('[data-manage]').forEach(b => {
+      b.onclick = () => {
+        const u = state.users.find(x => x.username === b.dataset.manage);
+        if (u) openUserDrawer(u);
+      };
+    });
+  }
+
+  function openUserDrawer(u) {
+    state.selectedUser = u;
+    const banned = u.banRemainingMs > 0;
+    const st = u.stats || {};
+    $('drawer').innerHTML = `
+      <div class="drawer-h">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <h2 style="font-size:17px;font-weight:700">${esc(u.username)}</h2>
+            ${u.isAdmin ? '<span class="badge b-acc">ADMIN</span>' : ''}
+            ${u.isOnline ? '<span class="badge b-green">ONLINE</span>' : ''}
+            ${banned ? '<span class="badge b-red">BANNED</span>' : ''}
+          </div>
+          <div class="mono dim">ID: ${esc(u.id)} · Joined ${fmtDate(u.createdAt)}</div>
+        </div>
+        <button class="btn btn-sm" id="closeDrawer">Close</button>
+      </div>
+
+      <div class="drawer-sec">
+        <h3>Stats</h3>
+        <div class="stat-grid">
+          <div class="stat-mini"><span>Rank</span><b style="font-size:12px;color:${esc(u.rankColor)}">${esc(u.rank)}</b></div>
+          <div class="stat-mini"><span>RP / Peak</span><b>${u.rp} / ${u.peakRp}</b></div>
+          <div class="stat-mini"><span>Level</span><b>${u.level}</b></div>
+          <div class="stat-mini"><span>Matches</span><b>${st.matches || 0}</b></div>
+          <div class="stat-mini"><span>Wins</span><b>${st.wins || 0}</b></div>
+          <div class="stat-mini"><span>Goals</span><b>${st.goals || 0}</b></div>
+          <div class="stat-mini"><span>Assists</span><b>${st.assists || 0}</b></div>
+          <div class="stat-mini"><span>Saves</span><b>${st.saves || 0}</b></div>
+          <div class="stat-mini"><span>Demos</span><b>${st.demos || 0}</b></div>
+        </div>
+      </div>
+
+      <div class="drawer-sec">
+        <h3>Edit Progression & Flags</h3>
+        <div class="form-row">
+          <div class="field"><label>RP</label><input id="edRp" type="number" value="${u.rp}"></div>
+          <div class="field"><label>Level</label><input id="edLvl" type="number" value="${u.level}"></div>
+          <div class="field"><label>XP</label><input id="edXp" type="number" value="${u.xp}"></div>
+          <div class="field"><label>AC Flags</label><input id="edFlags" type="number" value="${u.antiCheatFlags}"></div>
+        </div>
+        <div class="act-row">
+          <button class="btn btn-primary btn-sm" id="saveUserBtn">Save Changes</button>
+          <button class="btn btn-sm" id="clearLogBtn">Clear AC Log</button>
+          <button class="btn btn-amber btn-sm" id="resetStatsBtn">Reset Stats</button>
+        </div>
+      </div>
+
+      <div class="drawer-sec">
+        <h3>Moderation & Ban</h3>
+        ${banned ? `<div style="margin-bottom:10px;font-size:12px;color:var(--red)">Active ban: ${Math.ceil(u.banRemainingMs / 60000)}m remaining</div>` : ''}
+        <div class="form-row">
+          <div class="field">
+            <label>Ban Duration</label>
+            <select id="banMins">
+              <option value="10">10 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="1440">24 hours</option>
+              <option value="10080">7 days</option>
+              <option value="43200">30 days</option>
+              <option value="525600">1 year</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Reason</label>
+            <input id="banReason" type="text" placeholder="Admin action">
+          </div>
+        </div>
+        <div class="act-row">
+          <button class="btn btn-danger btn-sm" id="banBtn">Ban User</button>
+          ${banned ? '<button class="btn btn-green btn-sm" id="unbanBtn">Unban</button>' : ''}
+          <button class="btn btn-amber btn-sm" id="kickBtn" ${u.isOnline ? '' : 'disabled'}>Kick Online</button>
+          <button class="btn btn-sm" id="revokeAllBtn">Revoke Sessions (${u.sessionCount})</button>
+        </div>
+      </div>
+
+      <div class="drawer-sec">
+        <h3>Reset Password</h3>
+        <div style="display:flex;gap:8px">
+          <input class="input" id="resetPwIn" type="password" placeholder="New password (min 6 chars)" style="min-width:0;flex:1">
+          <button class="btn btn-amber btn-sm" id="resetPwBtn">Set Password</button>
+        </div>
+      </div>
+
+      <div class="drawer-sec">
+        <h3>Anti-Cheat Log (${(u.acLog || []).length})</h3>
+        ${(u.acLog && u.acLog.length) ? u.acLog.slice().reverse().map(e => `
+          <div class="ac-item">
+            <span>${esc(e.reason)}</span>
+            <span class="mono dim">${fmtDate(e.t)}</span>
+          </div>`).join('') : '<div class="dim" style="font-size:12px">Clean record.</div>'}
+      </div>
+
+      ${!u.isAdmin ? `
+      <div class="drawer-sec" style="border-color:rgba(239,68,68,.3)">
+        <h3 style="color:var(--red)">Danger Zone</h3>
+        <button class="btn btn-danger btn-sm" id="delUserBtn">Delete User Account</button>
+      </div>` : ''}
+    `;
+
+    $('drawerBg').classList.add('open');
+    const unameEnc = encodeURIComponent(u.username);
+    $('closeDrawer').onclick = closeDrawer;
+
+    $('saveUserBtn').onclick = async () => {
+      try {
+        await api(`/api/admin/users/${unameEnc}/update`, {
+          method: 'POST',
+          body: {
+            rp: Number($('edRp').value),
+            level: Number($('edLvl').value),
+            xp: Number($('edXp').value),
+            antiCheatFlags: Number($('edFlags').value)
+          }
+        });
+        toast(`Updated ${u.username}`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('clearLogBtn').onclick = async () => {
+      try {
+        await api(`/api/admin/users/${unameEnc}/update`, { method: 'POST', body: { clearAcLog: true } });
+        toast('Cleared AC log');
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('resetStatsBtn').onclick = async () => {
+      if (!confirm(`Reset all match stats for ${u.username}?`)) return;
+      try {
+        await api(`/api/admin/users/${unameEnc}/update`, { method: 'POST', body: { resetStats: true } });
+        toast('Stats reset');
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('banBtn').onclick = async () => {
+      const mins = Number($('banMins').value);
+      const reason = $('banReason').value.trim() || 'Admin ban';
+      try {
+        await api(`/api/admin/users/${unameEnc}/ban`, { method: 'POST', body: { durationMinutes: mins, reason } });
+        toast(`Banned ${u.username} for ${mins}m`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    const unbanBtn = $('unbanBtn');
+    if (unbanBtn) unbanBtn.onclick = async () => {
+      try {
+        await api(`/api/admin/users/${unameEnc}/ban`, { method: 'POST', body: { durationMinutes: 0, reason: 'Admin unban' } });
+        toast(`Unbanned ${u.username}`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('kickBtn').onclick = async () => {
+      try {
+        await api(`/api/admin/users/${unameEnc}/kick`, { method: 'POST', body: { reason: $('banReason').value.trim() || 'Kicked by admin.' } });
+        toast(`Kicked ${u.username}`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('revokeAllBtn').onclick = async () => {
+      try {
+        const res = await api(`/api/admin/users/${unameEnc}/revoke-sessions`, { method: 'POST' });
+        toast(`Revoked ${res.revokedCount} session(s)`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('resetPwBtn').onclick = async () => {
+      const np = $('resetPwIn').value;
+      if (np.length < 6) { toast('Password must be at least 6 characters', 'err'); return; }
+      try {
+        await api(`/api/admin/users/${unameEnc}/reset-password`, { method: 'POST', body: { newPassword: np } });
+        toast(`Password reset for ${u.username}`);
+        $('resetPwIn').value = '';
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    const delBtn = $('delUserBtn');
+    if (delBtn) delBtn.onclick = async () => {
+      if (!confirm(`Permanently delete "${u.username}" and all their data?`)) return;
+      try {
+        await api(`/api/admin/users/${unameEnc}/delete`, { method: 'POST' });
+        toast(`Deleted ${u.username}`);
+        closeDrawer();
+        refreshCurrent();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  function closeDrawer() {
+    $('drawerBg').classList.remove('open');
+    state.selectedUser = null;
+  }
+  $('drawerBg').onclick = (e) => { if (e.target === $('drawerBg')) closeDrawer(); };
+
+  function renderLive() {
+    const lv = state.live || { lobbies: [], squads: [], connections: [] };
+    $('content').innerHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-h"><div class="card-title">Server Broadcast</div><div class="card-sub">sends live toast to all connected players</div></div>
+        <div style="display:flex;gap:8px">
+          <input class="input" id="bcastIn" maxlength="200" placeholder="Announcement message..." style="flex:1">
+          <button class="btn btn-primary" id="bcastBtn">Broadcast</button>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h"><div class="card-title">Active Lobbies</div><div class="card-sub">${lv.lobbies.length}</div></div>
+          ${lv.lobbies.length ? `
+            <table>
+              <thead><tr><th>Code</th><th>Name</th><th>Mode</th><th>Players</th><th></th></tr></thead>
+              <tbody>${lv.lobbies.map(lb => `
+                <tr>
+                  <td class="mono"><b>${esc(lb.code)}</b></td>
+                  <td>${esc(lb.name)} ${lb.ranked ? '<span class="badge b-amber">RANKED</span>' : ''}</td>
+                  <td><span class="badge ${lb.status === 'in_match' ? 'b-green' : 'b-muted'}">${esc(lb.status)}</span> <span class="muted">${esc(lb.mode)} ${lb.teamSize}v${lb.teamSize}</span></td>
+                  <td class="mono">${lb.playerCount}</td>
+                  <td style="text-align:right"><button class="btn btn-danger btn-sm" data-closelb="${esc(lb.code)}">Close</button></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="empty">No active lobbies</div>'}
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title">Active Squads</div><div class="card-sub">${lv.squads.length}</div></div>
+          ${lv.squads.length ? `
+            <table>
+              <thead><tr><th>Code</th><th>Members</th><th>Count</th></tr></thead>
+              <tbody>${lv.squads.map(sq => `
+                <tr>
+                  <td class="mono"><b>${esc(sq.code)}</b></td>
+                  <td>${sq.members.map(esc).join(', ')}</td>
+                  <td class="mono">${sq.memberCount}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="empty">No active squads</div>'}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-title">Live WebSocket Connections</div><div class="card-sub">${lv.connections.length}</div></div>
+        <div class="tbl-wrap" style="border:0">
+          <table>
+            <thead><tr><th>User</th><th>Activity</th><th>IP</th><th>Room</th><th>Connected</th><th></th></tr></thead>
+            <tbody>${lv.connections.length ? lv.connections.map(c => `
+              <tr>
+                <td>${c.username ? `<b>${esc(c.username)}</b>` : '<span class="dim">Unauthenticated</span>'}</td>
+                <td><span class="badge ${c.activity.includes('match') ? 'b-green' : c.activity === 'lobby' ? 'b-acc' : 'b-muted'}">${esc(c.activity)}</span></td>
+                <td class="mono muted">${esc(c.ip)}</td>
+                <td class="mono dim">${esc(c.lobbyCode || c.squadCode || '—')}</td>
+                <td class="mono muted">${fmtRel(c.connectedAt)}</td>
+                <td style="text-align:right">${c.username ? `<button class="btn btn-amber btn-sm" data-kicku="${esc(c.username)}">Kick</button>` : ''}</td>
+              </tr>`).join('') : '<tr><td colspan="6" class="empty">No active connections</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    $('bcastBtn').onclick = async () => {
+      const msg = $('bcastIn').value.trim();
+      if (!msg) return;
+      try {
+        const res = await api('/api/admin/broadcast', { method: 'POST', body: { message: msg } });
+        toast(`Broadcast sent to ${res.sent} player(s)`);
+        $('bcastIn').value = '';
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('content').querySelectorAll('[data-closelb]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/admin/lobbies/${encodeURIComponent(b.dataset.closelb)}/close`, { method: 'POST' });
+          toast(`Closed lobby ${b.dataset.closelb}`);
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+
+    $('content').querySelectorAll('[data-kicku]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(b.dataset.kicku)}/kick`, { method: 'POST', body: { reason: 'Kicked by admin.' } });
+          toast(`Kicked ${b.dataset.kicku}`);
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+  }
+
+  function renderSessionsRows() {
+    const q = state.sessSearch.trim().toLowerCase();
+    const list = (state.sessions || []).filter(s => {
+      if (!q) return true;
+      return (s.username || '').toLowerCase().includes(q)
+        || (s.ip || '').toLowerCase().includes(q)
+        || (s.lastIp || '').toLowerCase().includes(q)
+        || (s.os || '').toLowerCase().includes(q)
+        || (s.browser || '').toLowerCase().includes(q)
+        || (s.deviceType || '').toLowerCase().includes(q);
+    });
+    const cnt = $('sCount');
+    if (cnt) cnt.textContent = `${list.length} active session(s)`;
+    const tbody = $('sTbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.length ? list.map(s => `
+      <tr>
+        <td>
+          <b>${esc(s.username)}</b>
+          ${s.isCurrent ? '<span class="badge b-acc">THIS</span>' : ''}
+          ${s.isOnline ? '<span class="badge b-green">LIVE</span>' : ''}
+        </td>
+        <td>
+          <div>${esc(s.browser)} · ${esc(s.os)}</div>
+          <div class="mono dim">${esc(s.deviceType)} · #${esc(s.id)}</div>
+        </td>
+        <td class="mono">
+          <div>${esc(s.lastIp || s.ip)}</div>
+          ${s.lastIp && s.ip && s.lastIp !== s.ip ? `<div class="dim">init: ${esc(s.ip)}</div>` : ''}
+        </td>
+        <td class="mono muted">${fmtDate(s.createdAt)}</td>
+        <td class="mono muted">${fmtRel(s.lastSeenAt)}</td>
+        <td class="mono dim">${fmtRel(s.expiresAt)}</td>
+        <td style="text-align:right"><button class="btn btn-danger btn-sm" data-revs="${esc(s.id)}">Revoke</button></td>
+      </tr>`).join('') : '<tr><td colspan="7" class="empty">No matching sessions</td></tr>';
+
+    tbody.querySelectorAll('[data-revs]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          const res = await api('/api/admin/sessions/revoke', { method: 'POST', body: { sessionId: b.dataset.revs } });
+          toast('Session revoked');
+          if (res.revokedCurrent) {
+            state.token = '';
+            localStorage.removeItem('hyperstrike.token');
+            showLogin('Your current session was revoked.');
+            return;
+          }
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+  }
+
+  function renderSessions() {
+    $('content').innerHTML = `
+      <div class="toolbar">
+        <div class="toolbar-l">
+          <input class="input" id="sSearch" placeholder="Filter by user, IP, device, OS, browser..." value="${esc(state.sessSearch)}" style="min-width:280px">
+        </div>
+        <div class="toolbar-r">
+          <span class="mono muted" id="sCount"></span>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>User</th><th>Device</th><th>IP Address</th><th>Created</th><th>Last Active</th><th>Expires</th><th></th></tr></thead>
+          <tbody id="sTbody"></tbody>
+        </table>
+      </div>
+    `;
+    renderSessionsRows();
+    $('sSearch').oninput = (e) => { state.sessSearch = e.target.value; renderSessionsRows(); };
+  }
+
+  function renderAntiCheat() {
+    const ov = state.overview || { recentAc: [], counts: { banned: 0, flagged: 0 } };
+    const flagged = state.users || [];
+    $('content').innerHTML = `
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h"><div class="card-title">Flagged & Banned Accounts</div><div class="card-sub">${flagged.length}</div></div>
+          ${flagged.length ? `
+            <table>
+              <thead><tr><th>User</th><th>Flags</th><th>Ban</th><th></th></tr></thead>
+              <tbody>${flagged.map(u => `
+                <tr>
+                  <td><b>${esc(u.username)}</b></td>
+                  <td class="mono">${u.antiCheatFlags}</td>
+                  <td>${u.banRemainingMs > 0 ? `<span class="badge b-red">${Math.ceil(u.banRemainingMs/60000)}m left</span>` : '<span class="dim">None</span>'}</td>
+                  <td style="text-align:right">
+                    <div class="act-row" style="justify-content:flex-end">
+                      ${u.banRemainingMs > 0 ? `<button class="btn btn-green btn-sm" data-acunban="${esc(u.username)}">Unban</button>` : ''}
+                      <button class="btn btn-sm" data-acclear="${esc(u.username)}">Clear Flags</button>
+                    </div>
+                  </td>
+                </tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="empty">No flagged or banned accounts</div>'}
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title">Anti-Cheat Event Feed</div><div class="card-sub">${ov.recentAc.length} recent</div></div>
+          ${ov.recentAc.length ? ov.recentAc.map(e => `
+            <div class="ac-item">
+              <span><b>${esc(e.username)}</b> <span class="muted">${esc(e.reason)}</span></span>
+              <span class="mono dim">${fmtDate(e.t)}</span>
+            </div>`).join('') : '<div class="empty">No anti-cheat events</div>'}
+        </div>
+      </div>
+    `;
+
+    $('content').querySelectorAll('[data-acunban]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(b.dataset.acunban)}/ban`, { method: 'POST', body: { durationMinutes: 0, reason: 'Admin unban' } });
+          toast(`Unbanned ${b.dataset.acunban}`);
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+    $('content').querySelectorAll('[data-acclear]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(b.dataset.acclear)}/update`, { method: 'POST', body: { antiCheatFlags: 0, clearAcLog: true } });
+          toast(`Cleared flags for ${b.dataset.acclear}`);
+          refreshCurrent();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    if (state.tab === 'overview' && state.overview) renderOverview();
+  });
+
+  initAuth();
+})();
+</script>
+</body>
+</html>

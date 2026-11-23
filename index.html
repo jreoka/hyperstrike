@@ -711,6 +711,35 @@ table.stats .mvp{color:#140818;background:var(--gold);font-size:9px;letter-spaci
 .auth-sub{margin-top:4px}
 .auth-foot{margin-top:18px;text-align:center;font-size:10px;letter-spacing:.24em;color:var(--ink3);font-weight:700}
 
+/* ============ ACCOUNT / SESSIONS ============ */
+.acct-grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(300px,1fr);gap:14px;align-items:start}
+@media(max-width:860px){.acct-grid{grid-template-columns:1fr}}
+.sess-list{display:flex;flex-direction:column;gap:8px;max-height:380px;overflow-y:auto;padding-right:2px}
+.sess-item{display:flex;align-items:flex-start;gap:12px;background:rgba(2,5,14,.72);border:1px solid var(--line);padding:11px 12px}
+.sess-item.cur{border-color:rgba(62,242,255,.45)}
+.sess-ico{width:32px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--accent)}
+.sess-ico svg{width:16px;height:16px}
+.sess-info{flex:1;min-width:0}
+.sess-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px}
+.sess-title{font-size:12.5px;font-weight:700;color:#fff}
+.sess-tag{font-size:9px;font-weight:800;letter-spacing:.12em;padding:2px 6px;text-transform:uppercase;background:rgba(255,255,255,.07);color:var(--ink2)}
+.sess-tag.cur{background:rgba(62,242,255,.16);color:var(--accent)}
+.sess-tag.live{background:rgba(76,255,152,.14);color:var(--good)}
+.sess-meta{font-size:11px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:4px 12px;line-height:1.5}
+.sess-meta b{color:var(--ink);font-weight:600}
+.sess-acts{flex:none;display:flex;align-items:center}
+.sess-rev{background:rgba(255,80,104,.1);border:1px solid rgba(255,80,104,.35);color:#ff6b81;padding:6px 10px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.sess-rev:hover:not(:disabled){background:#ff4f6d;border-color:#ff4f6d;color:#fff}
+.sess-rev:disabled{opacity:.45;cursor:default}
+.sess-head-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sess-mini{background:rgba(255,255,255,.05);border:1px solid var(--line2);color:var(--ink2);padding:5px 9px;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.sess-mini:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.sess-mini.danger:hover:not(:disabled){border-color:#ff5d78;color:#ff6b81}
+.sess-mini:disabled{opacity:.45;cursor:default}
+.admin-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:12px 16px;background:rgba(62,242,255,.07);border:1px solid rgba(62,242,255,.32)}
+.admin-bar-t{font-size:11px;font-weight:800;letter-spacing:.16em;color:var(--accent);text-transform:uppercase}
+.admin-bar-s{font-size:11.5px;color:var(--ink2);margin-top:2px}
+
 /* ============ MULTIPLAYER / RANKS ============ */
 .mp-box{position:relative;background:rgba(3,6,15,.5);border:1px solid var(--line);padding:16px;margin-bottom:10px;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)}
 .mp-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.2em;color:var(--accent);text-transform:uppercase}
@@ -9780,26 +9809,40 @@ class OnlineManager {
   }
   async register(username, password, confirmPassword) {
     const data = await this.api('/api/register', { method: 'POST', body: { username, password, confirmPassword } });
+    this.isAdmin = !!data.isAdmin;
     this._onAuthed(data.token, data.user);
     return data.user;
   }
   async login(username, password) {
     const data = await this.api('/api/login', { method: 'POST', body: { username, password } });
+    this.isAdmin = !!data.isAdmin;
     this._onAuthed(data.token, data.user);
     return data.user;
   }
   async changePassword(currentPassword, newPassword, confirmPassword) {
     return await this.api('/api/password', { method: 'POST', body: { currentPassword, newPassword, confirmPassword } });
   }
+  async fetchSessions() {
+    const data = await this.api('/api/sessions');
+    return data.sessions || [];
+  }
+  async revokeSession(sessionId) {
+    return await this.api('/api/sessions/revoke', { method: 'POST', body: { sessionId } });
+  }
+  async revokeOtherSessions() {
+    return await this.api('/api/sessions/revoke-others', { method: 'POST' });
+  }
   async restoreSession() {
     if (!this.token) return null;
     try {
       const data = await this.api('/api/me');
+      this.isAdmin = !!data.isAdmin;
       this._onAuthed(this.token, data.user);
       if (data.server) { this.region = data.server.region || ''; this.onlineCount = data.server.online || 0; }
       return data.user;
     } catch (_) {
       this.token = '';
+      this.isAdmin = false;
       localStorage.removeItem('hyperstrike.token');
       return null;
     }
@@ -9808,6 +9851,7 @@ class OnlineManager {
     try { if (this.token) await this.api('/api/logout', { method: 'POST' }); } catch (_) {}
     this.token = '';
     this.user = null;
+    this.isAdmin = false;
     this.squad = null;
     this.lobby = null;
     this.chatLog = [];
@@ -11100,26 +11144,46 @@ class UIManager {
     if (this.settingsTab === 'audio') h += slider('master', 'Master volume', 0, 1, 0.01, v => Math.round(v * 100)) + slider('sfx', 'Sound effects', 0, 1, 0.01, v => Math.round(v * 100)) + slider('music', 'Music', 0, 1, 0.01, v => Math.round(v * 100)) + tog('muted', 'Mute all audio');
     if (this.settingsTab === 'account') {
       const uname = this.g.online && this.g.online.user ? this.esc(this.g.online.user.username) : '';
-      h += `<div class="mp-box" style="max-width:440px">
-        <div style="font-size:12px;font-weight:800;letter-spacing:.16em;color:var(--accent);margin-bottom:4px">CHANGE PASSWORD</div>
-        <div class="desc" style="margin-bottom:14px">Signed in as <b>${uname}</b>. Confirm your current password to set a new one.</div>
-        <form id="pwChangeForm" autocomplete="on">
-          <input type="text" name="username" value="${uname}" autocomplete="username" style="display:none" readonly>
-          <div class="auth-field">
-            <label for="pwCurrent">Current Password</label>
-            <input type="password" id="pwCurrent" required autocomplete="current-password" placeholder="Enter current password">
+      const isAdmin = !!(this.g.online && this.g.online.isAdmin);
+      if (isAdmin) {
+        h += `<div class="admin-bar">
+          <div><div class="admin-bar-t">Admin Access Enabled</div><div class="admin-bar-s">Manage users, active sessions, lobbies, and server telemetry.</div></div>
+          <a href="/admin" class="mp-btn" style="text-decoration:none">OPEN ADMIN PANEL</a>
+        </div>`;
+      }
+      h += `<div class="acct-grid">
+        <div class="mp-box">
+          <div style="font-size:12px;font-weight:800;letter-spacing:.16em;color:var(--accent);margin-bottom:4px">CHANGE PASSWORD</div>
+          <div class="desc" style="margin-bottom:14px">Signed in as <b>${uname}</b>. Confirm your current password to set a new one.</div>
+          <form id="pwChangeForm" autocomplete="on">
+            <input type="text" name="username" value="${uname}" autocomplete="username" style="display:none" readonly>
+            <div class="auth-field">
+              <label for="pwCurrent">Current Password</label>
+              <input type="password" id="pwCurrent" required autocomplete="current-password" placeholder="Enter current password">
+            </div>
+            <div class="auth-field">
+              <label for="pwNew">New Password</label>
+              <input type="password" id="pwNew" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Enter new password (min 6 chars)">
+            </div>
+            <div class="auth-field">
+              <label for="pwConfirm">Confirm New Password</label>
+              <input type="password" id="pwConfirm" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Re-enter new password">
+            </div>
+            <div class="auth-err" id="pwMsg"></div>
+            <button type="submit" class="cta auth-sub" id="pwSubmit"><span id="pwSubmitTxt">Update Password</span></button>
+          </form>
+        </div>
+        <div class="mp-box">
+          <div class="mp-head">
+            <span>ACTIVE SESSIONS <small id="sessCount"></small></span>
+            <div class="sess-head-acts">
+              <button type="button" class="sess-mini" id="btnSessRefresh">Refresh</button>
+              <button type="button" class="sess-mini danger" id="btnSessRevokeOthers">Sign Out Others</button>
+            </div>
           </div>
-          <div class="auth-field">
-            <label for="pwNew">New Password</label>
-            <input type="password" id="pwNew" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Enter new password (min 6 chars)">
-          </div>
-          <div class="auth-field">
-            <label for="pwConfirm">Confirm New Password</label>
-            <input type="password" id="pwConfirm" minlength="6" maxlength="128" required autocomplete="new-password" placeholder="Re-enter new password">
-          </div>
-          <div class="auth-err" id="pwMsg"></div>
-          <button type="submit" class="cta auth-sub" id="pwSubmit"><span id="pwSubmitTxt">Update Password</span></button>
-        </form>
+          <div class="desc" style="margin-bottom:12px">Review devices signed in to your account and revoke any session you don't recognize.</div>
+          <div id="sessList" class="sess-list"><div class="desc">Loading sessions...</div></div>
+        </div>
       </div>`;
     }
     return h;
@@ -11185,6 +11249,100 @@ class UIManager {
           btnTxt.textContent = 'Update Password';
         }
       };
+    }
+    const sessListEl = root.querySelector('#sessList');
+    if (sessListEl && this.g.online && this.g.online.token) {
+      const devIcon = (t) => {
+        if (t === 'Mobile') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>';
+        if (t === 'Tablet') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="17.5" r="1"/></svg>';
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/></svg>';
+      };
+      const relTime = (ts) => {
+        if (!ts) return '—';
+        const d = Date.now() - ts;
+        if (d < 45000) return 'Just now';
+        if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+        if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+        return Math.floor(d / 86400000) + 'd ago';
+      };
+      const fmtDt = (ts) => ts ? new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+      const loadSessions = async () => {
+        const cntEl = root.querySelector('#sessCount');
+        const revOthersBtn = root.querySelector('#btnSessRevokeOthers');
+        try {
+          const list = await this.g.online.fetchSessions();
+          if (!root.contains(sessListEl)) return;
+          if (cntEl) cntEl.textContent = `(${list.length})`;
+          if (revOthersBtn) revOthersBtn.disabled = list.filter(s => !s.isCurrent).length === 0;
+          if (!list.length) {
+            sessListEl.innerHTML = '<div class="desc">No active sessions found.</div>';
+            return;
+          }
+          sessListEl.innerHTML = list.map(s => {
+            const dev = `${this.esc(s.browser || 'Unknown')} · ${this.esc(s.os || 'Unknown')}`;
+            const ipTxt = this.esc(s.lastIp || s.ip || 'unknown');
+            const origIp = s.ip && s.lastIp && s.ip !== s.lastIp ? ` (login: ${this.esc(s.ip)})` : '';
+            return `<div class="sess-item ${s.isCurrent ? 'cur' : ''}">
+              <div class="sess-ico" title="${this.esc(s.deviceType || 'Unknown')}">${devIcon(s.deviceType)}</div>
+              <div class="sess-info">
+                <div class="sess-top">
+                  <span class="sess-title">${dev}</span>
+                  <span class="sess-tag">${this.esc(s.deviceType || 'Unknown')}</span>
+                  ${s.isCurrent ? '<span class="sess-tag cur">Current</span>' : ''}
+                  ${s.isOnline ? '<span class="sess-tag live">Online</span>' : ''}
+                </div>
+                <div class="sess-meta">
+                  <span>IP: <b>${ipTxt}</b>${origIp}</span>
+                  <span>Active: <b>${relTime(s.lastSeenAt)}</b></span>
+                  <span>Signed in: <b>${fmtDt(s.createdAt)}</b></span>
+                </div>
+              </div>
+              <div class="sess-acts">
+                <button type="button" class="sess-rev" data-rev-sess="${this.esc(s.id)}">${s.isCurrent ? 'Sign Out' : 'Revoke'}</button>
+              </div>
+            </div>`;
+          }).join('');
+          sessListEl.querySelectorAll('[data-rev-sess]').forEach(btn => {
+            btn.onclick = async () => {
+              this.g.audio.ui('click');
+              btn.disabled = true;
+              try {
+                const res = await this.g.online.revokeSession(btn.dataset.revSess);
+                if (res && res.revokedCurrent) {
+                  this.toast('SESSION REVOKED');
+                  this.g.online.logout();
+                  return;
+                }
+                this.toast('SESSION REVOKED');
+                loadSessions();
+              } catch (err) {
+                this.toast(err.message || 'FAILED TO REVOKE');
+                btn.disabled = false;
+              }
+            };
+          });
+        } catch (err) {
+          if (root.contains(sessListEl)) {
+            sessListEl.innerHTML = `<div class="auth-err">${this.esc(err.message || 'Failed to load sessions.')}</div>`;
+          }
+        }
+      };
+      const refBtn = root.querySelector('#btnSessRefresh');
+      if (refBtn) refBtn.onclick = () => { this.g.audio.ui('click'); loadSessions(); };
+      const revOthersBtn = root.querySelector('#btnSessRevokeOthers');
+      if (revOthersBtn) revOthersBtn.onclick = async () => {
+        this.g.audio.ui('click');
+        revOthersBtn.disabled = true;
+        try {
+          const res = await this.g.online.revokeOtherSessions();
+          this.toast(`SIGNED OUT ${res.revokedCount || 0} OTHER SESSION(S)`);
+          loadSessions();
+        } catch (err) {
+          this.toast(err.message || 'FAILED TO REVOKE');
+          revOthersBtn.disabled = false;
+        }
+      };
+      loadSessions();
     }
   }
   controlsHtml() {

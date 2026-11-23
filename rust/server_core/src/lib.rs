@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod config;
 pub mod db;
@@ -7,11 +8,15 @@ pub mod ws;
 
 use axum::Router;
 use axum::body::Bytes;
+use axum::extract::{Request, State};
 use axum::http::HeaderValue;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{any, get, post};
 use config::Config;
 use db::{Database, RateLimiter, atomic_write_async};
 use protocol::MatchBackend;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use ws::RuntimeState;
@@ -30,12 +35,13 @@ pub struct AppState {
     pub rate_limiter: Mutex<RateLimiter>,
     pub rt: Mutex<RuntimeState>,
     pub backend: Arc<dyn MatchBackend>,
+    pub metrics: admin::MetricsState,
 }
 
 impl AppState {
     pub fn new(config: Config, backend: Arc<dyn MatchBackend>) -> Arc<Self> {
         let database = Database::load(config.db_file.clone());
-        Arc::new(Self {
+        let state = Arc::new(Self {
             config,
             started_at: Instant::now(),
             cached_index_html: RwLock::new(None),
@@ -43,7 +49,10 @@ impl AppState {
             rate_limiter: Mutex::new(RateLimiter::default()),
             rt: Mutex::new(RuntimeState::default()),
             backend,
-        })
+            metrics: admin::MetricsState::default(),
+        });
+        state.metrics.record_sample(&state);
+        state
     }
 
     pub fn flush_db_sync(&self) {
@@ -54,6 +63,7 @@ impl AppState {
     pub fn spawn_background_tasks(self: &Arc<Self>) -> BackgroundTasks {
         let (shutdown_tx, mut shutdown_rx_db) = tokio::sync::watch::channel(false);
         let mut shutdown_rx_rl = shutdown_tx.subscribe();
+        let mut shutdown_rx_metrics = shutdown_tx.subscribe();
 
         let state_db = Arc::clone(self);
         let db_task = tokio::spawn(async move {
@@ -101,10 +111,29 @@ impl AppState {
             }
         });
 
+        let state_metrics = Arc::clone(self);
+        let metrics_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx_metrics.changed() => {
+                        if *shutdown_rx_metrics.borrow() {
+                            break;
+                        }
+                    }
+                    _ = interval.tick() => {
+                        state_metrics.metrics.record_sample(&state_metrics);
+                    }
+                }
+            }
+        });
+
         BackgroundTasks {
             shutdown_tx,
             db_task: Some(db_task),
             rl_task: Some(rl_task),
+            metrics_task: Some(metrics_task),
         }
     }
 }
@@ -113,6 +142,7 @@ pub struct BackgroundTasks {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     db_task: Option<tokio::task::JoinHandle<()>>,
     rl_task: Option<tokio::task::JoinHandle<()>>,
+    metrics_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl BackgroundTasks {
@@ -124,7 +154,22 @@ impl BackgroundTasks {
         if let Some(t) = self.rl_task.take() {
             let _ = t.await;
         }
+        if let Some(t) = self.metrics_task.take() {
+            let _ = t.await;
+        }
     }
+}
+
+async fn count_http_requests(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    state
+        .metrics
+        .http_requests_total
+        .fetch_add(1, Ordering::Relaxed);
+    next.run(req).await
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -135,6 +180,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/index.html",
             get(http::index_html_get).options(http::options_handler),
         )
+        .route("/admin", get(admin::serve_admin_page))
+        .route("/admin/", get(admin::serve_admin_page))
         .route("/manifest.webmanifest", get(http::manifest_get))
         .route("/sw.js", get(http::sw_get))
         .route("/icon.svg", get(http::icon_svg_get))
@@ -160,6 +207,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/me", get(http::me).options(http::options_handler))
         .route(
+            "/api/sessions",
+            get(http::list_sessions).options(http::options_handler),
+        )
+        .route(
+            "/api/sessions/revoke",
+            post(http::revoke_session).options(http::options_handler),
+        )
+        .route(
+            "/api/sessions/revoke-others",
+            post(http::revoke_other_sessions).options(http::options_handler),
+        )
+        .route(
             "/api/car",
             post(http::save_car).options(http::options_handler),
         )
@@ -167,8 +226,64 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/leaderboard",
             get(http::leaderboard).options(http::options_handler),
         )
+        .route(
+            "/api/admin/overview",
+            get(admin::overview).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users",
+            get(admin::list_users).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/update",
+            post(admin::update_user).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/ban",
+            post(admin::ban_user).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/kick",
+            post(admin::kick_user).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/revoke-sessions",
+            post(admin::revoke_user_sessions).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/reset-password",
+            post(admin::reset_user_password).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/users/{username}/delete",
+            post(admin::delete_user).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/sessions",
+            get(admin::list_all_sessions).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/sessions/revoke",
+            post(admin::revoke_any_session).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/live",
+            get(admin::live_state).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/lobbies/{code}/close",
+            post(admin::close_lobby).options(http::options_handler),
+        )
+        .route(
+            "/api/admin/broadcast",
+            post(admin::broadcast).options(http::options_handler),
+        )
         .route("/api/{*rest}", any(http::api_not_found))
         .fallback(http::fallback_handler)
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            count_http_requests,
+        ))
         .with_state(state)
 }
 
@@ -204,6 +319,7 @@ mod tests {
             trust_proxy: false,
             afk_warn_secs: 20.0,
             afk_kick_secs: 30.0,
+            admin_users: vec!["jreoka".into()],
         };
         AppState::new(cfg, Arc::new(NoopMatchBackend))
     }
@@ -577,5 +693,287 @@ mod tests {
             let db = Database::load(path);
             assert!(db.data.users.contains_key("jreoka"));
         }
+    }
+
+    #[tokio::test]
+    async fn user_sessions_and_admin_panel_flow() {
+        let state = test_state("admin_sessions");
+        let app = router(Arc::clone(&state));
+
+        // 1. GET /admin returns HTML + hs_client cookie
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin")
+                    .header("host", "localhost:8080")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let set_cookie = resp
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+        let html = String::from_utf8(
+            resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("Admin Console"));
+
+        // 2. Register admin user ("jreoka") and regular user ("player1")
+        let reg_admin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/register")
+                    .header("cookie", &cookie_pair)
+                    .header(
+                        "user-agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36",
+                    )
+                    .body(Body::from(
+                        json!({
+                            "username": "jreoka",
+                            "password": "password123",
+                            "confirmPassword": "password123"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reg_admin.status(), StatusCode::CREATED);
+        let admin_json = body_json(reg_admin).await;
+        assert_eq!(admin_json["isAdmin"], true);
+        let admin_tok1 = admin_json["token"].as_str().unwrap().to_string();
+
+        // Login admin from a second device (iPhone)
+        let login_admin2 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/login")
+                    .header("cookie", &cookie_pair)
+                    .header(
+                        "user-agent",
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+                    )
+                    .body(Body::from(
+                        json!({ "username": "JREOKA", "password": "password123" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login_admin2.status(), StatusCode::OK);
+        let admin_tok2 = body_json(login_admin2).await["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Register regular user
+        let reg_user = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/register")
+                    .header("cookie", &cookie_pair)
+                    .body(Body::from(
+                        json!({
+                            "username": "player1",
+                            "password": "password123",
+                            "confirmPassword": "password123"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reg_user.status(), StatusCode::CREATED);
+        let user_json = body_json(reg_user).await;
+        assert_eq!(user_json["isAdmin"], false);
+        let user_tok = user_json["token"].as_str().unwrap().to_string();
+
+        // 3. Regular user cannot access /api/admin/overview -> 403
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/overview")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {user_tok}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // 4. User session listing shows 2 sessions with device metadata
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let sess_json = body_json(resp).await;
+        let sessions = sess_json["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0]["isCurrent"], true);
+        assert_eq!(sessions[0]["os"], "Windows");
+        assert_eq!(sessions[1]["os"], "iOS");
+        assert_eq!(sessions[1]["deviceType"], "Mobile");
+        let second_sid = sessions[1]["id"].as_str().unwrap().to_string();
+
+        // 5. Regular user cannot revoke admin's session
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/sessions/revoke")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {user_tok}"))
+                    .body(Body::from(json!({ "sessionId": second_sid }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // 6. Admin revokes their own second session -> second token invalidated
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/sessions/revoke")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::from(json!({ "sessionId": second_sid }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/me")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok2}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // 7. Admin accesses /api/admin/overview & /api/admin/users
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/overview")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ov = body_json(resp).await;
+        assert_eq!(ov["counts"]["users"], 2);
+        assert!(!ov["samples"].as_array().unwrap().is_empty());
+        assert_eq!(ov["signupsByDay"].as_array().unwrap().len(), 14);
+
+        // 8. Admin updates & bans player1, then deletes player1
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/admin/users/player1/update")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::from(json!({ "rp": 1250, "level": 12 }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/admin/users/player1/ban")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::from(
+                        json!({ "durationMinutes": 60, "reason": "Test ban" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Admin cannot delete themselves
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/admin/users/jreoka/delete")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Admin deletes player1
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/admin/users/player1/delete")
+                    .header("cookie", &cookie_pair)
+                    .header("authorization", format!("Bearer {admin_tok1}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(&state.config.data_dir);
     }
 }

@@ -17,6 +17,7 @@ pub struct Config {
     pub trust_proxy: bool,
     pub afk_warn_secs: f64,
     pub afk_kick_secs: f64,
+    pub admin_users: Vec<String>,
 }
 
 impl Config {
@@ -75,6 +76,13 @@ impl Config {
             .filter(|&v| v.is_finite() && v > afk_warn_secs)
             .unwrap_or((afk_warn_secs + 10.0).max(30.0));
 
+        let admin_users: Vec<String> = std::env::var("ADMIN_USER")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         Self {
             port,
             data_dir,
@@ -88,7 +96,13 @@ impl Config {
             trust_proxy,
             afk_warn_secs,
             afk_kick_secs,
+            admin_users,
         }
+    }
+
+    pub fn is_admin_username(&self, username: &str) -> bool {
+        let lower = username.trim().to_ascii_lowercase();
+        !lower.is_empty() && self.admin_users.iter().any(|a| a == &lower)
     }
 
     /// The origin the game page must be loaded from. Uses `URL` env when set,
@@ -318,6 +332,7 @@ mod tests {
             trust_proxy: false,
             afk_warn_secs: 20.0,
             afk_kick_secs: 30.0,
+            admin_users: Vec::new(),
         };
 
         let mut h = HeaderMap::new();
@@ -356,6 +371,7 @@ mod tests {
             trust_proxy: false,
             afk_warn_secs: 20.0,
             afk_kick_secs: 30.0,
+            admin_users: Vec::new(),
         };
 
         let mut h = HeaderMap::new();
