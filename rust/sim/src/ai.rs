@@ -83,7 +83,7 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         err: 0.25,
     },
     Difficulty {
-        name: "LEGEND",
+        name: "CHAMP",
         react: 0.035,
         aim: 0.015,
         speed: 1.0,
@@ -99,7 +99,7 @@ pub const DIFFICULTY: [Difficulty; 5] = [
         err: 0.05,
     },
     Difficulty {
-        name: "CHAMP",
+        name: "LEGEND",
         react: 0.02,
         aim: 0.005,
         speed: 1.0,

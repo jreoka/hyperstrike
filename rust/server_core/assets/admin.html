@@ -452,7 +452,7 @@ tbody tr:hover{background:var(--surf2)}
     $('gateView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     $('meName').textContent = state.user.username;
-    refreshCurrent();
+    setTab(state.tab, false);
     resetAutoTimer();
   }
 
@@ -472,14 +472,33 @@ tbody tr:hover{background:var(--surf2)}
   $('autoBtn').onclick = () => { state.auto = !state.auto; resetAutoTimer(); };
   $('refreshBtn').onclick = () => refreshCurrent();
 
+  const TAB_TITLES = { overview: 'Overview', users: 'Users', live: 'Live Server', sessions: 'Sessions', anticheat: 'Anti-Cheat' };
+  function tabFromPath() {
+    const seg = location.pathname.replace(/^\/admin\/?/, '').split('/')[0];
+    return TAB_TITLES[seg] ? seg : 'overview';
+  }
+  // Switch tab; push=true adds a history entry, false replaces it (initial load / back-forward).
+  function setTab(tab, push, fetchNow = true) {
+    if (!TAB_TITLES[tab]) tab = 'overview';
+    state.tab = tab;
+    document.querySelectorAll('#nav .nav-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    $('pageTitle').textContent = TAB_TITLES[tab];
+    document.title = `Hyperstrike — Admin · ${TAB_TITLES[tab]}`;
+    const url = '/admin/' + tab + location.search;
+    if (location.pathname !== '/admin/' + tab) history[push ? 'pushState' : 'replaceState']({ tab }, '', url);
+    if (fetchNow) refreshCurrent();
+  }
+  state.tab = tabFromPath();
+
   $('nav').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-tab]');
     if (!btn) return;
-    state.tab = btn.dataset.tab;
-    document.querySelectorAll('#nav .nav-btn').forEach(b => b.classList.toggle('on', b === btn));
-    const titles = { overview: 'Overview', users: 'Users', live: 'Live Server', sessions: 'Sessions', anticheat: 'Anti-Cheat' };
-    $('pageTitle').textContent = titles[state.tab] || 'Admin';
-    refreshCurrent();
+    if (btn.dataset.tab !== state.tab) setTab(btn.dataset.tab, true);
+    else refreshCurrent();
+  });
+  window.addEventListener('popstate', () => {
+    if ($('appView').classList.contains('hidden')) { state.tab = tabFromPath(); return; }
+    setTab(tabFromPath(), false);
   });
 
   async function refreshCurrent(silent = false) {
