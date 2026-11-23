@@ -47,11 +47,135 @@ pub struct PeerSnapshot {
     pub squad_codes: Vec<String>,
     pub active_session_tokens: Vec<String>,
     pub online_user_ids: Vec<String>,
+    /// Machine/deployment details for the admin dashboard. Optional so mixed-version nodes
+    /// (mid rolling deploy) still interoperate.
+    #[serde(default)]
+    pub node: Option<NodeInfo>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NodeInfo {
+    pub machine_id: String,
+    pub image_ref: String,
+    pub vm_memory_mb: Option<u64>,
+    pub cpu_count: usize,
+    pub is_primary: bool,
+    pub uptime_secs: u64,
+    pub mem_rss_kb: Option<u64>,
+    pub workers: usize,
+    pub http_requests_total: u64,
+    pub ws_connections_total: u64,
+    pub logins_total: u64,
+    pub registrations_total: u64,
+    pub history: Vec<NodeSample>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NodeSample {
+    pub t: i64,
+    pub online: usize,
+    pub ws_conns: usize,
+    pub active_matches: usize,
+    pub mem_rss_kb: Option<u64>,
+}
+
+/// Link health from this node to one peer, as observed by the 2s state sync.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerLink {
+    pub rtt_ms: Option<u64>,
+    pub rtt_avg_ms: Option<f64>,
+    pub last_ok_at: Option<i64>,
+    pub last_attempt_at: i64,
+    pub last_error: Option<String>,
+    pub consecutive_failures: u32,
+    pub ok_total: u64,
+    pub fail_total: u64,
+}
+
+impl PeerLink {
+    fn record_ok(&mut self, rtt_ms: u64, now: i64) {
+        self.rtt_ms = Some(rtt_ms);
+        self.rtt_avg_ms = Some(match self.rtt_avg_ms {
+            Some(avg) => avg * 0.8 + rtt_ms as f64 * 0.2,
+            None => rtt_ms as f64,
+        });
+        self.last_ok_at = Some(now);
+        self.last_attempt_at = now;
+        self.last_error = None;
+        self.consecutive_failures = 0;
+        self.ok_total += 1;
+    }
+
+    fn record_err(&mut self, err: String, now: i64) {
+        self.last_attempt_at = now;
+        self.last_error = Some(err);
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.fail_total += 1;
+    }
+}
+
+const NODE_HISTORY_SAMPLES: usize = 60; // 15 min at the 15s metrics interval
+
+struct StaticNodeInfo {
+    machine_id: String,
+    image_ref: String,
+    vm_memory_mb: Option<u64>,
+    cpu_count: usize,
+}
+
+fn static_node_info() -> &'static StaticNodeInfo {
+    static INFO: std::sync::OnceLock<StaticNodeInfo> = std::sync::OnceLock::new();
+    INFO.get_or_init(|| {
+        let env = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_string()).unwrap_or_default();
+        StaticNodeInfo {
+            machine_id: env("FLY_MACHINE_ID"),
+            image_ref: env("FLY_IMAGE_REF"),
+            vm_memory_mb: env("FLY_VM_MEMORY_MB").parse().ok(),
+            cpu_count: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        }
+    })
+}
+
+pub fn build_node_info(state: &AppState) -> NodeInfo {
+    use std::sync::atomic::Ordering;
+    let st = static_node_info();
+    let m = &state.metrics;
+    let samples = m.snapshot_samples();
+    let skip = samples.len().saturating_sub(NODE_HISTORY_SAMPLES);
+    NodeInfo {
+        machine_id: st.machine_id.clone(),
+        image_ref: st.image_ref.clone(),
+        vm_memory_mb: st.vm_memory_mb,
+        cpu_count: st.cpu_count,
+        is_primary: state.config.is_primary(),
+        uptime_secs: state.started_at.elapsed().as_secs(),
+        mem_rss_kb: crate::admin::read_process_rss_kb(),
+        workers: state.backend.stats().ready_workers,
+        http_requests_total: m.http_requests_total.load(Ordering::Relaxed),
+        ws_connections_total: m.ws_connections_total.load(Ordering::Relaxed),
+        logins_total: m.logins_total.load(Ordering::Relaxed),
+        registrations_total: m.registrations_total.load(Ordering::Relaxed),
+        history: samples
+            .into_iter()
+            .skip(skip)
+            .map(|x| NodeSample {
+                t: x.t,
+                online: x.online,
+                ws_conns: x.ws_conns,
+                active_matches: x.active_matches,
+                mem_rss_kb: x.mem_rss_kb,
+            })
+            .collect(),
+    }
 }
 
 pub struct ClusterState {
     pub http: reqwest::Client,
     pub peers: RwLock<HashMap<String, PeerSnapshot>>,
+    pub links: RwLock<HashMap<String, PeerLink>>,
     pub change_notify: Notify,
     /// Primary only: result_id -> (applied_at_ms, response) for idempotent result submission.
     pub applied_results: Mutex<HashMap<String, (i64, Value)>>,
@@ -68,6 +192,7 @@ impl Default for ClusterState {
         Self {
             http,
             peers: RwLock::new(HashMap::new()),
+            links: RwLock::new(HashMap::new()),
             change_notify: Notify::new(),
             applied_results: Mutex::new(HashMap::new()),
         }
@@ -93,6 +218,15 @@ impl ClusterState {
             .filter(|p| now - p.updated_at <= PEER_STALE_MS)
             .cloned()
             .collect()
+    }
+
+    /// Every peer ever heard from, including stale ones (for the admin dashboard).
+    pub fn all_peers(&self) -> Vec<PeerSnapshot> {
+        self.peers.read().unwrap().values().cloned().collect()
+    }
+
+    pub fn links_snapshot(&self) -> HashMap<String, PeerLink> {
+        self.links.read().unwrap().clone()
     }
 }
 
@@ -123,6 +257,7 @@ pub fn verify_cluster_secret(state: &AppState, headers: &HeaderMap) -> bool {
 }
 
 pub fn build_local_snapshot(state: &AppState) -> PeerSnapshot {
+    let node = build_node_info(state);
     let sim = state.backend.stats();
     let rt = state.rt.lock().unwrap();
     let public_lobbies: Vec<PublicLobbySummary> = rt
@@ -169,6 +304,7 @@ pub fn build_local_snapshot(state: &AppState) -> PeerSnapshot {
         squad_codes,
         active_session_tokens,
         online_user_ids,
+        node: Some(node),
     }
 }
 
@@ -357,22 +493,48 @@ pub async fn sync_peers_once(state: &AppState) {
         let payload = local_snap.clone();
         let region = region.clone();
         handles.push(tokio::spawn(async move {
-            let resp = http
-                .post(&url)
-                .header(CLUSTER_SECRET_HEADER, secret)
-                .json(&payload)
-                .send()
-                .await
-                .ok()?;
-            if !resp.status().is_success() {
-                return None;
+            let started = std::time::Instant::now();
+            let result: Result<PeerSnapshot, String> = async {
+                let resp = http
+                    .post(&url)
+                    .header(CLUSTER_SECRET_HEADER, secret)
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        if e.is_timeout() {
+                            "timeout".to_string()
+                        } else if e.is_connect() {
+                            "unreachable".to_string()
+                        } else {
+                            "request failed".to_string()
+                        }
+                    })?;
+                if !resp.status().is_success() {
+                    return Err(format!("HTTP {}", resp.status().as_u16()));
+                }
+                resp.json::<PeerSnapshot>()
+                    .await
+                    .map_err(|_| "bad response".to_string())
             }
-            let peer_snap: PeerSnapshot = resp.json().await.ok()?;
-            Some((region, peer_snap))
+            .await;
+            (region, started.elapsed().as_millis() as u64, result)
         }));
     }
     for h in handles {
-        if let Ok(Some((_region, snap))) = h.await {
+        let Ok((region, rtt_ms, result)) = h.await else {
+            continue;
+        };
+        let now = now_ms();
+        {
+            let mut links = state.cluster.links.write().unwrap();
+            let link = links.entry(region).or_default();
+            match &result {
+                Ok(_) => link.record_ok(rtt_ms, now),
+                Err(e) => link.record_err(e.clone(), now),
+            }
+        }
+        if let Ok(snap) = result {
             state.cluster.upsert_peer(snap);
         }
     }

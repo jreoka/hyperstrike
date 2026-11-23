@@ -166,6 +166,36 @@ tbody tr:hover{background:var(--surf2)}
 .toast.ok{border-color:var(--green);color:var(--green)}
 .toast.err{border-color:var(--red);color:var(--red)}
 
+/* Regions */
+.regions{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
+.rg{background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.rg.is-self{border-color:rgba(56,189,248,.35)}
+.rg.st-stale{border-color:rgba(245,158,11,.35)}
+.rg.st-offline,.rg.st-unknown{opacity:.78}
+.rg-h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.rg-name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px}
+.rg-code{font-family:var(--mono);font-size:10.5px;color:var(--ink2);background:var(--surf);border:1px solid var(--line);padding:1px 6px;border-radius:4px;text-transform:uppercase}
+.rg-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.rg-st{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.dot.amber{background:var(--amber)}
+.dot.red{background:var(--red)}
+.rg-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.rg-stats div{background:var(--surf);border:1px solid var(--line);border-radius:4px;padding:6px 8px;min-width:0}
+.rg-stats span{display:block;font-size:9.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em}
+.rg-stats b{font-size:16px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.rg-spark{height:34px;width:100%;display:block}
+.rg-kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:11.5px}
+.rg-kv dt{color:var(--ink3)}
+.rg-kv dd{font-family:var(--mono);text-align:right;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.rg-mem{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.rg-mem .bar-track{width:60px;height:6px}
+.rg-err{font-size:11px;color:var(--red);background:var(--red-dim);border-radius:4px;padding:6px 8px;font-family:var(--mono)}
+.share{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--bg);border:1px solid var(--line);margin-bottom:8px}
+.share i{display:block;height:100%}
+.share-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink2);margin-bottom:14px}
+.share-legend span{display:inline-flex;align-items:center;gap:5px}
+.share-legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+
 .empty{text-align:center;color:var(--ink3);padding:28px 12px;font-size:12px}
 .hidden{display:none!important}
 
@@ -716,6 +746,109 @@ tbody tr:hover{background:var(--surf2)}
     }).join('') + '</div>';
   }
 
+  const REGION_NAMES = {
+    ams:'Amsterdam', arn:'Stockholm', atl:'Atlanta', bog:'Bogotá', bom:'Mumbai', bos:'Boston', cdg:'Paris',
+    den:'Denver', dfw:'Dallas', ewr:'Secaucus', eze:'Buenos Aires', fra:'Frankfurt', gdl:'Guadalajara',
+    gig:'Rio de Janeiro', gru:'São Paulo', hkg:'Hong Kong', iad:'Ashburn', jnb:'Johannesburg', lax:'Los Angeles',
+    lhr:'London', mad:'Madrid', mia:'Miami', nrt:'Tokyo', ord:'Chicago', otp:'Bucharest', phx:'Phoenix',
+    qro:'Querétaro', scl:'Santiago', sea:'Seattle', sin:'Singapore', sjc:'San Jose', syd:'Sydney',
+    waw:'Warsaw', yul:'Montréal', yyz:'Toronto', local:'Local'
+  };
+  const REGION_COLORS = ['#38bdf8', '#22c55e', '#a78bfa', '#f59e0b', '#ef4444', '#64748b'];
+
+  function shortImage(ref) {
+    if (!ref) return '';
+    const tag = ref.includes('@') ? ref.split('@').pop() : ref.split(':').pop();
+    return tag.replace(/^deployment-/, '').replace(/^sha256:/, '').slice(0, 14);
+  }
+
+  function sparkline(hist) {
+    if (!hist || hist.length < 2) return '<div class="dim" style="font-size:11px;height:34px;display:flex;align-items:center">Collecting history…</div>';
+    const max = Math.max(1, ...hist.map(h => Math.max(h.online || 0, h.activeMatches || 0)));
+    const pts = key => hist.map((h, i) => `${(i / (hist.length - 1) * 100).toFixed(2)},${(32 - (h[key] || 0) / max * 30).toFixed(2)}`).join(' ');
+    return `<svg class="rg-spark" viewBox="0 0 100 34" preserveAspectRatio="none">
+      <polygon points="0,34 ${pts('online')} 100,34" fill="rgba(56,189,248,.10)"/>
+      <polyline points="${pts('online')}" fill="none" stroke="#38bdf8" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      <polyline points="${pts('activeMatches')}" fill="none" stroke="#22c55e" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+  }
+
+  function renderRegions(cl) {
+    if (!cl || !cl.regions || !cl.regions.length) return '';
+    const regs = cl.regions;
+    const up = regs.filter(r => r.status === 'online').length;
+    const images = new Set(regs.map(r => r.node && r.node.imageRef).filter(Boolean));
+    const mixed = images.size > 1;
+    const totalOnline = regs.reduce((a, r) => a + (r.status === 'online' ? (r.online || 0) : 0), 0);
+    const selfImg = (regs.find(r => r.isSelf) || {}).node?.imageRef;
+    const color = i => REGION_COLORS[i % REGION_COLORS.length];
+    const name = r => REGION_NAMES[r.region] || r.region.toUpperCase();
+    const n = v => (v === null || v === undefined) ? '—' : Number(v).toLocaleString();
+
+    const share = totalOnline > 0
+      ? regs.map((r, i) => r.status === 'online' && r.online ? `<i style="width:${(r.online / totalOnline * 100).toFixed(2)}%;background:${color(i)}" title="${esc(name(r))}: ${r.online}"></i>` : '').join('')
+      : '';
+
+    const cards = regs.map((r, i) => {
+      const nd = r.node || {};
+      const lk = r.link;
+      const stCls = { online: '', stale: 'amber', offline: 'red', unknown: 'off' }[r.status] ?? 'off';
+      const stLabel = { online: 'Online', stale: 'Stale', offline: 'Unreachable', unknown: 'No data' }[r.status] || r.status;
+      const memMb = nd.memRssKb ? nd.memRssKb / 1024 : null;
+      const memPct = memMb && nd.vmMemoryMb ? Math.min(100, memMb / nd.vmMemoryMb * 100) : null;
+      const memCol = memPct === null ? 'var(--acc)' : memPct > 85 ? 'var(--red)' : memPct > 65 ? 'var(--amber)' : 'var(--green)';
+      let latency = '—';
+      if (r.isSelf) latency = '<span class="dim">this node</span>';
+      else if (lk && lk.rttMs != null) latency = `${lk.rttMs} ms <span class="dim">(avg ${Math.round(lk.rttAvgMs)})</span>`;
+      const okRate = lk && (lk.okTotal + lk.failTotal) > 0 ? (lk.okTotal / (lk.okTotal + lk.failTotal) * 100) : null;
+      const imgDiffers = mixed && nd.imageRef && nd.imageRef !== selfImg;
+      return `<div class="rg ${r.isSelf ? 'is-self' : ''} st-${esc(r.status)}">
+        <div class="rg-h">
+          <div>
+            <div class="rg-name"><i style="width:8px;height:8px;border-radius:2px;background:${color(i)};display:inline-block"></i>${esc(name(r))}<span class="rg-code">${esc(r.region)}</span></div>
+            <div class="rg-tags">
+              ${r.isPrimary ? '<span class="badge b-acc">Primary</span>' : '<span class="badge b-muted">Replica</span>'}
+              ${r.isSelf ? '<span class="badge b-green">Serving you</span>' : ''}
+            </div>
+          </div>
+          <span class="rg-st"><span class="dot ${stCls}"></span>${esc(stLabel)}</span>
+        </div>
+        <div class="rg-stats">
+          <div><span>Online</span><b>${n(r.online)}</b></div>
+          <div><span>Matches</span><b>${n(r.activeMatches)}</b></div>
+          <div><span>Sockets</span><b>${n(r.wsConns)}</b></div>
+          <div><span>Lobbies</span><b>${n(r.lobbies)}</b></div>
+        </div>
+        ${sparkline(nd.history)}
+        <dl class="rg-kv">
+          <dt>Uptime</dt><dd>${nd.uptimeSecs != null && r.node ? fmtUptime(nd.uptimeSecs) : '—'}</dd>
+          <dt>Memory</dt><dd><span class="rg-mem">${memMb ? memMb.toFixed(1) + (nd.vmMemoryMb ? ' / ' + nd.vmMemoryMb : '') + ' MB' : '—'}${memPct !== null ? `<span class="bar-track"><span class="bar-fill" style="display:block;width:${memPct.toFixed(0)}%;background:${memCol}"></span></span>` : ''}</span></dd>
+          <dt>Latency</dt><dd>${latency}</dd>
+          <dt>Sync</dt><dd>${r.isSelf ? '<span class="dim">local</span>' : (r.lastSeenAt ? fmtRel(r.lastSeenAt) : 'never') + (okRate !== null ? ` · ${okRate.toFixed(okRate === 100 ? 0 : 1)}% ok` : '')}</dd>
+          <dt>Compute</dt><dd>${r.node ? `${nd.cpuCount} vCPU · ${nd.workers} sim workers` : '—'}</dd>
+          <dt>Traffic</dt><dd>${r.node ? `${n(nd.httpRequestsTotal)} req · ${n(nd.wsConnectionsTotal)} ws` : '—'}</dd>
+          <dt>Machine</dt><dd title="${esc(nd.machineId || '')}">${esc(nd.machineId || '—')}</dd>
+          <dt>Image</dt><dd title="${esc(nd.imageRef || '')}" ${imgDiffers ? 'style="color:var(--amber)"' : ''}>${esc(shortImage(nd.imageRef) || '—')}</dd>
+        </dl>
+        ${lk && lk.lastError && !r.isSelf ? `<div class="rg-err">${esc(lk.lastError)} · ${lk.consecutiveFailures} failed in a row${r.status === 'offline' ? ' (machine may be auto-stopped)' : ''}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="card-h">
+        <div class="card-title">Deployment Regions</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+          ${mixed ? '<span class="badge b-amber">Mixed images</span>' : ''}
+          <span class="badge ${up === regs.length ? 'b-green' : 'b-amber'}">${up}/${regs.length} online</span>
+          <span class="card-sub">${esc(cl.appName || '')}${cl.clustered ? '' : ' · not clustered'}</span>
+        </div>
+      </div>
+      ${share ? `<div class="share">${share}</div>
+      <div class="share-legend">${regs.map((r, i) => r.status === 'online' ? `<span><i style="background:${color(i)}"></i>${esc(name(r))} ${totalOnline ? Math.round((r.online || 0) / totalOnline * 100) : 0}%</span>` : '').join('')}<span class="dim">players by region · sparkline: online (blue), matches (green), last 15 min</span></div>` : ''}
+      <div class="regions">${cards}</div>
+    </div>`;
+  }
+
   function renderOverview() {
     const ov = state.overview;
     if (!ov) return;
@@ -746,10 +879,12 @@ tbody tr:hover{background:var(--surf2)}
         </div>
       </div>
 
+      ${renderRegions(ov.cluster)}
+
       <div class="grid-2">
         <div class="card">
           <div class="card-h">
-            <div class="card-title">Live Server Activity</div>
+            <div class="card-title">Live Server Activity <span class="card-sub">· ${esc(s.region)}</span></div>
             <div class="legend">
               <span><i style="background:#38bdf8"></i>Online</span>
               <span><i style="background:#22c55e"></i>Matches</span>

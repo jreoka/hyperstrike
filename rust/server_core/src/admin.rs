@@ -380,6 +380,7 @@ pub async fn overview(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
 
     let samples = state.metrics.snapshot_samples();
     let mem_rss_kb = read_process_rss_kb();
+    let cluster = build_cluster_overview(&state, now);
 
     json_response(
         &state,
@@ -418,9 +419,92 @@ pub async fn overview(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
             "os": os_dist,
             "browsers": browser_dist,
             "recentAc": recent_ac,
-            "topPlayers": top_players
+            "topPlayers": top_players,
+            "cluster": cluster
         }),
     )
+}
+
+/// Per-region view of the deployment as seen from this node: its own live numbers plus the
+/// latest snapshot each peer pushed over the 2s state sync, and link health to each peer.
+fn build_cluster_overview(state: &AppState, now: i64) -> Value {
+    use crate::cluster::PeerSnapshot;
+    const STALE_MS: i64 = 15_000;
+
+    let cfg = &state.config;
+    let local = crate::cluster::build_local_snapshot(state);
+    let peers: HashMap<String, PeerSnapshot> = state
+        .cluster
+        .all_peers()
+        .into_iter()
+        .map(|p| (p.region.clone(), p))
+        .collect();
+    let links = state.cluster.links_snapshot();
+
+    // Configured regions first (in config order), then anything else we've heard from.
+    let mut order: Vec<String> = Vec::new();
+    let mut push = |r: &str| {
+        if !r.is_empty() && !order.iter().any(|x| x == r) {
+            order.push(r.to_string());
+        }
+    };
+    if !cfg.primary_region.is_empty() {
+        push(&cfg.primary_region);
+    }
+    for r in &cfg.cluster_regions {
+        push(r);
+    }
+    let mut extra: Vec<&String> = cfg.peer_urls.keys().chain(peers.keys()).collect();
+    extra.sort();
+    for r in extra {
+        push(r);
+    }
+    push(&cfg.region);
+
+    let regions: Vec<Value> = order
+        .iter()
+        .map(|region| {
+            let is_self = *region == cfg.region;
+            let snap = if is_self { Some(&local) } else { peers.get(region) };
+            let link = links.get(region);
+            let status = if is_self {
+                "online"
+            } else {
+                match snap {
+                    Some(p) if now - p.updated_at <= STALE_MS => "online",
+                    Some(_) => "stale",
+                    None if link.is_some() => "offline",
+                    None => "unknown",
+                }
+            };
+            let node = snap.and_then(|p| p.node.as_ref());
+            json!({
+                "region": region,
+                "isSelf": is_self,
+                "isPrimary": *region == cfg.primary_region || (cfg.primary_region.is_empty() && is_self),
+                "status": status,
+                "lastSeenAt": snap.map(|p| p.updated_at),
+                "online": snap.map(|p| p.online_count),
+                "wsConns": snap.map(|p| p.ws_conns),
+                "activeMatches": snap.map(|p| p.active_matches),
+                "lobbies": snap.map(|p| p.lobby_codes.len()),
+                "publicLobbies": snap.map(|p| p.public_lobbies.len()),
+                "squads": snap.map(|p| p.squad_codes.len()),
+                "node": node,
+                "link": link,
+            })
+        })
+        .collect();
+
+    json!({
+        "clustered": cfg.is_clustered(),
+        "appName": cfg.fly_app_name,
+        "selfRegion": cfg.region,
+        "primaryRegion": cfg.primary_region,
+        "syncIntervalMs": 2000,
+        "staleMs": STALE_MS,
+        "regions": regions,
+    })
 }
 
 #[derive(Debug, Deserialize)]
