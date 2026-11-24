@@ -10,8 +10,8 @@ use crate::math_ext::{
 };
 use crate::physics::{Ball, Car, PredSlice};
 use crate::policy::{
-    OBS_DIM, POLICY_TICK_SKIP, decode_action, embedded_savant_policy, extract_obs,
-    policy_supports_world,
+    OBS_DIM, POLICY_TICK_SKIP, SavantPolicyCache, decode_action, embedded_savant_policy,
+    extract_obs, policy_supports_world,
 };
 use crate::powers::PowerTarget;
 use crate::strike::{OppSnap, StrikeCtx, StrikePlan, simulate_strike, strike_controls};
@@ -379,6 +379,7 @@ pub struct BotAi {
     pub force_mpc: bool,
     pub policy_ctl: Controls,
     pub policy_rem: u8,
+    pub policy_cache: SavantPolicyCache,
 }
 
 impl BotAi {
@@ -419,6 +420,7 @@ impl BotAi {
             force_mpc: false,
             policy_ctl: Controls::default(),
             policy_rem: 0,
+            policy_cache: SavantPolicyCache::default(),
         }
     }
 
@@ -450,6 +452,7 @@ impl BotAi {
         self.strike_next = 0.0;
         self.policy_ctl = Controls::default();
         self.policy_rem = 0;
+        self.policy_cache.reset();
     }
 
     pub fn estimate(&self, car: &Car, target: DVec3, use_boost: bool) -> f64 {
@@ -799,6 +802,8 @@ impl BotAi {
             c.item = false;
         }
         if w.cars[car_idx].demolished {
+            self.policy_rem = 0;
+            self.policy_cache.reset();
             return;
         }
         self.decide_t -= dt;
@@ -808,8 +813,9 @@ impl BotAi {
         }
         // Hybrid Neural-MPC SAVANT:
         // In 1v1/2v2 close-quarters scrambles, dribbles, and 50/50 challenges where the physics
-        // planner has no high-value direct shot/clear (`score < 35`), hand off to our 54M-step
-        // trained RL MLP (`savant_policy.bin`) for relentless pressure & emergent ball control!
+        // planner has no high-value direct shot/clear (`score < 35`), hand off to our trained RL
+        // causal RoPE Transformer (`savant_policy.bin`) for relentless pressure & ball control.
+        let mut used_policy = false;
         if self.is_savant()
             && !self.force_mpc
             && !w.kickoff
@@ -834,17 +840,22 @@ impl BotAi {
                     if self.policy_rem == 0 {
                         let mut obs = [0.0_f32; OBS_DIM];
                         extract_obs(w, car_idx, &self.policy_ctl, &mut obs);
-                        let act = pol.act_greedy(&obs);
+                        let act = pol.act_greedy(&obs, &mut self.policy_cache);
                         self.policy_ctl = decode_action(&act);
                         self.policy_rem = POLICY_TICK_SKIP as u8;
                     }
                     self.policy_rem = self.policy_rem.saturating_sub(1);
                     w.cars[car_idx].controls = self.policy_ctl;
-                    return;
+                    used_policy = true;
                 }
-            } else {
-                self.policy_rem = 0;
             }
+        }
+        if used_policy {
+            return;
+        }
+        if self.policy_rem > 0 || !self.policy_cache.is_empty() {
+            self.policy_rem = 0;
+            self.policy_cache.reset();
         }
         if self.decide_t <= 0.0 {
             self.decide_t = self.d.react * (0.7 + w.rng.r#gen::<f64>() * 0.6);

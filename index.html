@@ -9205,7 +9205,7 @@ function simulateStrike(pl, car, ball, now, w, ad, sc, savant = false, save = fa
 }
 const _noCars = [];
 
-// ----- SAVANT Quantized Neural Policy (HSP1, mirrors rust/sim/src/policy.rs) -----
+// ----- SAVANT Quantized Causal RoPE Transformer Policy (HSP2, mirrors rust/sim/src/policy.rs) -----
 const SAVANT_OBS_DIM = 100;
 const SAVANT_BRANCHES = [3, 5, 3, 3, 3, 2, 2, 2];
 const SAVANT_TOTAL_LOGITS = 23;
@@ -9216,27 +9216,81 @@ let _savantPolicy = null;
 
 class SavantPolicyJS {
   static parse(buf) {
-    if (!buf || buf.byteLength < 16) return null;
+    if (!buf || buf.byteLength < 24) return null;
     const u8 = new Uint8Array(buf);
-    if (u8[0] !== 0x48 || u8[1] !== 0x53 || u8[2] !== 0x50 || u8[3] !== 0x31) return null; // "HSP1"
+    if (u8[0] !== 0x48 || u8[1] !== 0x53 || u8[2] !== 0x50 || u8[3] !== 0x32) return null; // "HSP2"
     const dv = new DataView(buf);
     let pos = 4;
     const u16 = () => { const v = dv.getUint16(pos, true); pos += 2; return v; };
-    const obsD = u16(), h1 = u16(), h2 = u16(), h3 = u16(), outD = u16(); u16();
-    if (obsD !== SAVANT_OBS_DIM || outD !== SAVANT_TOTAL_LOGITS || !h1 || !h2 || !h3 || h1 > 512 || h2 > 512 || h3 > 512) return null;
-    const f32 = (n) => { const a = new Float32Array(n); for (let i = 0; i < n; i++) { a[i] = dv.getFloat32(pos, true); pos += 4; } return a; };
-    const i8 = (n) => { const a = new Int8Array(n); for (let i = 0; i < n; i++) a[i] = dv.getInt8(pos++); return a; };
-    const readLin = (id, od) => ({ inDim: id, outDim: od, scales: f32(od), biases: f32(od), weights: i8(od * id) });
-    const readLn = (d) => ({ gamma: f32(d), beta: f32(d) });
-    return new SavantPolicyJS(readLin(obsD, h1), readLn(h1), readLin(h1, h2), readLn(h2), readLin(h2, h3), readLn(h3), readLin(h3, outD));
+    const obsD = u16(), dModel = u16(), nLayers = u16(), nHeads = u16(), ffnDim = u16(), ctxLen = u16(), outD = u16(); u16();
+    const ropeTheta = dv.getFloat32(pos, true); pos += 4;
+    if (
+      obsD !== SAVANT_OBS_DIM || outD !== SAVANT_TOTAL_LOGITS ||
+      !dModel || dModel > 512 || !nLayers || nLayers > 16 ||
+      !nHeads || (dModel % nHeads) !== 0 || ((dModel / nHeads) % 2) !== 0 ||
+      !ffnDim || ffnDim > 2048 || !ctxLen || ctxLen > 128 ||
+      !Number.isFinite(ropeTheta) || ropeTheta <= 0
+    ) return null;
+    const need = (n) => (pos + n <= buf.byteLength);
+    const f32 = (n) => {
+      if (!need(n * 4)) return null;
+      const a = new Float32Array(n);
+      for (let i = 0; i < n; i++) { a[i] = dv.getFloat32(pos, true); pos += 4; }
+      return a;
+    };
+    const i8 = (n) => {
+      if (!need(n)) return null;
+      const a = new Int8Array(n);
+      for (let i = 0; i < n; i++) a[i] = dv.getInt8(pos++);
+      return a;
+    };
+    const readLin = (id, od) => {
+      const scales = f32(od), biases = f32(od), weights = i8(od * id);
+      return (scales && biases && weights) ? { inDim: id, outDim: od, scales, biases, weights } : null;
+    };
+    const readNorm = (d) => f32(d);
+    const inProj = readLin(obsD, dModel);
+    if (!inProj) return null;
+    const blocks = [];
+    for (let l = 0; l < nLayers; l++) {
+      const norm1 = readNorm(dModel);
+      const wq = readLin(dModel, dModel), wk = readLin(dModel, dModel), wv = readLin(dModel, dModel), wo = readLin(dModel, dModel);
+      const norm2 = readNorm(dModel);
+      const wGate = readLin(dModel, ffnDim), wUp = readLin(dModel, ffnDim), wDown = readLin(ffnDim, dModel);
+      if (!norm1 || !wq || !wk || !wv || !wo || !norm2 || !wGate || !wUp || !wDown) return null;
+      blocks.push({ norm1, wq, wk, wv, wo, norm2, wGate, wUp, wDown });
+    }
+    const finalNorm = readNorm(dModel);
+    const head = readLin(dModel, outD);
+    if (!finalNorm || !head) return null;
+    return new SavantPolicyJS(dModel, nLayers, nHeads, ffnDim, ctxLen, ropeTheta, inProj, blocks, finalNorm, head);
   }
-  constructor(l1, n1, l2, n2, l3, n3, head) {
-    this.l1 = l1; this.n1 = n1; this.l2 = l2; this.n2 = n2; this.l3 = l3; this.n3 = n3; this.head = head;
-    this.b1 = new Float32Array(l1.outDim);
-    this.b2 = new Float32Array(l2.outDim);
-    this.b3 = new Float32Array(l3.outDim);
+  constructor(dModel, nLayers, nHeads, ffnDim, ctxLen, ropeTheta, inProj, blocks, finalNorm, head) {
+    this.dModel = dModel; this.nLayers = nLayers; this.nHeads = nHeads;
+    this.headDim = dModel / nHeads; this.halfDim = this.headDim >> 1;
+    this.ffnDim = ffnDim; this.ctxLen = ctxLen; this.ropeTheta = ropeTheta;
+    this.scale = 1 / Math.sqrt(this.headDim);
+    this.invFreq = new Float64Array(this.halfDim);
+    for (let k = 0; k < this.halfDim; k++) this.invFreq[k] = Math.pow(ropeTheta, -(2 * k) / this.headDim);
+    this.inProj = inProj; this.blocks = blocks; this.finalNorm = finalNorm; this.head = head;
+    this.x = new Float32Array(dModel);
+    this.h = new Float32Array(dModel);
+    this.q = new Float32Array(dModel);
+    this.kCur = new Float32Array(dModel);
+    this.vCur = new Float32Array(dModel);
+    this.attnOut = new Float32Array(dModel);
+    this.proj = new Float32Array(dModel);
+    this.gate = new Float32Array(ffnDim);
+    this.up = new Float32Array(ffnDim);
+    this.scores = new Float32Array(ctxLen);
+    this.cos = new Float32Array(this.halfDim);
+    this.sin = new Float32Array(this.halfDim);
     this.logits = new Float32Array(SAVANT_TOTAL_LOGITS);
     this.act = new Uint8Array(8);
+  }
+  newCache() {
+    const total = this.nLayers * this.ctxLen * this.dModel;
+    return { k: new Float32Array(total), v: new Float32Array(total), nLayers: this.nLayers, ctxLen: this.ctxLen, dModel: this.dModel, pos: 0, len: 0 };
   }
   _lin(l, x, y) {
     const id = l.inDim, od = l.outDim, w = l.weights, sc = l.scales, bi = l.biases;
@@ -9246,25 +9300,95 @@ class SavantPolicyJS {
       y[r] = acc * sc[r] + bi[r];
     }
   }
-  _lnSilu(ln, x) {
-    const n = x.length, g = ln.gamma, b = ln.beta;
-    let mean = 0; for (let i = 0; i < n; i++) mean += x[i]; mean /= n;
-    let v = 0; for (let i = 0; i < n; i++) { const d = x[i] - mean; v += d * d; }
-    const inv = 1 / Math.sqrt(v / n + 1e-5);
-    for (let i = 0; i < n; i++) {
-      const z = (x[i] - mean) * inv * g[i] + b[i];
-      x[i] = z / (1 + Math.exp(-z));
+  _rmsNorm(w, x, out) {
+    const n = x.length;
+    let ms = 0;
+    for (let i = 0; i < n; i++) ms += x[i] * x[i];
+    const inv = 1 / Math.sqrt(ms / n + 1e-5);
+    for (let i = 0; i < n; i++) out[i] = x[i] * inv * w[i];
+  }
+  _applyRope(vec) {
+    const nh = this.nHeads, hd = this.headDim, half = this.halfDim, cs = this.cos, sn = this.sin;
+    for (let h = 0; h < nh; h++) {
+      const base = h * hd;
+      for (let k = 0; k < half; k++) {
+        const x1 = vec[base + k], x2 = vec[base + half + k];
+        const c = cs[k], s = sn[k];
+        vec[base + k] = x1 * c - x2 * s;
+        vec[base + half + k] = x1 * s + x2 * c;
+      }
     }
   }
-  actGreedy(obs) {
-    this._lin(this.l1, obs, this.b1); this._lnSilu(this.n1, this.b1);
-    this._lin(this.l2, this.b1, this.b2); this._lnSilu(this.n2, this.b2);
-    this._lin(this.l3, this.b2, this.b3); this._lnSilu(this.n3, this.b3);
-    this._lin(this.head, this.b3, this.logits);
+  forwardStep(obs, cache) {
+    const d = this.dModel, nh = this.nHeads, hd = this.headDim, half = this.halfDim, ffn = this.ffnDim, ctx = this.ctxLen;
+    if (!cache || cache.nLayers !== this.nLayers || cache.ctxLen !== ctx || cache.dModel !== d) cache = this.newCache();
+    const pos = cache.pos, slot = pos % ctx, validLen = Math.min(pos + 1, ctx);
+    for (let k = 0; k < half; k++) {
+      const ang = pos * this.invFreq[k];
+      this.cos[k] = Math.cos(ang);
+      this.sin[k] = Math.sin(ang);
+    }
+    const x = this.x, h = this.h, q = this.q, kCur = this.kCur, vCur = this.vCur;
+    const attnOut = this.attnOut, proj = this.proj, gate = this.gate, up = this.up, scores = this.scores;
+    this._lin(this.inProj, obs, x);
+    const layerStride = ctx * d, scale = this.scale;
+    for (let li = 0; li < this.nLayers; li++) {
+      const blk = this.blocks[li];
+      this._rmsNorm(blk.norm1, x, h);
+      this._lin(blk.wq, h, q);
+      this._lin(blk.wk, h, kCur);
+      this._lin(blk.wv, h, vCur);
+      this._applyRope(q);
+      this._applyRope(kCur);
+      const layerOff = li * layerStride, dstOff = layerOff + slot * d;
+      cache.k.set(kCur, dstOff);
+      cache.v.set(vCur, dstOff);
+      for (let head = 0; head < nh; head++) {
+        const hb = head * hd;
+        let maxS = -1e30;
+        for (let sIdx = 0; sIdx < validLen; sIdx++) {
+          const kBase = layerOff + sIdx * d + hb;
+          let dot = 0;
+          for (let j = 0; j < hd; j++) dot += q[hb + j] * cache.k[kBase + j];
+          const sc = dot * scale;
+          scores[sIdx] = sc;
+          if (sc > maxS) maxS = sc;
+        }
+        let sumExp = 0;
+        for (let sIdx = 0; sIdx < validLen; sIdx++) {
+          const e = Math.exp(scores[sIdx] - maxS);
+          scores[sIdx] = e;
+          sumExp += e;
+        }
+        const invSum = 1 / Math.max(sumExp, 1e-12);
+        for (let j = 0; j < hd; j++) attnOut[hb + j] = 0;
+        for (let sIdx = 0; sIdx < validLen; sIdx++) {
+          const w = scores[sIdx] * invSum;
+          const vBase = layerOff + sIdx * d + hb;
+          for (let j = 0; j < hd; j++) attnOut[hb + j] += w * cache.v[vBase + j];
+        }
+      }
+      this._lin(blk.wo, attnOut, proj);
+      for (let i = 0; i < d; i++) x[i] += proj[i];
+      this._rmsNorm(blk.norm2, x, h);
+      this._lin(blk.wGate, h, gate);
+      this._lin(blk.wUp, h, up);
+      for (let i = 0; i < ffn; i++) { const g = gate[i]; gate[i] = (g / (1 + Math.exp(-g))) * up[i]; }
+      this._lin(blk.wDown, gate, proj);
+      for (let i = 0; i < d; i++) x[i] += proj[i];
+    }
+    cache.pos = pos + 1;
+    cache.len = validLen;
+    this._rmsNorm(this.finalNorm, x, h);
+    this._lin(this.head, h, this.logits);
+    return this.logits;
+  }
+  actGreedy(obs, cache) {
+    this.forwardStep(obs, cache);
     let off = 0;
     for (let h = 0; h < 8; h++) {
       const n = SAVANT_BRANCHES[h];
-      let bi = 0, bv = -1e9;
+      let bi = 0, bv = -1e30;
       for (let i = 0; i < n; i++) { const v = this.logits[off + i]; if (v > bv) { bv = v; bi = i; } }
       this.act[h] = bi; off += n;
     }
@@ -9390,12 +9514,12 @@ class BotAI {
     this.intercept = null; this.interceptPos = new V3(); this.interceptT = 0; this.shotDir = new V3(0, 0, 1);
     this.aimErr = 0; this.lastJumpT = -10; this.kickDone = false; this.kickBoostFlip = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; this.unstuckSteer = 1;
     this.strike = null; this.strikeNext = 0; this._sc = null;
-    this.forceMpc = false; this.policyCtl = makeControls(); this.policyRem = 0;
+    this.forceMpc = false; this.policyCtl = makeControls(); this.policyRem = 0; this.policyCache = null;
   }
   get isChamp() { return this.diffIndex >= 4; }
   get isSavant() { return this.diffIndex >= 5; }
   get attackDir() { return this.car.team === 0 ? 1 : -1; }
-  reset() { this.seq = null; this.aer = null; this.mode = 'idle'; this.kickDone = false; this.kickBoostFlip = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; this.strike = null; this.strikeNext = 0; this.policyCtl = makeControls(); this.policyRem = 0; }
+  reset() { this.seq = null; this.aer = null; this.mode = 'idle'; this.kickDone = false; this.kickBoostFlip = false; this.padTarget = null; this.stuckT = 0; this.unstuck = 0; this.strike = null; this.strikeNext = 0; this.policyCtl = makeControls(); this.policyRem = 0; if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; } }
   estimateFor(car, target, useBoost = true) {
     const to = _e1.copy(target).sub(car.pos); const dist = Math.max(0, to.length() - 1.6);
     const b = car.basis; const ang = b.f.angleTo(to.normalize());
@@ -9524,27 +9648,34 @@ class BotAI {
   updateCore(dt, w) {
     const car = this.car, c = car.controls; this.now = w.time;
     c.throttle = 0; c.steer = 0; c.pitch = 0; c.yaw = 0; c.roll = 0; c.jump = false; c.boost = false; c.handbrake = false; c.airRollFree = false; c.item = false;
-    if (car.demolished) return;
+    if (car.demolished) { this.policyRem = 0; if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; } return; }
     this.decideT -= dt;
     if (this.decideT <= 0) { this.decideT = this.d.react * (0.7 + Math.random() * 0.6); this.decide(w); }
     const powerCalm = !w.powers || (!w.powers.tornados.length && !w.powers.shots.length);
+    let usedPolicy = false;
     if (this.isSavant && !this.forceMpc && !w.kickoff && w.cars.length <= 4 && this.mode === 'attack' && !this.aer && !this.seq && _savantPolicy && w.shape.goalMode === 'standard' && !w.shape.fig8 && !w.ball.stuckTo && !w.ball.frozen && powerCalm) {
       const ad = this.attackDir, glz = w.shape.goalLineZ();
       if ((w.ball.pos.z * ad) > -glz * 0.35 && car.pos.distanceTo(w.ball.pos) < 11) {
         if (this.d.plan > 0 && w.time >= this.strikeNext) { this.strikeNext = w.time + this.d.plan; this.planStrike(w, false); }
         if (!this.strike || this.strike.score < 35) {
           if (this.policyRem === 0) {
+            if (!this.policyCache || this.policyCache.nLayers !== _savantPolicy.nLayers || this.policyCache.ctxLen !== _savantPolicy.ctxLen || this.policyCache.dModel !== _savantPolicy.dModel) {
+              this.policyCache = _savantPolicy.newCache();
+            }
             extractSavantObs(w, car, this.policyCtl, _savObs);
-            applySavantAction(_savantPolicy.actGreedy(_savObs), this.policyCtl);
+            applySavantAction(_savantPolicy.actGreedy(_savObs, this.policyCache), this.policyCtl);
             this.policyRem = SAVANT_TICK_SKIP;
           }
           this.policyRem--;
           Object.assign(c, this.policyCtl);
-          return;
+          usedPolicy = true;
         }
-      } else {
-        this.policyRem = 0;
       }
+    }
+    if (usedPolicy) return;
+    if (this.policyRem > 0 || (this.policyCache && this.policyCache.len > 0)) {
+      this.policyRem = 0;
+      if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; }
     }
     // Landed on the roof (e.g. after a flip): press jump to roll back onto the wheels
     if (this.d.fix >= 0.5 && car.contacts === 0 && car.bodyContact && car.basis.u.y < 0.5 && car.pos.y < 1.4 && car.vel.y < 2 && !this.aer) {

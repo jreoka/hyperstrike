@@ -1,7 +1,7 @@
 # SAVANT Neural Policy Training (`savant_rl`)
 
 Zero-flag, pure from-scratch reinforcement learning for **SAVANT**.  
-The MLP gets raw controller access (`throttle`, `steer`, `pitch`, `yaw`, `roll`, `jump`, `boost`, `handbrake`) with zero imitation/BC warmstart and figures out how to play through multi-threaded Rust self-play + league RL on your CPU/GPU.
+The **Causal RoPE Transformer** (Pre-RMSNorm + Rotary Position Embedding sliding-window attention + SwiGLU FFN, exported to int8 `HSP2` format with O(1)-projection KV-cached inference in Rust and JS) gets raw controller access (`throttle`, `steer`, `pitch`, `yaw`, `roll`, `jump`, `boost`, `handbrake`) with zero imitation/BC warmstart and figures out how to play through multi-threaded Rust self-play + league RL on your CPU/GPU.
 
 ---
 

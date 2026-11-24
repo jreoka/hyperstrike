@@ -163,6 +163,7 @@ struct SingleEnv {
     /// Opponent snapshot car indices (when `opp_kind == Snapshot`).
     snap_cars: Vec<usize>,
     snap_idx: usize,
+    snap_caches: Vec<SavantPolicyCache>,
     prev_ctls: Vec<Controls>,
     ep_steps: usize,
     since_kick: f64,
@@ -219,6 +220,7 @@ impl SingleEnv {
             rl_cars,
             snap_cars,
             snap_idx: 0,
+            snap_caches: vec![SavantPolicyCache::default(); n_cars],
             prev_ctls: vec![Controls::default(); n_cars],
             ep_steps: 0,
             since_kick: 0.0,
@@ -241,6 +243,9 @@ impl SingleEnv {
         setup_training_episode(&mut self.world, self.team_size, 0.35);
         for c in &mut self.prev_ctls {
             *c = Controls::default();
+        }
+        for cache in &mut self.snap_caches {
+            cache.reset();
         }
         self.ep_steps = 0;
         self.since_kick = 0.0;
@@ -301,8 +306,10 @@ impl SingleEnv {
                 if !self.world.cars[ci].demolished {
                     let mut ob = [0.0_f32; OBS_DIM];
                     extract_obs(&self.world, ci, &self.prev_ctls[ci], &mut ob);
-                    let act = pol.act_greedy(&ob);
+                    let act = pol.act_greedy(&ob, &mut self.snap_caches[ci]);
                     self.prev_ctls[ci] = decode_action(&act);
+                } else {
+                    self.snap_caches[ci].reset();
                 }
             }
         }
@@ -713,7 +720,7 @@ pub unsafe extern "C" fn rl_pool_free(pool: *mut EnvPool) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 3. Fast Multi-Threaded Full-Match Evaluator (MLP vs LEGEND / MPC-SAVANT)
+// 3. Fast Multi-Threaded Full-Match Evaluator (RoPE Transformer vs LEGEND / MPC-SAVANT)
 // ---------------------------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -764,6 +771,7 @@ pub unsafe extern "C" fn rl_eval_policy(
                 setup_kickoff(&mut w, team_size);
                 let mut prev_ctls = vec![Controls::default(); w.cars.len()];
                 let mut rem = vec![0u8; w.cars.len()];
+                let mut caches = vec![SavantPolicyCache::default(); w.cars.len()];
                 let dt = w.phys.dt;
                 let mut t = 0.0;
                 let mut since = 0.0;
@@ -775,12 +783,15 @@ pub unsafe extern "C" fn rl_eval_policy(
                             if rem[ci] == 0 {
                                 let mut ob = [0.0_f32; OBS_DIM];
                                 extract_obs(&w, ci, &prev_ctls[ci], &mut ob);
-                                let act = pol.act_greedy(&ob);
+                                let act = pol.act_greedy(&ob, &mut caches[ci]);
                                 prev_ctls[ci] = decode_action(&act);
                                 rem[ci] = POLICY_TICK_SKIP as u8;
                             }
                             rem[ci] = rem[ci].saturating_sub(1);
                             w.cars[ci].controls = prev_ctls[ci];
+                        } else {
+                            caches[ci].reset();
+                            rem[ci] = 0;
                         }
                     }
                     w.step(dt);
@@ -816,6 +827,9 @@ pub unsafe extern "C" fn rl_eval_policy(
                         setup_kickoff(&mut w, team_size);
                         prev_ctls.fill(Controls::default());
                         rem.fill(0);
+                        for cache in &mut caches {
+                            cache.reset();
+                        }
                         since = 0.0;
                     }
                 }

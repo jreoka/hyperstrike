@@ -1,7 +1,8 @@
-//! Compact quantized MLP policy for `SAVANT` bots (trained via BC + PPO self-play).
+//! Compact quantized causal RoPE Transformer policy for `SAVANT` bots (trained via PPO self-play).
 //!
 //! Shared by both offline RL training (`rust/rl_env`) and live inference (`BotAi`),
-//! guaranteeing identical observation features and action decoding with zero train/serve skew.
+//! guaranteeing identical observation features, temporal KV-cached RoPE attention, and action
+//! decoding with zero train/serve skew.
 
 use std::sync::OnceLock;
 
@@ -18,7 +19,12 @@ pub const TOTAL_LOGITS: usize = 23;
 /// Decision period in 120 Hz physics ticks (4 ticks = 30 Hz = 33.3 ms per action).
 pub const POLICY_TICK_SKIP: u64 = 4;
 
-pub const POLICY_MAGIC: &[u8; 4] = b"HSP1";
+pub const POLICY_MAGIC: &[u8; 4] = b"HSP2";
+
+const MAX_D_MODEL: usize = 512;
+const MAX_N_LAYERS: usize = 16;
+const MAX_FFN_DIM: usize = 2048;
+const MAX_CTX_LEN: usize = 128;
 
 const THROTTLE_VALS: [f64; 3] = [-1.0, 0.0, 1.0];
 const STEER_VALS: [f64; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
@@ -330,7 +336,7 @@ pub fn encode_action(c: &Controls) -> [u8; ACT_HEADS] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Quantized int8 MLP (`HSP1` binary format)
+// Quantized int8 Causal RoPE Transformer (`HSP2` binary format)
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
@@ -344,19 +350,88 @@ struct QLinear {
 }
 
 #[derive(Clone, Debug)]
-struct LayerNorm {
-    gamma: Vec<f32>,
-    beta: Vec<f32>,
+struct RmsNorm {
+    weight: Vec<f32>,
+}
+
+#[derive(Clone, Debug)]
+struct TransformerBlock {
+    norm1: RmsNorm,
+    wq: QLinear,
+    wk: QLinear,
+    wv: QLinear,
+    wo: QLinear,
+    norm2: RmsNorm,
+    w_gate: QLinear,
+    w_up: QLinear,
+    w_down: QLinear,
+}
+
+/// Per-agent sliding-window KV cache for causal RoPE Transformer inference.
+///
+/// Default-constructed caches allocate zero memory until the first forward pass.
+#[derive(Clone, Debug, Default)]
+pub struct SavantPolicyCache {
+    /// Flattened K cache: `[n_layers][ctx_len][d_model]`
+    k: Vec<f32>,
+    /// Flattened V cache: `[n_layers][ctx_len][d_model]`
+    v: Vec<f32>,
+    n_layers: usize,
+    ctx_len: usize,
+    d_model: usize,
+    /// Monotonic step counter within the current episode/sequence (RoPE position).
+    pos: usize,
+    /// Number of valid cached frames (`0..=ctx_len`).
+    len: usize,
+}
+
+impl SavantPolicyCache {
+    #[inline]
+    pub fn reset(&mut self) {
+        self.pos = 0;
+        self.len = 0;
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn ensure_for(&mut self, pol: &SavantPolicy) {
+        if self.n_layers != pol.n_layers
+            || self.ctx_len != pol.ctx_len
+            || self.d_model != pol.d_model
+        {
+            let total = pol.n_layers * pol.ctx_len * pol.d_model;
+            self.k.resize(total, 0.0);
+            self.v.resize(total, 0.0);
+            self.n_layers = pol.n_layers;
+            self.ctx_len = pol.ctx_len;
+            self.d_model = pol.d_model;
+            self.pos = 0;
+            self.len = 0;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct SavantPolicy {
-    l1: QLinear,
-    n1: LayerNorm,
-    l2: QLinear,
-    n2: LayerNorm,
-    l3: QLinear,
-    n3: LayerNorm,
+    d_model: usize,
+    n_layers: usize,
+    n_heads: usize,
+    head_dim: usize,
+    ffn_dim: usize,
+    ctx_len: usize,
+    rope_theta: f32,
+    inv_freq: Vec<f64>,
+    in_proj: QLinear,
+    blocks: Vec<TransformerBlock>,
+    final_norm: RmsNorm,
     head: QLinear,
 }
 
@@ -382,6 +457,11 @@ impl<'a> Reader<'a> {
     fn read_u16(&mut self) -> Option<u16> {
         let b = self.read_bytes(2)?;
         Some(u16::from_le_bytes([b[0], b[1]]))
+    }
+
+    fn read_f32(&mut self) -> Option<f32> {
+        let b = self.read_bytes(4)?;
+        Some(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
     fn read_f32_vec(&mut self, n: usize) -> Option<Vec<f32>> {
@@ -411,10 +491,9 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn read_ln(&mut self, dim: usize) -> Option<LayerNorm> {
-        let gamma = self.read_f32_vec(dim)?;
-        let beta = self.read_f32_vec(dim)?;
-        Some(LayerNorm { gamma, beta })
+    fn read_rms_norm(&mut self, dim: usize) -> Option<RmsNorm> {
+        let weight = self.read_f32_vec(dim)?;
+        Some(RmsNorm { weight })
     }
 }
 
@@ -435,28 +514,36 @@ fn linear_forward(l: &QLinear, x: &[f32], y: &mut [f32]) {
     }
 }
 
-fn ln_silu_inplace(ln: &LayerNorm, x: &mut [f32]) {
+fn rms_norm(norm: &RmsNorm, x: &[f32], out: &mut [f32]) {
     let n = x.len() as f32;
-    let mut mean = 0.0_f32;
-    for &v in x.iter() {
-        mean += v;
+    let mut ms = 0.0_f32;
+    for &v in x {
+        ms += v * v;
     }
-    mean /= n;
-    let mut var = 0.0_f32;
-    for &v in x.iter() {
-        let d = v - mean;
-        var += d * d;
-    }
-    let inv_std = 1.0 / (var / n + 1e-5).sqrt();
+    let inv_rms = 1.0 / (ms / n + 1e-5).sqrt();
     for i in 0..x.len() {
-        let norm = (x[i] - mean) * inv_std * ln.gamma[i] + ln.beta[i];
-        x[i] = silu(norm);
+        out[i] = x[i] * inv_rms * norm.weight[i];
+    }
+}
+
+fn apply_rope_inplace(vec: &mut [f32], n_heads: usize, head_dim: usize, cos: &[f32], sin: &[f32]) {
+    let half = head_dim / 2;
+    for h in 0..n_heads {
+        let base = h * head_dim;
+        for k in 0..half {
+            let x1 = vec[base + k];
+            let x2 = vec[base + half + k];
+            let c = cos[k];
+            let s = sin[k];
+            vec[base + k] = x1 * c - x2 * s;
+            vec[base + half + k] = x1 * s + x2 * c;
+        }
     }
 }
 
 impl SavantPolicy {
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 16 {
+        if bytes.len() < 24 {
             return None;
         }
         let mut r = Reader::new(bytes);
@@ -464,52 +551,239 @@ impl SavantPolicy {
             return None;
         }
         let obs_d = r.read_u16()? as usize;
-        let h1 = r.read_u16()? as usize;
-        let h2 = r.read_u16()? as usize;
-        let h3 = r.read_u16()? as usize;
+        let d_model = r.read_u16()? as usize;
+        let n_layers = r.read_u16()? as usize;
+        let n_heads = r.read_u16()? as usize;
+        let ffn_dim = r.read_u16()? as usize;
+        let ctx_len = r.read_u16()? as usize;
         let out_d = r.read_u16()? as usize;
         let _flags = r.read_u16()?;
-        if obs_d != OBS_DIM || out_d != TOTAL_LOGITS || h1 == 0 || h2 == 0 || h3 == 0 || h1 > 512 || h2 > 512 || h3 > 512 {
+        let rope_theta = r.read_f32()?;
+
+        if obs_d != OBS_DIM
+            || out_d != TOTAL_LOGITS
+            || d_model == 0
+            || d_model > MAX_D_MODEL
+            || n_layers == 0
+            || n_layers > MAX_N_LAYERS
+            || n_heads == 0
+            || d_model % n_heads != 0
+            || (d_model / n_heads) % 2 != 0
+            || ffn_dim == 0
+            || ffn_dim > MAX_FFN_DIM
+            || ctx_len == 0
+            || ctx_len > MAX_CTX_LEN
+            || !rope_theta.is_finite()
+            || rope_theta <= 0.0
+        {
             return None;
         }
-        let l1 = r.read_linear(obs_d, h1)?;
-        let n1 = r.read_ln(h1)?;
-        let l2 = r.read_linear(h1, h2)?;
-        let n2 = r.read_ln(h2)?;
-        let l3 = r.read_linear(h2, h3)?;
-        let n3 = r.read_ln(h3)?;
-        let head = r.read_linear(h3, out_d)?;
+
+        let head_dim = d_model / n_heads;
+        let half = head_dim / 2;
+        let mut inv_freq = Vec::with_capacity(half);
+        for k in 0..half {
+            let exp = -(2.0 * k as f64) / (head_dim as f64);
+            inv_freq.push((rope_theta as f64).powf(exp));
+        }
+
+        let in_proj = r.read_linear(obs_d, d_model)?;
+        let mut blocks = Vec::with_capacity(n_layers);
+        for _ in 0..n_layers {
+            let norm1 = r.read_rms_norm(d_model)?;
+            let wq = r.read_linear(d_model, d_model)?;
+            let wk = r.read_linear(d_model, d_model)?;
+            let wv = r.read_linear(d_model, d_model)?;
+            let wo = r.read_linear(d_model, d_model)?;
+            let norm2 = r.read_rms_norm(d_model)?;
+            let w_gate = r.read_linear(d_model, ffn_dim)?;
+            let w_up = r.read_linear(d_model, ffn_dim)?;
+            let w_down = r.read_linear(ffn_dim, d_model)?;
+            blocks.push(TransformerBlock {
+                norm1,
+                wq,
+                wk,
+                wv,
+                wo,
+                norm2,
+                w_gate,
+                w_up,
+                w_down,
+            });
+        }
+        let final_norm = r.read_rms_norm(d_model)?;
+        let head = r.read_linear(d_model, out_d)?;
+
         Some(Self {
-            l1,
-            n1,
-            l2,
-            n2,
-            l3,
-            n3,
+            d_model,
+            n_layers,
+            n_heads,
+            head_dim,
+            ffn_dim,
+            ctx_len,
+            rope_theta,
+            inv_freq,
+            in_proj,
+            blocks,
+            final_norm,
             head,
         })
     }
 
-    pub fn forward(&self, obs: &[f32; OBS_DIM]) -> [f32; TOTAL_LOGITS] {
-        let mut b1 = [0.0_f32; 512];
-        let mut b2 = [0.0_f32; 512];
-        let mut b3 = [0.0_f32; 512];
-        let h1 = self.l1.out_dim;
-        let h2 = self.l2.out_dim;
-        let h3 = self.l3.out_dim;
-        linear_forward(&self.l1, obs, &mut b1[..h1]);
-        ln_silu_inplace(&self.n1, &mut b1[..h1]);
-        linear_forward(&self.l2, &b1[..h1], &mut b2[..h2]);
-        ln_silu_inplace(&self.n2, &mut b2[..h2]);
-        linear_forward(&self.l3, &b2[..h2], &mut b3[..h3]);
-        ln_silu_inplace(&self.n3, &mut b3[..h3]);
+    pub fn d_model(&self) -> usize {
+        self.d_model
+    }
+
+    pub fn n_layers(&self) -> usize {
+        self.n_layers
+    }
+
+    pub fn n_heads(&self) -> usize {
+        self.n_heads
+    }
+
+    pub fn ctx_len(&self) -> usize {
+        self.ctx_len
+    }
+
+    pub fn rope_theta(&self) -> f32 {
+        self.rope_theta
+    }
+
+    /// Runs one causal decision step through the RoPE Transformer, updating `cache` in place.
+    pub fn forward_step(
+        &self,
+        obs: &[f32; OBS_DIM],
+        cache: &mut SavantPolicyCache,
+    ) -> [f32; TOTAL_LOGITS] {
+        cache.ensure_for(self);
+
+        let d = self.d_model;
+        let nh = self.n_heads;
+        let hd = self.head_dim;
+        let half = hd / 2;
+        let ffn = self.ffn_dim;
+        let ctx = self.ctx_len;
+        let pos = cache.pos;
+        let slot = pos % ctx;
+        let valid_len = (pos + 1).min(ctx);
+        let scale = 1.0_f32 / (hd as f32).sqrt();
+
+        // Precompute RoPE cos/sin for `pos` using f64 trig for exact relative invariance at any step.
+        let mut cos = [0.0_f32; MAX_D_MODEL / 2];
+        let mut sin = [0.0_f32; MAX_D_MODEL / 2];
+        let pos_f = pos as f64;
+        for k in 0..half {
+            let (s, c) = (pos_f * self.inv_freq[k]).sin_cos();
+            cos[k] = c as f32;
+            sin[k] = s as f32;
+        }
+
+        let mut x = [0.0_f32; MAX_D_MODEL];
+        let mut h = [0.0_f32; MAX_D_MODEL];
+        let mut q = [0.0_f32; MAX_D_MODEL];
+        let mut k_cur = [0.0_f32; MAX_D_MODEL];
+        let mut v_cur = [0.0_f32; MAX_D_MODEL];
+        let mut attn_out = [0.0_f32; MAX_D_MODEL];
+        let mut proj = [0.0_f32; MAX_D_MODEL];
+        let mut gate = [0.0_f32; MAX_FFN_DIM];
+        let mut up = [0.0_f32; MAX_FFN_DIM];
+        let mut scores = [0.0_f32; MAX_CTX_LEN];
+
+        linear_forward(&self.in_proj, obs, &mut x[..d]);
+
+        let layer_stride = ctx * d;
+        for (li, blk) in self.blocks.iter().enumerate() {
+            // 1. Pre-RMSNorm + RoPE Multi-Head Causal Sliding-Window Attention
+            rms_norm(&blk.norm1, &x[..d], &mut h[..d]);
+            linear_forward(&blk.wq, &h[..d], &mut q[..d]);
+            linear_forward(&blk.wk, &h[..d], &mut k_cur[..d]);
+            linear_forward(&blk.wv, &h[..d], &mut v_cur[..d]);
+
+            apply_rope_inplace(&mut q[..d], nh, hd, &cos[..half], &sin[..half]);
+            apply_rope_inplace(&mut k_cur[..d], nh, hd, &cos[..half], &sin[..half]);
+
+            let layer_off = li * layer_stride;
+            let dst_off = layer_off + slot * d;
+            cache.k[dst_off..dst_off + d].copy_from_slice(&k_cur[..d]);
+            cache.v[dst_off..dst_off + d].copy_from_slice(&v_cur[..d]);
+
+            let k_layer = &cache.k[layer_off..layer_off + layer_stride];
+            let v_layer = &cache.v[layer_off..layer_off + layer_stride];
+
+            for head in 0..nh {
+                let hb = head * hd;
+                let qh = &q[hb..hb + hd];
+
+                let mut max_s = f32::NEG_INFINITY;
+                for s_idx in 0..valid_len {
+                    let kh = &k_layer[s_idx * d + hb..s_idx * d + hb + hd];
+                    let mut dot = 0.0_f32;
+                    for j in 0..hd {
+                        dot += qh[j] * kh[j];
+                    }
+                    let sc = dot * scale;
+                    scores[s_idx] = sc;
+                    if sc > max_s {
+                        max_s = sc;
+                    }
+                }
+
+                let mut sum_exp = 0.0_f32;
+                for s_idx in 0..valid_len {
+                    let e = (scores[s_idx] - max_s).exp();
+                    scores[s_idx] = e;
+                    sum_exp += e;
+                }
+                let inv_sum = 1.0 / sum_exp.max(1e-12);
+
+                let out_h = &mut attn_out[hb..hb + hd];
+                out_h.fill(0.0);
+                for s_idx in 0..valid_len {
+                    let w = scores[s_idx] * inv_sum;
+                    let vh = &v_layer[s_idx * d + hb..s_idx * d + hb + hd];
+                    for j in 0..hd {
+                        out_h[j] += w * vh[j];
+                    }
+                }
+            }
+
+            linear_forward(&blk.wo, &attn_out[..d], &mut proj[..d]);
+            for i in 0..d {
+                x[i] += proj[i];
+            }
+
+            // 2. Pre-RMSNorm + SwiGLU FFN
+            rms_norm(&blk.norm2, &x[..d], &mut h[..d]);
+            linear_forward(&blk.w_gate, &h[..d], &mut gate[..ffn]);
+            linear_forward(&blk.w_up, &h[..d], &mut up[..ffn]);
+            for i in 0..ffn {
+                gate[i] = silu(gate[i]) * up[i];
+            }
+            linear_forward(&blk.w_down, &gate[..ffn], &mut proj[..d]);
+            for i in 0..d {
+                x[i] += proj[i];
+            }
+        }
+
+        cache.pos = pos + 1;
+        cache.len = valid_len;
+
+        rms_norm(&self.final_norm, &x[..d], &mut h[..d]);
         let mut logits = [0.0_f32; TOTAL_LOGITS];
-        linear_forward(&self.head, &b3[..h3], &mut logits);
+        linear_forward(&self.head, &h[..d], &mut logits);
         logits
     }
 
-    pub fn act_greedy(&self, obs: &[f32; OBS_DIM]) -> [u8; ACT_HEADS] {
-        let logits = self.forward(obs);
+    /// Stateless single-frame forward pass (convenience wrapper with a fresh 1-step cache).
+    pub fn forward(&self, obs: &[f32; OBS_DIM]) -> [f32; TOTAL_LOGITS] {
+        let mut cache = SavantPolicyCache::default();
+        self.forward_step(obs, &mut cache)
+    }
+
+    /// Runs one causal decision step with KV cache and returns greedy argmax action per branch.
+    pub fn act_greedy(&self, obs: &[f32; OBS_DIM], cache: &mut SavantPolicyCache) -> [u8; ACT_HEADS] {
+        let logits = self.forward_step(obs, cache);
         let mut act = [0u8; ACT_HEADS];
         let mut off = 0usize;
         for (h, &n) in ACT_BRANCHES.iter().enumerate() {
@@ -548,4 +822,148 @@ pub fn policy_supports_world(w: &World) -> bool {
         && w.powers
             .as_ref()
             .is_none_or(|p| p.tornados.is_empty() && p.shots.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_synthetic_hsp2(
+        d_model: usize,
+        n_layers: usize,
+        n_heads: usize,
+        ffn_dim: usize,
+        ctx_len: usize,
+        rope_theta: f32,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(POLICY_MAGIC);
+        for v in [
+            OBS_DIM as u16,
+            d_model as u16,
+            n_layers as u16,
+            n_heads as u16,
+            ffn_dim as u16,
+            ctx_len as u16,
+            TOTAL_LOGITS as u16,
+            0u16,
+        ] {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf.extend_from_slice(&rope_theta.to_le_bytes());
+
+        let mut seed = 0x1234_5678_9abc_def0_u64;
+        fn next_f(seed: &mut u64) -> f32 {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let bits = ((*seed >> 40) as i32) - (1 << 23);
+            (bits as f32) / ((1 << 23) as f32)
+        }
+        fn push_lin(buf: &mut Vec<u8>, seed: &mut u64, in_d: usize, out_d: usize) {
+            let scale = 0.05 / (in_d as f32).sqrt();
+            for _ in 0..out_d {
+                buf.extend_from_slice(&scale.to_le_bytes());
+            }
+            for _ in 0..out_d {
+                buf.extend_from_slice(&(next_f(seed) * 0.05).to_le_bytes());
+            }
+            for _ in 0..(out_d * in_d) {
+                let q = (next_f(seed) * 127.0).round().clamp(-127.0, 127.0) as i8;
+                buf.push(q as u8);
+            }
+        }
+        fn push_norm(buf: &mut Vec<u8>, seed: &mut u64, d: usize) {
+            for _ in 0..d {
+                buf.extend_from_slice(&(1.0 + next_f(seed) * 0.1).to_le_bytes());
+            }
+        }
+
+        push_lin(&mut buf, &mut seed, OBS_DIM, d_model);
+        for _ in 0..n_layers {
+            push_norm(&mut buf, &mut seed, d_model);
+            push_lin(&mut buf, &mut seed, d_model, d_model);
+            push_lin(&mut buf, &mut seed, d_model, d_model);
+            push_lin(&mut buf, &mut seed, d_model, d_model);
+            push_lin(&mut buf, &mut seed, d_model, d_model);
+            push_norm(&mut buf, &mut seed, d_model);
+            push_lin(&mut buf, &mut seed, d_model, ffn_dim);
+            push_lin(&mut buf, &mut seed, d_model, ffn_dim);
+            push_lin(&mut buf, &mut seed, ffn_dim, d_model);
+        }
+        push_norm(&mut buf, &mut seed, d_model);
+        push_lin(&mut buf, &mut seed, d_model, TOTAL_LOGITS);
+        buf
+    }
+
+    #[test]
+    fn hsp2_rope_transformer_parse_step_and_relative_invariance() {
+        let bytes = make_synthetic_hsp2(32, 2, 4, 64, 8, 100.0);
+        let pol = SavantPolicy::from_bytes(&bytes).expect("parse valid HSP2");
+        assert_eq!(pol.d_model(), 32);
+        assert_eq!(pol.n_layers(), 2);
+        assert_eq!(pol.n_heads(), 4);
+        assert_eq!(pol.ctx_len(), 8);
+
+        // Build a deterministic 24-frame sequence (> ctx_len to exercise sliding window)
+        let mut seq = Vec::new();
+        for t in 0..24usize {
+            let mut obs = [0.0_f32; OBS_DIM];
+            for i in 0..OBS_DIM {
+                obs[i] = ((t * 17 + i * 31) as f32 * 0.03).sin();
+            }
+            seq.push(obs);
+        }
+
+        // Run streaming from pos=0
+        let mut cache_a = SavantPolicyCache::default();
+        let mut logits_a = Vec::new();
+        for obs in &seq {
+            let out = pol.forward_step(obs, &mut cache_a);
+            assert!(out.iter().all(|v| v.is_finite()));
+            logits_a.push(out);
+        }
+        assert_eq!(cache_a.len(), 8);
+
+        // Run the EXACT same sequence after advancing pos by 1000 warm-up frames and resetting via
+        // shifted RoPE pos (testing pure relative-position invariance of RoPE + sliding window).
+        // After L * (ctx_len - 1) = 2 * 7 = 14 steps of identical observations, outputs must match!
+        let mut cache_b = SavantPolicyCache::default();
+        let mut dummy = [0.0_f32; OBS_DIM];
+        dummy[0] = 1.0;
+        for _ in 0..50 {
+            pol.forward_step(&dummy, &mut cache_b);
+        }
+        let mut logits_b = Vec::new();
+        for obs in &seq {
+            logits_b.push(pol.forward_step(obs, &mut cache_b));
+        }
+
+        // For t >= L * (ctx_len - 1) = 14, all dependencies in both caches are strictly inside `seq`,
+        // so outputs must match to floating-point precision!
+        for t in 14..24 {
+            for j in 0..TOTAL_LOGITS {
+                let diff = (logits_a[t][j] - logits_b[t][j]).abs();
+                assert!(
+                    diff < 1e-4,
+                    "RoPE sliding-window mismatch at t={t} j={j}: a={} b={} diff={diff}",
+                    logits_a[t][j],
+                    logits_b[t][j]
+                );
+            }
+        }
+
+        // Cache reset restores exact step-0 behavior
+        cache_a.reset();
+        assert!(cache_a.is_empty());
+        let after_reset = pol.forward_step(&seq[0], &mut cache_a);
+        for j in 0..TOTAL_LOGITS {
+            assert!((after_reset[j] - logits_a[0][j]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn hsp2_rejects_invalid_magic() {
+        let mut bad = make_synthetic_hsp2(32, 2, 4, 64, 8, 100.0);
+        bad[3] = b'X';
+        assert!(SavantPolicy::from_bytes(&bad).is_none());
+    }
 }
