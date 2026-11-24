@@ -191,6 +191,7 @@ const EMBEDDED_ICON_192: &[u8] = include_bytes!("../assets/icon-192.png");
 const EMBEDDED_ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
 const EMBEDDED_ICON_MASKABLE_512: &[u8] = include_bytes!("../assets/icon-maskable-512.png");
 const EMBEDDED_APPLE_TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
+const EMBEDDED_SAVANT_POLICY: &[u8] = include_bytes!("../../sim/assets/savant_policy.bin");
 
 fn serve_static_asset(
     state: &AppState,
@@ -230,6 +231,17 @@ pub async fn manifest_get(State(state): State<Arc<AppState>>, headers: HeaderMap
         &headers,
         EMBEDDED_MANIFEST,
         "application/manifest+json; charset=utf-8",
+        "no-cache",
+        None,
+    )
+}
+
+pub async fn savant_policy_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    serve_static_asset(
+        &state,
+        &headers,
+        EMBEDDED_SAVANT_POLICY,
+        "application/octet-stream",
         "no-cache",
         None,
     )

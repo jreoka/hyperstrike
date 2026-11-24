@@ -4,6 +4,7 @@ pub mod arena;
 pub mod math_ext;
 pub mod netcode;
 pub mod physics;
+pub mod policy;
 pub mod powers;
 pub mod strike;
 pub mod world;
@@ -28,6 +29,11 @@ pub use physics::{
     Ball, BallPredictor, BallState, BounceEvent, Car, CarBallHit, CarCollisionResult, CarEventKind,
     CarStats, PredSlice, TouchRecord, Wheel, ball_integrate, collide_car_ball, collide_cars,
     obb_overlap,
+};
+pub use policy::{
+    ACT_BRANCHES, ACT_HEADS, EMBEDDED_POLICY_BYTES, OBS_DIM, POLICY_MAGIC, POLICY_TICK_SKIP,
+    SavantPolicy, TOTAL_LOGITS, decode_action, embedded_savant_policy, encode_action, extract_obs,
+    policy_supports_world,
 };
 pub use powers::{
     POWERS, PowerDef, PowerEvent, PowerShot, PowerSystem, PowerTarget, PowerTargetKind,

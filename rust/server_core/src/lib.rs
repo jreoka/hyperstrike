@@ -279,6 +279,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/admin/", get(admin::serve_admin_page))
         .route("/admin/{tab}", get(admin::serve_admin_page))
         .route("/manifest.webmanifest", get(http::manifest_get))
+        .route("/savant_policy.bin", get(http::savant_policy_get))
         .route("/sw.js", get(http::sw_get))
         .route("/icon.svg", get(http::icon_svg_get))
         .route("/icon-192.png", get(http::icon_192_get))
