@@ -538,10 +538,14 @@ pub fn embedded_savant_policy() -> Option<&'static SavantPolicy> {
         .as_ref()
 }
 
-/// Returns true if the arena shape is supported by the trained neural policy.
+/// Returns true if the arena shape and match state are supported by the trained neural policy.
 #[inline]
 pub fn policy_supports_world(w: &World) -> bool {
     w.shape.goal_mode == GoalMode::Standard
         && w.shape.fig8.is_none()
         && w.ball.stuck_to.is_none()
+        && !w.ball.frozen
+        && w.powers
+            .as_ref()
+            .is_none_or(|p| p.tornados.is_empty() && p.shots.is_empty())
 }

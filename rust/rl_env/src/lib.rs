@@ -140,139 +140,7 @@ fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 1. Multi-Threaded Behavioral Cloning (BC) Data Collector from MPC-SAVANT
-// ---------------------------------------------------------------------------------------------
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rl_collect_bc(
-    num_samples: usize,
-    seed: u64,
-    obs_out: *mut f32,
-    act_out: *mut u8,
-) -> usize {
-    if num_samples == 0 || obs_out.is_null() || act_out.is_null() {
-        return 0;
-    }
-    let n_threads = thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(8)
-        .min(24)
-        .min(num_samples.max(1));
-
-    let obs_slice = unsafe { slice::from_raw_parts_mut(obs_out, num_samples * OBS_DIM) };
-    let act_slice = unsafe { slice::from_raw_parts_mut(act_out, num_samples * ACT_HEADS) };
-
-    let per_thread = (num_samples + n_threads - 1) / n_threads;
-
-    thread::scope(|s| {
-        let mut obs_rest = obs_slice;
-        let mut act_rest = act_slice;
-        for tid in 0..n_threads {
-            let count = per_thread.min(obs_rest.len() / OBS_DIM);
-            if count == 0 {
-                break;
-            }
-            let (obs_chunk, next_obs) = obs_rest.split_at_mut(count * OBS_DIM);
-            let (act_chunk, next_act) = act_rest.split_at_mut(count * ACT_HEADS);
-            obs_rest = next_obs;
-            act_rest = next_act;
-
-            s.spawn(move || {
-                let mut rng = StdRng::seed_from_u64(seed.wrapping_add((tid as u64 + 1) * 0x9E3779B97F4A7C15));
-                let mut written = 0usize;
-                let mut ep = 0u64;
-                while written < count {
-                    let team_size = if ep % 3 == 0 { 2 } else { 1 };
-                    let arena_idx = pick_training_arena(&mut rng);
-                    let mut w = World::with_seed(ARENAS[arena_idx], &ArenaOpts::default(), rng.r#gen());
-                    let mut id = 0usize;
-                    for team in [0u8, 1u8] {
-                        for k in 0..team_size {
-                            let body = rng.gen_range(0..HITBOXES.len());
-                            let ci = w.add_car(Car::new(id, team, format!("B{id}"), body));
-                            let mut bot = BotAi::new_with_rng(5, k % PERSONALITIES.len(), &mut w.rng);
-                            bot.force_mpc = true;
-                            w.cars[ci].bot = Some(bot);
-                            id += 1;
-                        }
-                    }
-                    setup_training_episode(&mut w, team_size, 0.40);
-                    let n_cars = w.cars.len();
-                    let mut prev_ctls = vec![Controls::default(); n_cars];
-                    let dt = w.phys.dt;
-                    let max_steps = 450usize; // 15 seconds per episode
-                    let mut since_kick = 0.0;
-
-                    for _step in 0..max_steps {
-                        if written >= count {
-                            break;
-                        }
-                        // Extract observations BEFORE stepping the 4-tick window
-                        let mut step_obs = vec![[0.0_f32; OBS_DIM]; n_cars];
-                        for ci in 0..n_cars {
-                            if !w.cars[ci].demolished {
-                                extract_obs(&w, ci, &prev_ctls[ci], &mut step_obs[ci]);
-                            }
-                        }
-                        let mut cap_ctl = vec![Controls::default(); n_cars];
-                        let mut got_jump_edge = vec![false; n_cars];
-                        let mut prev_jump_state: Vec<bool> = w.cars.iter().map(|c| c.prev_jump).collect();
-                        let mut goal_hit = false;
-
-                        for sub in 0..POLICY_TICK_SKIP {
-                            w.step(dt);
-                            since_kick += dt;
-                            if w.kickoff && (w.ball.last_touch.is_some() || since_kick > 5.0) {
-                                w.kickoff = false;
-                            }
-                            for ci in 0..n_cars {
-                                let c = &w.cars[ci].controls;
-                                if sub == 0 {
-                                    cap_ctl[ci] = *c;
-                                }
-                                // Preserve any fresh jump/dodge trigger inside the 4-tick block
-                                if c.jump && !prev_jump_state[ci] && !got_jump_edge[ci] {
-                                    cap_ctl[ci] = *c;
-                                    got_jump_edge[ci] = true;
-                                }
-                                prev_jump_state[ci] = c.jump;
-                            }
-                            if w.shape.in_goal(w.ball.pos, w.phys.ball_r) >= 0 {
-                                goal_hit = true;
-                                break;
-                            }
-                        }
-
-                        for ci in 0..n_cars {
-                            if written >= count {
-                                break;
-                            }
-                            if w.cars[ci].demolished {
-                                continue;
-                            }
-                            let act = encode_action(&cap_ctl[ci]);
-                            prev_ctls[ci] = decode_action(&act);
-                            let oo = written * OBS_DIM;
-                            let ao = written * ACT_HEADS;
-                            obs_chunk[oo..oo + OBS_DIM].copy_from_slice(&step_obs[ci]);
-                            act_chunk[ao..ao + ACT_HEADS].copy_from_slice(&act);
-                            written += 1;
-                        }
-                        if goal_hit {
-                            break;
-                        }
-                    }
-                    ep += 1;
-                }
-            });
-        }
-    });
-
-    num_samples
-}
-
-// ---------------------------------------------------------------------------------------------
-// 2. Multi-Threaded Vectorized PPO Self-Play + League Environment Pool
+// 1. Multi-Threaded Vectorized PPO Self-Play + League Environment Pool (Pure From-Scratch RL)
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -517,15 +385,18 @@ impl SingleEnv {
 
             let to_ball = (bpos - car.pos).three_normalize();
             let vel_to_ball = car.vel.dot(to_ball) / 23.0;
+            let face_ball = car.basis.f.dot(to_ball);
 
             let dboost = (car.boost - self.prev_boost[ci]).max(0.0) / 100.0;
             self.prev_boost[ci] = car.boost;
 
             // Potential ball progress + ball velocity toward goal + boost pickup + annealed ball-approach
+            let sh = shaping_scale as f64;
             let mut r_dense = 0.28 * (dz_ball * ad)
                 + 0.022 * vel_to_goal
                 + 0.10 * dboost
-                + 0.030 * (shaping_scale as f64) * vel_to_ball;
+                + 0.045 * sh * vel_to_ball
+                + 0.008 * sh * face_ball;
 
             // 2v2+ anti-double-commit spacing cue: discourage two teammates piling onto the exact same spot
             if self.team_size >= 2 {
@@ -603,37 +474,63 @@ pub extern "C" fn rl_pool_new(num_envs: usize, seed: u64, pool_mode: u32) -> *mu
     let mut total_agents = 0usize;
 
     // Interleaved evenly so every worker thread gets an identical compute load!
-    // pool_mode == 0 (base):   80% 1v1 / 20% 2v2 | 65% SelfPlay, 25% Snapshot, 6% Champ, 3% Legend, 1% MpcSavant
-    // pool_mode == 1 (stage3): 55% 1v1 / 45% 2v2 | 50% SelfPlay, 25% Snapshot, 15% Legend, 10% MpcSavant
+    // pool_mode == 0 (Genesis):     85% 1v1 / 15% 2v2 | 75% SelfPlay, 20% Snapshot, 5% Champ
+    // pool_mode == 1 (Rising):      70% 1v1 / 30% 2v2 | 55% SelfPlay, 25% Snapshot, 8% Champ, 10% Legend, 2% MpcSavant
+    // pool_mode == 2 (Competitive): 55% 1v1 / 45% 2v2 | 50% SelfPlay, 25% Snapshot, 15% Legend, 10% MpcSavant
+    // pool_mode == 3 (Apex):        50% 1v1 / 50% 2v2 | 55% SelfPlay, 30% Snapshot, 5% Legend, 10% MpcSavant
     for i in 0..num_envs {
-        let team_size = if pool_mode == 1 {
-            if i % 20 < 9 { 2 } else { 1 }
-        } else if i % 5 == 0 {
-            2
-        } else {
-            1
+        let team_size = match pool_mode {
+            0 => if i % 20 < 3 { 2 } else { 1 },
+            1 => if i % 10 < 3 { 2 } else { 1 },
+            2 => if i % 20 < 9 { 2 } else { 1 },
+            _ => if i % 2 == 0 { 2 } else { 1 },
         };
         let m = i % 100;
-        let opp_kind = if pool_mode == 1 {
-            if m < 50 {
-                OppKind::SelfPlay
-            } else if m < 75 {
-                OppKind::Snapshot
-            } else if m < 90 {
-                OppKind::Legend
-            } else {
-                OppKind::MpcSavant
+        let opp_kind = match pool_mode {
+            0 => {
+                if m < 75 {
+                    OppKind::SelfPlay
+                } else if m < 95 {
+                    OppKind::Snapshot
+                } else {
+                    OppKind::Champ
+                }
             }
-        } else if m < 65 {
-            OppKind::SelfPlay
-        } else if m < 90 {
-            OppKind::Snapshot
-        } else if m < 96 {
-            OppKind::Champ
-        } else if m < 99 {
-            OppKind::Legend
-        } else {
-            OppKind::MpcSavant
+            1 => {
+                if m < 55 {
+                    OppKind::SelfPlay
+                } else if m < 80 {
+                    OppKind::Snapshot
+                } else if m < 88 {
+                    OppKind::Champ
+                } else if m < 98 {
+                    OppKind::Legend
+                } else {
+                    OppKind::MpcSavant
+                }
+            }
+            2 => {
+                if m < 50 {
+                    OppKind::SelfPlay
+                } else if m < 75 {
+                    OppKind::Snapshot
+                } else if m < 90 {
+                    OppKind::Legend
+                } else {
+                    OppKind::MpcSavant
+                }
+            }
+            _ => {
+                if m < 55 {
+                    OppKind::SelfPlay
+                } else if m < 85 {
+                    OppKind::Snapshot
+                } else if m < 90 {
+                    OppKind::Legend
+                } else {
+                    OppKind::MpcSavant
+                }
+            }
         };
         let rl_team = (i % 2) as u8;
         let env = SingleEnv::new(

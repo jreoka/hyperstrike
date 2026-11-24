@@ -747,4 +747,108 @@ mod tests {
         w.demolish(c1, c2, false);
         assert_eq!(w.ball.stuck_to, None);
     }
+
+    #[test]
+    fn savant_standalone_goal_escape_does_not_wedge() {
+        // Throwback Core: SAVANT car behind the goal must route cleanly around the box to midfield
+        let standalone = ARENAS.iter().find(|a| a.id == "standalone").unwrap();
+        let mut w = World::with_seed(*standalone, &ArenaOpts::default(), 123);
+        let ci = w.add_car(Car::new(0, 0, "Savant", 0));
+        w.cars[ci].bot = Some(BotAi::new_with_rng(5, 0, &mut w.rng));
+        w.cars[ci].place(0.0, 0.35, 54.0, -PI * 0.5); // directly behind +Z goal facing -Z back wall
+        w.cars[ci].boost = 50.0;
+        w.ball.reset(0.0, w.phys.ball_r, -10.0); // opposite half -> same_end == false!
+        w.kickoff = false;
+        let dt = w.phys.dt;
+        for _ in 0..480 {
+            w.step(dt);
+        }
+        assert!(
+            w.cars[ci].pos.z < 30.0,
+            "SAVANT got stuck behind Throwback Core goal: pos={:?}",
+            w.cars[ci].pos
+        );
+    }
+
+    #[test]
+    #[ignore = "multi-match benchmark; run with `cargo test --release -- --ignored --nocapture`"]
+    fn bench_savant_experimental_arenas_and_mayhem() {
+        let run_matches = |arena_id: &str, mayhem: bool, team_size: usize, matches: usize| -> (u32, u32) {
+            let def = *ARENAS.iter().find(|a| a.id == arena_id).unwrap();
+            let mut g_sav = 0u32;
+            let mut g_leg = 0u32;
+            for m in 0..matches {
+                let mut w = World::with_seed(def, &ArenaOpts::default(), 500 + m as u64);
+                if mayhem {
+                    w.powers = Some(PowerSystem::new(8.0));
+                }
+                let mut id = 0;
+                for k in 0..team_size {
+                    let c0 = w.add_car(Car::new(id, 0, format!("S{k}"), 0));
+                    w.cars[c0].bot = Some(BotAi::new_with_rng(5, k % PERSONALITIES.len(), &mut w.rng));
+                    id += 1;
+                    let c1 = w.add_car(Car::new(id, 1, format!("L{k}"), 0));
+                    w.cars[c1].bot = Some(BotAi::new_with_rng(4, k % PERSONALITIES.len(), &mut w.rng));
+                    id += 1;
+                }
+                let reset_ko = |w: &mut World| {
+                    let r = w.phys.ball_r;
+                    w.ball.reset(0.0, r, 0.0);
+                    w.ball.frozen = false;
+                    let sets = kickoff_sets_for(team_size);
+                    let ord: Vec<usize> = sets[0].to_vec();
+                    for team in [0u8, 1u8] {
+                        let idxs: Vec<usize> = (0..w.cars.len()).filter(|&i| w.cars[i].team == team).collect();
+                        for (i, ci) in idxs.into_iter().enumerate() {
+                            let (x, z) = w.shape.kickoff_pos(KICKOFF_SPOTS[ord[i % ord.len()]], team);
+                            let yaw = yaw_toward(x, z, 0.0, 0.0);
+                            w.cars[ci].place(x, 0.35, z, yaw);
+                            w.cars[ci].boost = 33.0;
+                            w.cars[ci].demolished = false;
+                            if let Some(b) = w.cars[ci].bot.as_mut() {
+                                b.reset();
+                            }
+                        }
+                    }
+                    w.reset_pads();
+                    w.kickoff = true;
+                    w.brain.choose_kickers(&w.cars, &w.ball);
+                };
+                reset_ko(&mut w);
+                let dt = w.phys.dt;
+                let mut since_ko = 0.0;
+                for _ in 0..(120 * 120) {
+                    w.step(dt);
+                    since_ko += dt;
+                    if w.kickoff && (w.ball.last_touch.is_some() || since_ko > 5.0) {
+                        w.kickoff = false;
+                    }
+                    let g = w.shape.in_goal(w.ball.pos, w.phys.ball_r);
+                    if g >= 0 {
+                        if g == 1 {
+                            g_sav += 1;
+                        } else {
+                            g_leg += 1;
+                        }
+                        reset_ko(&mut w);
+                        since_ko = 0.0;
+                    }
+                }
+            }
+            (g_sav, g_leg)
+        };
+
+        let (s_tb, l_tb) = run_matches("standalone", false, 1, 3);
+        let (s_tv, l_tv) = run_matches("splitgoal", false, 1, 3);
+        let (s_f8, l_f8) = run_matches("figure8", false, 1, 2);
+        let (s_my, l_my) = run_matches("neon", true, 2, 2);
+        println!("Throwback Core 1v1 SAVANT vs LEGEND: {s_tb}-{l_tb}");
+        println!("Twin Vortex    1v1 SAVANT vs LEGEND: {s_tv}-{l_tv}");
+        println!("Hyperloop 8    1v1 SAVANT vs LEGEND: {s_f8}-{l_f8}");
+        println!("Mayhem Neon    2v2 SAVANT vs LEGEND: {s_my}-{l_my}");
+        assert!(s_tb > l_tb, "SAVANT should beat LEGEND on Throwback Core: {s_tb}-{l_tb}");
+        assert!(s_tv > l_tv, "SAVANT should beat LEGEND on Twin Vortex: {s_tv}-{l_tv}");
+        assert!(s_f8 > l_f8, "SAVANT should beat LEGEND on Hyperloop 8: {s_f8}-{l_f8}");
+        assert!(s_my > l_my, "SAVANT should beat LEGEND in Mayhem 2v2: {s_my}-{l_my}");
+    }
 }

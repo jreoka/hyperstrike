@@ -578,14 +578,32 @@ impl BotAi {
 
     fn use_items(&mut self, car_idx: usize, dt: f64, w: &mut World) {
         let ad = Self::attack_dir(&w.cars[car_idx]);
+        let savant = self.is_savant();
         if w.ball.stuck_to == Some(car_idx) {
             if w.cars[car_idx].on_ground && self.seq.is_none() && self.aer.is_none() {
                 let s = &w.shape;
                 let car_pos = w.cars[car_idx].pos;
-                let goal = if let Some(sg) = s.split_goal {
+                let goal = if s.goal_mode == GoalMode::Standalone && (car_pos.z * ad) > s.goal_z - 0.5 {
                     let sx = if car_pos.x >= 0.0 { 1.0 } else { -1.0 };
+                    DVec3::new(sx * (s.gw + s.gt + 5.0), 0.0, ad * (s.goal_z - 6.0))
+                } else if let Some(sg) = s.split_goal {
+                    let mut best_sx = if car_pos.x >= 0.0 { 1.0 } else { -1.0 };
+                    if savant {
+                        let score_side = |sx: f64| -> f64 {
+                            let gx = sx * sg.gx;
+                            let gz = ad * sg.gz;
+                            let d = (car_pos.x - gx).hypot(car_pos.z - gz);
+                            let def_pen = w.cars.iter().any(|o| {
+                                o.team != w.cars[car_idx].team
+                                    && !o.demolished
+                                    && (o.pos.x - gx).hypot(o.pos.z - gz) < 13.0
+                            });
+                            d + if def_pen { 22.0 } else { 0.0 }
+                        };
+                        best_sx = if score_side(-1.0) < score_side(1.0) { -1.0 } else { 1.0 };
+                    }
                     DVec3::new(
-                        sx * (sg.gx + sg.gnx * 2.5),
+                        best_sx * (sg.gx + sg.gnx * 2.5),
                         0.0,
                         ad * (sg.gz + sg.gnz * 2.5),
                     )
@@ -594,12 +612,28 @@ impl BotAi {
                     DVec3::new(gx, 0.0, ad * (s.goal_line_z() + 3.0))
                 };
                 self.drive_to(car_idx, goal, 23.0, w, false);
+                let s = &w.shape;
                 let car = &w.cars[car_idx];
                 let to = goal - car.pos;
                 let d = to.length();
                 let facing = to.dot(car.basis.f) / d.max(0.01);
-                if d < 16.0 + self.d.aim * 10.0 && facing > 0.9 && w.rng.r#gen::<f64>() < dt * 3.0 {
-                    w.cars[car_idx].controls.item = true;
+                let unobstructed = s.goal_mode != GoalMode::Standalone
+                    || !Self::standalone_seg_hits_box(s, car.pos, goal, ad, 0.8);
+                let mut near_opp = 1e9_f64;
+                for o in &w.cars {
+                    if o.team != car.team && !o.demolished {
+                        near_opp = near_opp.min(o.pos.distance(car.pos));
+                    }
+                }
+                if unobstructed && facing > 0.9 {
+                    if savant {
+                        // Launch into open net at close range or right before an enemy tackle
+                        if d < 13.0 || (near_opp < 6.5 && d < 26.0) {
+                            w.cars[car_idx].controls.item = true;
+                        }
+                    } else if d < 16.0 + self.d.aim * 10.0 && w.rng.r#gen::<f64>() < dt * 3.0 {
+                        w.cars[car_idx].controls.item = true;
+                    }
                 }
             }
             return;
@@ -610,7 +644,7 @@ impl BotAi {
             return;
         };
         self.item_hold += dt;
-        let min_hold = if self.is_savant() {
+        let min_hold = if savant {
             0.08
         } else {
             0.5 + self.d.react * 4.0
@@ -629,6 +663,7 @@ impl BotAi {
             return;
         };
 
+        let attack_tgt = self.shot_target(car_idx, w, w.ball.pos);
         let car = &w.cars[car_idx];
         let ball = &w.ball;
         let s = &w.shape;
@@ -636,15 +671,27 @@ impl BotAi {
         let db = tb.length();
         let fdot = tb.dot(car.basis.f) / db.max(0.01);
         let glz = s.goal_line_z();
-        let ball_to_goal_x = -ball.pos.x;
-        let ball_to_goal_z = ad * glz - ball.pos.z;
+        let ball_to_goal_x = attack_tgt.x - ball.pos.x;
+        let ball_to_goal_z = attack_tgt.z - ball.pos.z;
         let bgl = ball_to_goal_x.hypot(ball_to_goal_z);
         let bgl = if bgl == 0.0 { 1.0 } else { bgl };
         let hl = tb.x.hypot(tb.z);
         let hl = if hl == 0.0 { 1.0 } else { hl };
         let align = (tb.x * ball_to_goal_x + tb.z * ball_to_goal_z) / (hl * bgl);
         let threat = w.pred.goal_team == car.team as i32 && w.pred.goal_time < 3.5;
-        let own_goal_dist = (ball.pos.z + ad * glz).abs();
+        let scoring_ours = w.pred.goal_team == (1 - car.team) as i32 && w.pred.goal_time < 3.5;
+        let own_goal_dist = if let Some(sg) = s.split_goal {
+            let oz = -ad * sg.gz;
+            (ball.pos.x + sg.gx)
+                .hypot(ball.pos.z - oz)
+                .min((ball.pos.x - sg.gx).hypot(ball.pos.z - oz))
+        } else {
+            (ball.pos.z + ad * glz).abs()
+        };
+        let enemy_has_spikes = ball.stuck_to.is_some_and(|ci| w.cars[ci].team != car.team);
+        let punch_blocked = s.goal_mode == GoalMode::Standalone
+            && (ball.pos.z * ad) > s.goal_z - 0.5
+            && ball.pos.x.abs() < s.gw + s.gt + 2.0;
 
         let mut near_opp = 1e9_f64;
         for o in &w.cars {
@@ -662,40 +709,73 @@ impl BotAi {
         let mut go = match id {
             "tornado" => db < 16.0 || near_opp < 11.0,
             "freeze" => {
-                (threat && own_goal_dist < 35.0)
-                    || (ball.pos.y > 5.0
-                        && w.pred.goal_team == (1 - car.team) as i32
-                        && w.rng.r#gen::<f64>() < 0.02)
+                !scoring_ours
+                    && ((threat && own_goal_dist < 35.0)
+                        || enemy_has_spikes
+                        || (savant
+                            && (ball.vel.z * ad) < -18.0
+                            && (ball.pos.z * ad) < 5.0
+                            && db > 10.0))
             }
-            "spikes" => db < 13.0 && fdot > 0.6,
+            "spikes" => db < if savant { 11.0 } else { 13.0 } && fdot > 0.6,
             "magnet" => db < 20.0 && align > 0.2,
             "grapple" => {
-                db > 15.0
+                let unsafe_own_pull = (ball.pos.z * ad) < -glz * 0.55
+                    && (car.pos.z - ball.pos.z) * ad < -2.0;
+                !unsafe_own_pull
+                    && db > if savant { 13.0 } else { 15.0 }
                     && fdot > 0.7
                     && matches!(
                         self.mode,
                         BotMode::Attack | BotMode::Save | BotMode::AerialPrep
                     )
             }
-            "tether" => (threat && db > 8.0) || (db > 12.0 && (car.pos.z - ball.pos.z) * ad > 6.0),
-            "punch" => align > 0.72 || (threat && (ball.pos.z - car.pos.z) * ad > 0.0),
-            "boot" | "scramble" => tgt_pos
-                .map(|p| p.distance(ball.pos) < 12.0 || p.distance(car.pos) < 10.0)
-                .unwrap_or(false),
-            "swap" => tgt_pos
-                .map(|p| p.distance(ball.pos) < db - 14.0)
-                .unwrap_or(false),
+            "tether" => {
+                (threat && db > 7.5)
+                    || (db > 10.0
+                        && (car.pos.z - ball.pos.z) * ad > 5.5
+                        && (!savant || (ball.pos.z * ad) > glz * 0.15))
+            }
+            "punch" => {
+                !scoring_ours
+                    && ((!punch_blocked && align > if savant { 0.78 } else { 0.72 })
+                        || enemy_has_spikes
+                        || (threat && (ball.pos.z - car.pos.z) * ad > 0.0))
+            }
+            "boot" | "scramble" => {
+                let enemy_is_goalie = tgt_pos.is_some_and(|p| {
+                    (ball.pos.z * ad) > 0.0
+                        && if let Some(sg) = s.split_goal {
+                            (p.x.abs() - sg.gx).abs() < s.gw + 6.0 && (p.z - ad * sg.gz).abs() < 16.0
+                        } else {
+                            p.x.abs() < s.gw + 6.0 && (p.z - ad * glz).abs() < 16.0
+                        }
+                });
+                enemy_has_spikes
+                    || enemy_is_goalie
+                    || tgt_pos
+                        .map(|p| p.distance(ball.pos) < 12.0 || p.distance(car.pos) < 10.0)
+                        .unwrap_or(false)
+            }
+            "swap" => {
+                !threat
+                    && (enemy_has_spikes
+                        || tgt_pos
+                            .map(|p| p.distance(ball.pos) < db - 14.0)
+                            .unwrap_or(false))
+            }
             "shock" => near_opp < 9.0 || (db < 9.0 && align > 0.5),
             "overdrive" => db < 22.0 || near_opp < 14.0,
             "antigrav" => {
-                (ball.pos.y > 4.0 && w.pred.goal_team == (1 - car.team) as i32)
-                    || (threat && ball.pos.y > 3.0)
-                    || self.item_hold > 8.0
+                !scoring_ours
+                    && ((threat && ball.pos.y > 2.5)
+                        || (savant && (ball.pos.z * ad) < -6.0 && ball.pos.y > 3.0)
+                        || self.item_hold > 9.0)
             }
             "nitro" => db > 18.0 || self.mode == BotMode::Save,
             _ => false,
         };
-        if self.item_hold > 13.0 + self.d.err * 6.0 {
+        if !scoring_ours && self.item_hold > 13.0 + self.d.err * 6.0 {
             go = true;
         }
         if go {
@@ -944,14 +1024,83 @@ impl BotAi {
         }
     }
 
+    /// True if the 2D XZ segment `a -> b` intersects the solid standalone goal box at `end_sign` (`-1` or `+1`).
+    fn standalone_seg_hits_box(
+        s: &crate::arena::ArenaShape,
+        a: DVec3,
+        b: DVec3,
+        end_sign: f64,
+        pad: f64,
+    ) -> bool {
+        let min_x = -(s.gw + s.gt + pad);
+        let max_x = s.gw + s.gt + pad;
+        let min_z = s.goal_z - pad * 0.35;
+        let max_z = s.goal_z + s.gd + s.gt + pad;
+        let ax = a.x;
+        let az = a.z * end_sign;
+        let bx = b.x;
+        let bz = b.z * end_sign;
+        let dx = bx - ax;
+        let dz = bz - az;
+        let mut t0 = 0.0_f64;
+        let mut t1 = 1.0_f64;
+        for &(p0, d, lo, hi) in &[(ax, dx, min_x, max_x), (az, dz, min_z, max_z)] {
+            if d.abs() < 1e-6 {
+                if p0 < lo || p0 > hi {
+                    return false;
+                }
+            } else {
+                let mut u0 = (lo - p0) / d;
+                let mut u1 = (hi - p0) / d;
+                if u0 > u1 {
+                    std::mem::swap(&mut u0, &mut u1);
+                }
+                t0 = t0.max(u0);
+                t1 = t1.min(u1);
+                if t0 > t1 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn own_goal_guard_pt(
+        shape: &crate::arena::ArenaShape,
+        ball_pos: DVec3,
+        ad: f64,
+        depth: f64,
+        back_post: bool,
+    ) -> DVec3 {
+        if let Some(sg) = shape.split_goal {
+            let sx = if ball_pos.x >= 0.0 { 1.0 } else { -1.0 };
+            let cx = sx * (sg.gx - sg.gnx * depth);
+            let cz = -ad * (sg.gz - sg.gnz * depth);
+            let bp = if back_post { -sx * 1.8 } else { 0.0 };
+            return DVec3::new(cx + bp, 0.0, cz);
+        }
+        let gz = -ad * shape.goal_line_z();
+        let x = if back_post {
+            if ball_pos.x >= 0.0 {
+                -(shape.gw - 2.0)
+            } else {
+                shape.gw - 2.0
+            }
+        } else {
+            clamp(ball_pos.x * 0.3, -shape.gw + 1.5, shape.gw - 1.5)
+        };
+        DVec3::new(x, 0.0, gz + ad * depth)
+    }
+
     fn closest_to_goal(&self, car_idx: usize, w: &World) -> bool {
         let car = &w.cars[car_idx];
-        let gz = -Self::attack_dir(car) * w.shape.goal_line_z();
+        let ad = Self::attack_dir(car);
+        let gp = Self::own_goal_guard_pt(&w.shape, w.ball.pos, ad, 0.0, false);
         let mut best = None;
         let mut bd = 1e9_f64;
         for (i, o) in w.cars.iter().enumerate() {
             if o.team == car.team && !o.demolished {
-                let d = o.pos.x.hypot(o.pos.z - gz);
+                let d = (o.pos.x - gp.x).hypot(o.pos.z - gp.z);
                 if d < bd {
                     bd = d;
                     best = Some(i);
@@ -1000,8 +1149,27 @@ impl BotAi {
             BotMode::Attack | BotMode::AerialPrep => self.attack(car_idx, dt, w),
             BotMode::Save => self.save(car_idx, dt, w),
             BotMode::Shadow => {
-                let gz = -ad * w.shape.goal_line_z();
-                let t = if self.is_savant() {
+                let glz = w.shape.goal_line_z();
+                let gz = -ad * glz;
+                let t = if let Some(sg) = w.shape.split_goal {
+                    let sx = if w.ball.pos.x >= 0.0 { 1.0 } else { -1.0 };
+                    let gx = sx * (sg.gx - sg.gnx * 2.5);
+                    let ogz = -ad * (sg.gz - sg.gnz * 2.5);
+                    w.shape.push_inside(
+                        DVec3::new(
+                            lerp(w.ball.pos.x, gx, if self.is_savant() { 0.44 } else { 0.52 }),
+                            0.0,
+                            lerp(w.ball.pos.z, ogz, if self.is_savant() { 0.48 } else { 0.55 }),
+                        ),
+                        4.0,
+                    )
+                } else if w.shape.goal_mode == GoalMode::Standalone
+                    && (w.ball.pos.z * ad) < -glz + 0.5
+                {
+                    // Ball is behind our own net: guard the near post out front to intercept the wrap-around
+                    let sx = if w.ball.pos.x >= 0.0 { 1.0 } else { -1.0 };
+                    DVec3::new(sx * (w.shape.gw + 2.5), 0.0, gz + ad * 4.5)
+                } else if self.is_savant() {
                     let bp_x = if w.ball.pos.x >= 0.0 {
                         -(w.shape.gw - 2.4)
                     } else {
@@ -1041,11 +1209,14 @@ impl BotAi {
                     let mut goalie: Option<DVec3> = None;
                     let mut best_d = 26.0;
                     for o in &w.cars {
-                        if o.team != my_team
-                            && !o.demolished
-                            && (o.pos.z - ad * glz).abs() < 15.0
-                            && o.pos.x.abs() < w.shape.gw + 4.5
-                        {
+                        let in_opp_crease = if let Some(sg) = w.shape.split_goal {
+                            (o.pos.z - ad * sg.gz).abs() < 15.0
+                                && (o.pos.x.abs() - sg.gx).abs() < w.shape.gw + 5.0
+                        } else {
+                            (o.pos.z - ad * glz).abs() < 15.0
+                                && o.pos.x.abs() < w.shape.gw + 4.5
+                        };
+                        if o.team != my_team && !o.demolished && in_opp_crease {
                             let d = my_pos.distance(o.pos);
                             if d < best_d {
                                 best_d = d;
@@ -1113,33 +1284,24 @@ impl BotAi {
                 self.drive_to(car_idx, pad_pos.unwrap(), 23.0, w, true);
             }
             BotMode::Idle | BotMode::Defend => {
-                let gz = -ad * w.shape.goal_line_z();
-                let t = if self.is_savant() {
-                    let back_post_x = if w.ball.pos.x >= 0.0 {
-                        -(w.shape.gw - 2.0)
+                let depth = if self.is_savant() {
+                    if (w.ball.pos.z * ad) < -w.shape.goal_line_z() * 0.25 {
+                        1.8
                     } else {
-                        w.shape.gw - 2.0
-                    };
-                    let depth = if (w.ball.pos.z * ad) < -w.shape.goal_line_z() * 0.25 {
-                        1.4
-                    } else {
-                        2.8
-                    };
-                    DVec3::new(back_post_x, 0.0, gz + ad * depth)
+                        3.2
+                    }
                 } else if self.is_champ() {
-                    let back_post_x = if w.ball.pos.x >= 0.0 {
-                        -(w.shape.gw - 2.2)
-                    } else {
-                        w.shape.gw - 2.2
-                    };
-                    DVec3::new(back_post_x, 0.0, gz + ad * 2.2)
+                    2.6
                 } else {
-                    DVec3::new(
-                        clamp(w.ball.pos.x * 0.3, -w.shape.gw + 1.5, w.shape.gw - 1.5),
-                        0.0,
-                        gz + ad * 3.2,
-                    )
+                    3.5
                 };
+                let t = Self::own_goal_guard_pt(
+                    &w.shape,
+                    w.ball.pos,
+                    ad,
+                    depth,
+                    self.is_champ(),
+                );
                 let d = w.cars[car_idx].pos.distance(t);
                 if d < if self.is_savant() { 2.2 } else { 3.0 } {
                     self.face_ball(car_idx, w);
@@ -1178,6 +1340,10 @@ impl BotAi {
         let opp_z = ad * (glz + 2.0);
         let own_half = (pos.z * ad) < -glz * 0.35;
         if own_half {
+            if shape.goal_mode == GoalMode::Standalone && (pos.z * ad) < -(shape.goal_z + 0.5) {
+                let sx = if pos.x >= 0.0 { 1.0 } else { -1.0 };
+                return DVec3::new(sx * shape.w * 0.72, 0.0, -ad * (shape.goal_z - 12.0));
+            }
             if self.is_champ()
                 && (pos.z * ad) > -glz * 0.65
                 && shape.goal_mode == GoalMode::Standard
@@ -1202,16 +1368,71 @@ impl BotAi {
                 pos.z + ad * 35.0,
             );
         }
-        if shape.goal_mode == GoalMode::Standalone && (pos.z * ad) > shape.goal_z + 1.0 {
-            return DVec3::new(0.0, 0.0, ad * (shape.goal_z - 9.0));
+        if shape.goal_mode == GoalMode::Standalone && (pos.z * ad) > shape.goal_z - 0.5 {
+            let sx = if pos.x >= 0.0 { 1.0 } else { -1.0 };
+            if pos.x.abs() < shape.gw + 3.5 {
+                // Behind the solid back wall: push laterally around the back corner first
+                return DVec3::new(
+                    sx * (shape.gw + shape.gt + 7.5),
+                    0.0,
+                    ad * (shape.goal_z + shape.gd + 3.5),
+                );
+            }
+            // Wide of the post: wrap/center the ball out in front of the open goal mouth
+            return DVec3::new(0.0, 0.0, ad * (shape.goal_z - 8.5));
         }
         if let Some(sg) = shape.split_goal {
-            let sx = if pos.x >= 0.0 { 1.0 } else { -1.0 };
-            return DVec3::new(
-                sx * (sg.gx + sg.gnx * 2.5),
-                0.0,
-                ad * (sg.gz + sg.gnz * 2.5),
-            );
+            let mut best_sx = if pos.x >= 0.0 { 1.0 } else { -1.0 };
+            if self.is_champ() {
+                let side_cost = |sx: f64| -> f64 {
+                    let gx = sx * sg.gx;
+                    let gz = ad * sg.gz;
+                    let d = (pos.x - gx).hypot(pos.z - gz);
+                    let mut def_pen = 0.0_f64;
+                    for o in &w.cars {
+                        if o.team != car.team && !o.demolished {
+                            let od = (o.pos.x - gx).hypot(o.pos.z - gz);
+                            if od < 16.0 {
+                                def_pen = def_pen.max((16.0 - od) * 1.6);
+                            }
+                        }
+                    }
+                    d + def_pen
+                };
+                best_sx = if side_cost(-1.0) < side_cost(1.0) {
+                    -1.0
+                } else {
+                    1.0
+                };
+            }
+            let base_x = best_sx * (sg.gx + sg.gnx * 2.5);
+            let base_z = ad * (sg.gz + sg.gnz * 2.5);
+            if self.is_champ() {
+                // Shift along the angled goal face away from the closest defender
+                let mut near_def: Option<DVec3> = None;
+                let mut nd = 18.0_f64;
+                for o in &w.cars {
+                    if o.team != car.team && !o.demolished {
+                        let d = (o.pos.x - best_sx * sg.gx).hypot(o.pos.z - ad * sg.gz);
+                        if d < nd {
+                            nd = d;
+                            near_def = Some(o.pos);
+                        }
+                    }
+                }
+                if let Some(dp) = near_def {
+                    let tx = best_sx * sg.gtx;
+                    let tz = ad * sg.gtz;
+                    let def_u = (dp.x - best_sx * sg.gx) * tx + (dp.z - ad * sg.gz) * tz;
+                    let shift = if def_u >= 0.0 {
+                        -(shape.gw - 1.8)
+                    } else {
+                        shape.gw - 1.8
+                    };
+                    return DVec3::new(base_x + tx * shift, 0.0, base_z + tz * shift);
+                }
+            }
+            return DVec3::new(base_x, 0.0, base_z);
         }
         if self.p.pass > 0.6 && pos.x.abs() > shape.w * 0.55 && (pos.z * ad) > glz * 0.45 {
             return DVec3::new(0.0, 0.0, ad * (glz - 12.0));
@@ -1290,6 +1511,21 @@ impl BotAi {
         if it.aerial {
             self.strike = None;
             return;
+        }
+        // On Throwback Core, don't commit to a blind straight-line strike if a goal box sits between car and ball
+        if w.shape.goal_mode == GoalMode::Standalone
+            && (Self::standalone_seg_hits_box(&w.shape, car.pos, it.slice.pos, 1.0, 0.6)
+                || Self::standalone_seg_hits_box(&w.shape, car.pos, it.slice.pos, -1.0, 0.6))
+        {
+            let gz0 = w.shape.goal_z;
+            let car_front_opp = car.pos.z * Self::attack_dir(car) <= gz0 + 1.0;
+            let ball_in_opp = it.slice.pos.z * Self::attack_dir(car) > gz0 - 0.5
+                && it.slice.pos.z * Self::attack_dir(car) < gz0 + w.shape.gd
+                && it.slice.pos.x.abs() < w.shape.gw;
+            if !(car_front_opp && ball_in_opp) {
+                self.strike = None;
+                return;
+            }
         }
         let ad = Self::attack_dir(car);
         let savant = self.is_savant();
@@ -1372,11 +1608,29 @@ impl BotAi {
                 push_sd(tgt - pp);
                 if !save {
                     let opp_z = ad * (glz + 2.0);
-                    if w.shape.goal_mode == GoalMode::Standard {
+                    if let Some(sg) = w.shape.split_goal {
+                        // Test BOTH angled split goals so SAVANT can snipe whichever net is open
+                        push_sd(DVec3::new(
+                            -(sg.gx + sg.gnx * 2.5) - pp.x,
+                            0.0,
+                            ad * (sg.gz + sg.gnz * 2.5) - pp.z,
+                        ));
+                        push_sd(DVec3::new(
+                            (sg.gx + sg.gnx * 2.5) - pp.x,
+                            0.0,
+                            ad * (sg.gz + sg.gnz * 2.5) - pp.z,
+                        ));
+                    } else if w.shape.goal_mode == GoalMode::Standalone
+                        && (pp.z * ad) > w.shape.goal_z - 0.5
+                    {
+                        // Ball is behind opponent's net: test left/right wrap-outs instead of back wall
+                        let wrap_x = gw + w.shape.gt + 7.0;
+                        let wrap_z = ad * (w.shape.goal_z - 5.0);
+                        push_sd(DVec3::new(wrap_x - pp.x, 0.0, wrap_z - pp.z));
+                        push_sd(DVec3::new(-wrap_x - pp.x, 0.0, wrap_z - pp.z));
+                    } else {
                         push_sd(DVec3::new(-(gw - 1.35) - pp.x, 0.0, opp_z - pp.z));
                         push_sd(DVec3::new((gw - 1.35) - pp.x, 0.0, opp_z - pp.z));
-                    } else {
-                        push_sd(DVec3::new(-pp.x, 0.0, opp_z - pp.z));
                     }
                 } else {
                     // Save: test left/right side clears + downfield boom + emergency block
@@ -1511,7 +1765,27 @@ impl BotAi {
                 DVec3::new(tgt.x - pp.x, 0.0, tgt.z - pp.z).three_normalize()
             )];
             if !save {
-                let c = rot(DVec3::new(-pp.x, 0.0, ad * (glz + 2.0) - pp.z).three_normalize());
+                let c = if let Some(sg) = w.shape.split_goal {
+                    let other_sx = if pp.x >= 0.0 { -1.0 } else { 1.0 };
+                    rot(DVec3::new(
+                        other_sx * (sg.gx + sg.gnx * 2.5) - pp.x,
+                        0.0,
+                        ad * (sg.gz + sg.gnz * 2.5) - pp.z,
+                    )
+                    .three_normalize())
+                } else if w.shape.goal_mode == GoalMode::Standalone
+                    && (pp.z * ad) > w.shape.goal_z - 0.5
+                {
+                    let sx = if pp.x >= 0.0 { 1.0 } else { -1.0 };
+                    rot(DVec3::new(
+                        sx * (w.shape.gw + w.shape.gt + 7.0) - pp.x,
+                        0.0,
+                        ad * (w.shape.goal_z - 5.0) - pp.z,
+                    )
+                    .three_normalize())
+                } else {
+                    rot(DVec3::new(-pp.x, 0.0, ad * (glz + 2.0) - pp.z).three_normalize())
+                };
                 if c.dot(sds[0]) < 0.995 {
                     sds.push(c);
                 }
@@ -1666,17 +1940,17 @@ impl BotAi {
         let it = self.intercept;
         let p_opt = it.filter(|x| !x.late).map(|x| x.slice.pos);
         let Some(p) = p_opt else {
-            let t = DVec3::new(
-                clamp(w.ball.pos.x * 0.5, -w.shape.gw + 1.0, w.shape.gw - 1.0),
-                0.0,
-                gz + ad * 1.5,
-            );
+            let t = Self::own_goal_guard_pt(&w.shape, w.ball.pos, ad, 2.0, false);
             self.drive_to(car_idx, t, 23.0, w, false);
             return;
         };
         let it = it.unwrap();
-        let clear_dir =
-            DVec3::new(if p.x >= 0.0 { 1.0 } else { -1.0 }, 0.0, ad * 1.4).three_normalize();
+        let clear_dir = if let Some(sg) = w.shape.split_goal {
+            let sx = if p.x >= 0.0 { 1.0 } else { -1.0 };
+            DVec3::new(-sx * sg.gnx, 0.0, ad * (sg.gnz + 0.7)).three_normalize()
+        } else {
+            DVec3::new(if p.x >= 0.0 { 1.0 } else { -1.0 }, 0.0, ad * 1.4).three_normalize()
+        };
         let car_pos = w.cars[car_idx].pos;
         let to_p = p - car_pos;
         let dist = to_p.x.hypot(to_p.z);
@@ -1854,7 +2128,12 @@ impl BotAi {
             let team_count = w.cars.iter().filter(|o| o.team == team).count();
             let gz = -ad * w.shape.goal_line_z();
             if team_count > 2 && self.closest_to_goal(car_idx, w) {
-                self.drive_to(car_idx, DVec3::new(0.0, 0.0, gz + ad * 2.0), 18.0, w, true);
+                let guard = if let Some(sg) = w.shape.split_goal {
+                    DVec3::new(0.0, 0.0, -ad * (sg.gz - 12.0))
+                } else {
+                    DVec3::new(0.0, 0.0, gz + ad * 2.0)
+                };
+                self.drive_to(car_idx, guard, 18.0, w, true);
                 return;
             }
             let lane_pos = w.brain.kickers[team as usize]
@@ -1927,20 +2206,68 @@ impl BotAi {
         if nav_target.y < 1.5 && nav_target.z.abs() < s.l - 0.5 {
             nav_target = s.push_inside(nav_target, 1.2);
         }
+        let mut rerouted = false;
         if s.goal_mode == GoalMode::Standalone {
             let gz0 = s.goal_z;
             let gz1 = s.goal_z + s.gd + s.gt;
-            let gx_lim = s.gw + s.gt + 1.5;
-            let car_behind = car_pos.z.abs() > gz1 && car_pos.x.abs() < gx_lim;
-            let tgt_behind = nav_target.z.abs() > gz1 && nav_target.x.abs() < gx_lim;
-            let same_end = car_pos.z * nav_target.z > 0.0;
-            if same_end
-                && (car_behind != tgt_behind)
-                && car_pos.x.abs() < gx_lim
-                && nav_target.x.abs() < gx_lim
-            {
-                let side_x = (if car_pos.x >= 0.0 { 1.0 } else { -1.0 }) * (s.gw + s.gt + 4.5);
-                nav_target = DVec3::new(side_x, 0.0, sign(car_pos.z) * (gz0 + s.gd * 0.5));
+            let bx = s.gw + s.gt + 1.3;
+            for end_sign in [-1.0_f64, 1.0_f64] {
+                let cz = car_pos.z * end_sign;
+                let tz = nav_target.z * end_sign;
+                let car_in_net =
+                    cz > gz0 - 0.5 && cz < gz1 + 0.4 && car_pos.x.abs() < s.gw + 0.4;
+                let tgt_in_net =
+                    tz > gz0 - 0.5 && tz < gz1 - 0.4 && nav_target.x.abs() < s.gw - 0.3;
+                if car_in_net && !tgt_in_net {
+                    // Must exit through the open front mouth, never through side/back walls
+                    nav_target = DVec3::new(
+                        clamp(car_pos.x, -s.gw + 1.8, s.gw - 1.8),
+                        0.0,
+                        end_sign * (gz0 - 4.0),
+                    );
+                    rerouted = true;
+                    break;
+                }
+                if !car_in_net
+                    && Self::standalone_seg_hits_box(s, car_pos, nav_target, end_sign, 1.2)
+                {
+                    let entering_mouth = cz <= gz0 + 1.0 && tgt_in_net;
+                    if !entering_mouth {
+                        let side_off = s.gw + s.gt + 4.4;
+                        let cost_pos =
+                            (car_pos.x - side_off).abs() + (nav_target.x - side_off).abs();
+                        let cost_neg =
+                            (car_pos.x + side_off).abs() + (nav_target.x + side_off).abs();
+                        let side_x = if cost_pos <= cost_neg {
+                            side_off
+                        } else {
+                            -side_off
+                        };
+                        let wp_z = if cz >= gz1 - 0.5 && car_pos.x.abs() < bx + 1.0 {
+                            end_sign * (gz1 + 2.8)
+                        } else if cz <= gz0 + 0.5 && car_pos.x.abs() < bx + 1.0 {
+                            end_sign * (gz0 - 2.8)
+                        } else if tz > gz1 {
+                            end_sign * (gz1 + 3.0)
+                        } else {
+                            end_sign * (gz0 - 3.5)
+                        };
+                        nav_target = DVec3::new(side_x, 0.0, wp_z);
+                        rerouted = true;
+                        break;
+                    }
+                }
+            }
+        } else if s.fig8.is_some() && car_pos.z * nav_target.z < 0.0 {
+            let dz = nav_target.z - car_pos.z;
+            if dz.abs() > 1e-4 {
+                let t0 = -car_pos.z / dz;
+                let mid_x = car_pos.x + (nav_target.x - car_pos.x) * t0;
+                let waist_w = (s.half_width_at(0.0) - 3.2).max(4.0);
+                if mid_x.abs() > waist_w {
+                    nav_target = DVec3::new(clamp(mid_x, -waist_w, waist_w), 0.0, 0.0);
+                    rerouted = true;
+                }
             }
         } else if s.goal_mode == GoalMode::Standard {
             let in_goal = car_pos.z.abs() > s.l - 0.5 && car_pos.x.abs() < s.gw;
@@ -1951,6 +2278,7 @@ impl BotAi {
                     0.0,
                     sign(car_pos.z) * (s.l - 2.0),
                 );
+                rerouted = true;
             } else if !in_goal
                 && tgt_in_goal
                 && car_pos.x.abs() > s.gw - 1.0
@@ -1961,6 +2289,7 @@ impl BotAi {
                     0.0,
                     sign(nav_target.z) * (s.l - 2.0),
                 );
+                rerouted = true;
             }
         }
 
@@ -1968,6 +2297,7 @@ impl BotAi {
         let savant = self.is_savant();
         // SAVANT: opportunistic boost-pad pathing when driving across the field
         if savant
+            && !rerouted
             && w.cars[car_idx].boost < 78.0
             && self.mode != BotMode::Save
             && self.mode != BotMode::Kickoff

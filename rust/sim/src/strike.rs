@@ -6,7 +6,7 @@
 
 use glam::DVec3;
 
-use crate::arena::ArenaShape;
+use crate::arena::{ArenaShape, GoalMode};
 use crate::math_ext::{Controls, PhysConfig, ThreeVec3Ext, clamp};
 use crate::physics::{Ball, BallState, Car, ball_integrate, collide_car_ball};
 
@@ -280,6 +280,57 @@ fn opp_eta_to(opp: &OppSnap, pt: DVec3) -> f64 {
     turn_pen + travel + air_pen
 }
 
+#[inline]
+fn best_attack_goal_pt(shape: &ArenaShape, ball_pos: DVec3, ad: f64) -> DVec3 {
+    if let Some(sg) = shape.split_goal {
+        let sx = if ball_pos.x >= 0.0 { 1.0 } else { -1.0 };
+        return DVec3::new(sx * sg.gx, 0.0, ad * sg.gz);
+    }
+    let glz = shape.goal_line_z();
+    if shape.goal_mode == GoalMode::Standalone && ball_pos.z * ad > glz - 0.5 {
+        let sx = if ball_pos.x >= 0.0 { 1.0 } else { -1.0 };
+        return DVec3::new(sx * (shape.gw + shape.gt + 5.5), 0.0, ad * (glz - 5.0));
+    }
+    DVec3::new(0.0, 0.0, ad * glz)
+}
+
+#[inline]
+fn own_goal_danger_dist(shape: &ArenaShape, p: DVec3, ad: f64) -> f64 {
+    if let Some(sg) = shape.split_goal {
+        let own_z = -ad * sg.gz;
+        let dl = (p.x + sg.gx).hypot(p.z - own_z);
+        let dr = (p.x - sg.gx).hypot(p.z - own_z);
+        return dl.min(dr);
+    }
+    let glz = shape.goal_line_z();
+    let z_s = p.z * ad;
+    if shape.goal_mode == GoalMode::Standalone {
+        if z_s < -glz - 0.5 {
+            // Safely behind our own solid goal box: wrap-around distance is high
+            return (p.x.abs() - shape.gw).max(0.0) + (-glz - z_s) + 14.0;
+        }
+        return (z_s + glz).hypot((p.x.abs() - shape.gw).max(0.0));
+    }
+    z_s + glz
+}
+
+#[inline]
+fn eff_attack_z(shape: &ArenaShape, p: DVec3, ad: f64) -> f64 {
+    let glz = shape.goal_line_z().max(1.0);
+    let z_s = p.z * ad;
+    if shape.goal_mode == GoalMode::Standalone {
+        if z_s > glz {
+            // Behind opponent's net: lower than sitting cleanly in front of the mouth
+            let back_span = (shape.l - glz).max(1.0);
+            return 0.65 - ((z_s - glz) / back_span).min(1.0) * 0.25;
+        }
+        if z_s < -glz {
+            return -0.75;
+        }
+    }
+    z_s / glz
+}
+
 /// Opponent-aware post-hit ball evaluator for SAVANT.
 pub fn score_ball_savant(ball: &Ball, car_pos: DVec3, t0: f64, ctx: &StrikeCtx) -> f64 {
     let phys = ctx.phys;
@@ -316,21 +367,32 @@ pub fn score_ball_savant(ball: &Ball, car_pos: DVec3, t0: f64, ctx: &StrikeCtx) 
                 let total_t = t + t0;
                 // Check whether any opponent can intercept this shot before it crosses the line
                 let mut min_margin = 2.0_f64;
-                let mut nearest_def_x: Option<f64> = None;
+                let mut nearest_def_pos: Option<DVec3> = None;
                 let mut nearest_def_d = 1e9_f64;
-                let goal_pt = DVec3::new(s.pos.x, s.pos.y, ctx.ad * glz);
+                let goal_pt = if ctx.shape.split_goal.is_some() {
+                    s.pos
+                } else {
+                    DVec3::new(s.pos.x, s.pos.y, ctx.ad * glz)
+                };
                 for opp in ctx.opps {
                     let eta = opp_eta_to(opp, goal_pt);
                     min_margin = min_margin.min(eta - total_t);
-                    let dd = (opp.pos.z - ctx.ad * glz).abs();
-                    if dd < 24.0 && dd < nearest_def_d {
+                    let dd = (opp.pos.x - goal_pt.x).hypot(opp.pos.z - goal_pt.z);
+                    if dd < 26.0 && dd < nearest_def_d {
                         nearest_def_d = dd;
-                        nearest_def_x = Some(opp.pos.x);
+                        nearest_def_pos = Some(opp.pos);
                     }
                 }
                 // Reward corner placement away from defender and upper-90 height
-                let corner_bonus = if let Some(dx) = nearest_def_x {
-                    ((s.pos.x - dx).abs() / (gw * 2.0)).min(1.0) * 45.0
+                let corner_bonus = if let Some(sg) = ctx.shape.split_goal {
+                    if let Some(dp) = nearest_def_pos {
+                        ((s.pos.x - dp.x).hypot(s.pos.z - dp.z) / (gw * 2.0)).min(1.0) * 45.0
+                    } else {
+                        let u = (s.pos.x.abs() - sg.gx) * sg.gtx + (s.pos.z.abs() - sg.gz) * sg.gtz;
+                        (u.abs() / gw).min(1.0) * 20.0
+                    }
+                } else if let Some(dp) = nearest_def_pos {
+                    ((s.pos.x - dp.x).abs() / (gw * 2.0)).min(1.0) * 45.0
                 } else {
                     (s.pos.x.abs() / gw).min(1.0) * 20.0
                 };
@@ -356,34 +418,54 @@ pub fn score_ball_savant(ball: &Ball, car_pos: DVec3, t0: f64, ctx: &StrikeCtx) 
                 return -850.0 + 40.0 * t;
             }
         }
-        let own_d = s.pos.z * ctx.ad + glz;
+        let own_d = own_goal_danger_dist(ctx.shape, s.pos, ctx.ad);
         min_own = min_own.min(own_d);
-        // Track dangerous centering / backboard threat near opponent goal
-        let opp_z_prog = s.pos.z * ctx.ad / glz;
-        if opp_z_prog > 0.65 && s.pos.x.abs() < gw + 7.0 && s.pos.y < 9.5 {
-            goal_mouth_best = goal_mouth_best.max(opp_z_prog * 22.0);
+        // Track dangerous centering / backboard threat near opponent goal mouth(s)
+        if let Some(sg) = ctx.shape.split_goal {
+            let d_mouth = (s.pos.x.abs() - sg.gx).hypot(s.pos.z - ctx.ad * sg.gz);
+            if d_mouth < 18.0 && s.pos.y < 9.5 {
+                goal_mouth_best = goal_mouth_best.max((1.0 - d_mouth / 18.0) * 24.0);
+            }
+        } else {
+            let z_s = s.pos.z * ctx.ad;
+            let in_front = ctx.shape.goal_mode != GoalMode::Standalone || z_s < glz - 0.4;
+            let opp_z_prog = z_s / glz;
+            if in_front && opp_z_prog > 0.65 && s.pos.x.abs() < gw + 7.0 && s.pos.y < 9.5 {
+                goal_mouth_best = goal_mouth_best.max(opp_z_prog.min(1.0) * 22.0);
+            }
         }
     }
 
-    let goal = DVec3::new(0.0, 0.0, ctx.ad * glz);
+    let goal = best_attack_goal_pt(ctx.shape, ball.pos, ctx.ad);
     let to_goal = (goal - ball.pos).three_normalize();
     let q = if sp0 > 0.1 {
         v0.dot(to_goal) / sp0
     } else {
         0.0
     };
-    let z_end = s.pos.z * ctx.ad / glz; // -1 own goal .. +1 their goal
+    let z_end = eff_attack_z(ctx.shape, s.pos, ctx.ad);
     let danger = if min_own < 20.0 {
         (20.0 - min_own) * if ctx.save { 5.5 } else { 2.8 }
     } else {
         0.0
     };
 
-    // Penalty for leaving the ball centered in front of our own net
-    let own_center_pen = if s.pos.z * ctx.ad < -glz * 0.48 && s.pos.x.abs() < gw + 5.0 {
-        if ctx.save { 75.0 } else { 40.0 }
+    // Penalty for leaving the ball centered in front of our own net(s)
+    let own_center_pen = if let Some(sg) = ctx.shape.split_goal {
+        let d_own = (s.pos.x.abs() - sg.gx).hypot(s.pos.z + ctx.ad * sg.gz);
+        if d_own < 16.0 {
+            if ctx.save { 75.0 } else { 40.0 }
+        } else {
+            0.0
+        }
     } else {
-        0.0
+        let z_s = s.pos.z * ctx.ad;
+        let in_front_own = ctx.shape.goal_mode != GoalMode::Standalone || z_s > -glz + 0.5;
+        if in_front_own && z_s < -glz * 0.48 && s.pos.x.abs() < gw + 5.0 {
+            if ctx.save { 75.0 } else { 40.0 }
+        } else {
+            0.0
+        }
     };
 
     // Turnover check: penalize soft touches straight into an opponent who beats us to the ball
@@ -418,9 +500,17 @@ pub fn score_ball_savant(ball: &Ball, car_pos: DVec3, t0: f64, ctx: &StrikeCtx) 
         0.0
     };
 
+    let lane_bonus = if let Some(sg) = ctx.shape.split_goal {
+        ((s.pos.x.abs() - sg.gx).abs() < gw + 5.5) as i32 as f64 * z_end.max(0.0) * 16.0
+    } else if ctx.shape.goal_mode == GoalMode::Standalone && s.pos.z * ctx.ad > glz {
+        0.0
+    } else {
+        (s.pos.x.abs() < 12.0) as i32 as f64 * z_end.max(0.0) * 16.0
+    };
+
     q * sp0.min(52.0) * 1.35
         + z_end * 46.0
-        + (s.pos.x.abs() < 12.0) as i32 as f64 * z_end.max(0.0) * 16.0
+        + lane_bonus
         + mouth_bonus
         + clear_bonus
         - danger
@@ -431,7 +521,6 @@ pub fn score_ball_savant(ball: &Ball, car_pos: DVec3, t0: f64, ctx: &StrikeCtx) 
 /// Scores the ball's future (no more touches) from this team's point of view (LEGEND).
 pub fn score_ball(ball: &Ball, t0: f64, ctx: &StrikeCtx) -> f64 {
     let phys = ctx.phys;
-    let glz = ctx.shape.goal_line_z();
     let mut s = BallState {
         pos: ball.pos,
         vel: ball.vel,
@@ -455,21 +544,27 @@ pub fn score_ball(ball: &Ball, t0: f64, ctx: &StrikeCtx) -> f64 {
                 -400.0 + 40.0 * t
             };
         }
-        min_own = min_own.min(s.pos.z * ctx.ad + glz);
+        min_own = min_own.min(own_goal_danger_dist(ctx.shape, s.pos, ctx.ad));
     }
     // where the ball heads and where it rests after 3s
-    let goal = DVec3::new(0.0, 0.0, ctx.ad * glz);
+    let goal = best_attack_goal_pt(ctx.shape, ball.pos, ctx.ad);
     let to_goal = (goal - ball.pos).three_normalize();
     let sp = v0.length();
     let q = if sp > 0.1 { v0.dot(to_goal) / sp } else { 0.0 };
-    let z_end = s.pos.z * ctx.ad / glz; // -1 own goal .. +1 their goal
+    let z_end = eff_attack_z(ctx.shape, s.pos, ctx.ad);
     let danger = if min_own < 18.0 {
         (18.0 - min_own) * 2.0
     } else {
         0.0
     };
-    q * sp.min(45.0) * 1.2
-        + z_end * 40.0
-        + (s.pos.x.abs() < 12.0) as i32 as f64 * z_end.max(0.0) * 15.0
-        - danger
+    let lane_bonus = if let Some(sg) = ctx.shape.split_goal {
+        ((s.pos.x.abs() - sg.gx).abs() < ctx.shape.gw + 5.5) as i32 as f64
+            * z_end.max(0.0)
+            * 15.0
+    } else if ctx.shape.goal_mode == GoalMode::Standalone && s.pos.z * ctx.ad > ctx.shape.goal_line_z() {
+        0.0
+    } else {
+        (s.pos.x.abs() < 12.0) as i32 as f64 * z_end.max(0.0) * 15.0
+    };
+    q * sp.min(45.0) * 1.2 + z_end * 40.0 + lane_bonus - danger
 }

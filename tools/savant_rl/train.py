@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Train the SAVANT neural MLP policy (BC warmstart + Multi-Threaded PPO Self-Play + League).
+"""Zero-flag, autonomous from-scratch RL trainer for SAVANT.
 
-Runs Rust physics across CPU threads (`rust/rl_env`) + batched PyTorch PPO on CUDA GPU (RTX 4090).
-Exports compact int8-quantized `HSP1` weights directly to `rust/sim/assets/savant_policy.bin`.
+Just run:
+    python tools/savant_rl/train.py
+
+Everything is handled automatically:
+- Pure from-scratch raw-button RL (no imitation / BC warmstart).
+- Auto-resumes from `checkpoints/latest.pt` (or `best.pt`) if present.
+- Auto-detects & auto-advances curriculum stages (Genesis -> Rising -> Competitive -> Apex).
+- Trains forever until you press Ctrl+C (safely saves `latest.pt` on Ctrl+C).
+- Evaluates & checkpoints every 50 updates.
+- Only ever overwrites `best.pt` and `rust/sim/assets/savant_policy.bin` with a strictly better model.
+- Automatically cleans up any old/stale checkpoint files, keeping only `latest.pt` and `best.pt`.
 """
 
 from __future__ import annotations
 
-import argparse
 import ctypes
-import math
 import os
 import struct
 import subprocess
@@ -26,6 +33,8 @@ RL_ENV_DIR = ROOT / "rust" / "rl_env"
 DLL_PATH = RL_ENV_DIR / "target" / "release" / ("rl_env.dll" if os.name == "nt" else "librl_env.so")
 OUT_MODEL = ROOT / "rust" / "sim" / "assets" / "savant_policy.bin"
 CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
+LATEST_PT = CKPT_DIR / "latest.pt"
+BEST_PT = CKPT_DIR / "best.pt"
 
 OBS_DIM = 100
 ACT_BRANCHES = (3, 5, 3, 3, 3, 2, 2, 2)
@@ -33,19 +42,29 @@ ACT_HEADS = len(ACT_BRANCHES)
 TOTAL_LOGITS = sum(ACT_BRANCHES)
 H1, H2, H3 = 256, 256, 128
 
+# Training hyperparameters (zero flags needed)
+NUM_ENVS = 256
+ROLLOUT_STEPS = 128
+MINIBATCH_SIZE = 4096
+PPO_EPOCHS = 4
+EVAL_EVERY = 50
+GAMMA = 0.994
+GAE_LAMBDA = 0.95
+CLIP_EPS = 0.2
+MAX_SNAPSHOTS = 24
+
+STAGES = {
+    0: {"name": "GENESIS",     "actor_lr": 3.0e-4, "critic_lr": 8.0e-4, "shaping": 1.00, "ent_coef": 0.0040},
+    1: {"name": "RISING",      "actor_lr": 2.0e-4, "critic_lr": 6.0e-4, "shaping": 0.45, "ent_coef": 0.0020},
+    2: {"name": "COMPETITIVE", "actor_lr": 1.0e-4, "critic_lr": 4.0e-4, "shaping": 0.12, "ent_coef": 0.0008},
+    3: {"name": "APEX",        "actor_lr": 5.0e-5, "critic_lr": 2.5e-4, "shaping": 0.00, "ent_coef": 0.0003},
+}
+
 
 def build_and_load_dll() -> ctypes.CDLL:
     print("[build] compiling rust/rl_env (--release)...", flush=True)
     subprocess.run(["cargo", "build", "--release"], cwd=RL_ENV_DIR, check=True)
     lib = ctypes.CDLL(str(DLL_PATH))
-
-    lib.rl_collect_bc.argtypes = [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_uint8),
-    ]
-    lib.rl_collect_bc.restype = ctypes.c_size_t
 
     lib.rl_pool_new.argtypes = [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint32]
     lib.rl_pool_new.restype = ctypes.c_void_p
@@ -166,8 +185,8 @@ def export_hsp1(actor: ActorNet) -> bytes:
     buf += struct.pack("<HHHHHH", OBS_DIM, H1, H2, H3, TOTAL_LOGITS, 0)
 
     def write_linear(layer: nn.Linear):
-        w = layer.weight.detach().cpu().float().numpy()  # [out, in]
-        b = layer.bias.detach().cpu().float().numpy()    # [out]
+        w = layer.weight.detach().cpu().float().numpy()
+        b = layer.bias.detach().cpu().float().numpy()
         max_abs = np.max(np.abs(w), axis=1)
         scales = np.where(max_abs > 1e-8, max_abs / 127.0, 1.0).astype(np.float32)
         q = np.clip(np.round(w / scales[:, None]), -127, 127).astype(np.int8)
@@ -214,133 +233,228 @@ def eval_against(lib: ctypes.CDLL, model_bytes: bytes, opp_diff: int, team_size:
     }
 
 
-def run_bc_warmstart(
-    lib: ctypes.CDLL,
-    actor: ActorNet,
-    device: torch.device,
-    samples: int,
-    epochs: int,
-    batch_size: int,
-    seed: int,
-):
-    t0 = time.time()
-    print(f"[BC] collecting {samples:,} transitions from MPC-SAVANT across CPU cores...", flush=True)
-    obs = np.empty((samples, OBS_DIM), dtype=np.float32)
-    acts = np.empty((samples, ACT_HEADS), dtype=np.uint8)
-    got = lib.rl_collect_bc(
-        samples,
-        seed,
-        obs.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-        acts.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
+    e_chp1 = eval_against(lib, model_bytes, opp_diff=3, team_size=1, matches=4, secs=180.0, arena=0)
+    e_leg1 = eval_against(lib, model_bytes, opp_diff=4, team_size=1, matches=6, secs=180.0, arena=0)
+    e_mpc1 = eval_against(lib, model_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=0)
+    e_leg2 = eval_against(lib, model_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0)
+    e_mpc2 = eval_against(lib, model_bytes, opp_diff=5, team_size=2, matches=4, secs=180.0, arena=0)
+
+    gd_chp1 = e_chp1["goals_a"] - e_chp1["goals_b"]
+    gd_leg1 = e_leg1["goals_a"] - e_leg1["goals_b"]
+    gd_mpc1 = e_mpc1["goals_a"] - e_mpc1["goals_b"]
+    gd_leg2 = e_leg2["goals_a"] - e_leg2["goals_b"]
+    gd_mpc2 = e_mpc2["goals_a"] - e_mpc2["goals_b"]
+    score = (
+        gd_mpc1 * 2.5
+        + gd_mpc2 * 2.5
+        + gd_leg1 * 1.0
+        + gd_leg2 * 1.0
+        + gd_chp1 * 0.5
+        - (e_mpc1["owngoals_a"] + e_mpc2["owngoals_a"]) * 3.0
     )
-    print(f"[BC] collected {got:,} samples in {time.time() - t0:.1f}s ({got / max(1e-3, time.time() - t0):,.0f} samples/s)", flush=True)
-
-    obs_t = torch.from_numpy(obs).to(device)
-    acts_t = torch.from_numpy(acts.astype(np.int64)).to(device)
-    opt = torch.optim.AdamW(actor.parameters(), lr=1.5e-3, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
-
-    # Extra weight on jump/boost/steer so flips & aim are crisp!
-    head_weights = [1.0, 1.4, 1.2, 1.0, 0.8, 2.0, 1.3, 1.0]
-
-    actor.train()
-    n = obs_t.shape[0]
-    for ep in range(1, epochs + 1):
-        perm = torch.randperm(n, device=device)
-        tot_loss = 0.0
-        tot_acc = 0.0
-        batches = 0
-        for i in range(0, n, batch_size):
-            idx = perm[i : i + batch_size]
-            logits = actor(obs_t[idx])
-            parts = actor.split_logits(logits)
-            loss = 0.0
-            acc = 0.0
-            for h, p in enumerate(parts):
-                loss = loss + head_weights[h] * F.cross_entropy(p, acts_t[idx, h], label_smoothing=0.01)
-                acc = acc + (p.argmax(dim=-1) == acts_t[idx, h]).float().mean().item()
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
-            opt.step()
-            tot_loss += loss.item()
-            tot_acc += acc / ACT_HEADS
-            batches += 1
-        sched.step()
-        if ep == 1 or ep % 5 == 0 or ep == epochs:
-            print(f"[BC] epoch {ep:02d}/{epochs} loss={tot_loss / batches:.4f} avg_head_acc={100.0 * tot_acc / batches:.2f}%", flush=True)
+    return {
+        "chp1": e_chp1,
+        "leg1": e_leg1,
+        "mpc1": e_mpc1,
+        "leg2": e_leg2,
+        "mpc2": e_mpc2,
+        "score": float(score),
+    }
 
 
-def run_ppo(
-    lib: ctypes.CDLL,
-    actor: ActorNet,
-    critic: CriticNet,
-    device: torch.device,
-    num_envs: int,
-    rollout_steps: int,
-    total_updates: int,
-    minibatch_size: int,
-    ppo_epochs: int,
-    eval_every: int,
-    seed: int,
-    critic_warmup: int = 5,
-    stage3: bool = False,
-    init_best_score: float = -1e9,
-):
-    pool = lib.rl_pool_new(num_envs, seed, 1 if stage3 else 0)
+def detect_stage(ev: dict, current_stage: int) -> int:
+    """Monotonically determines the right curriculum stage from live eval results."""
+    stage = current_stage
+    if stage < 1 and (ev["chp1"]["goals_a"] >= ev["chp1"]["goals_b"] or (ev["chp1"]["goals_a"] >= 8 and ev["score"] > -280.0)):
+        stage = 1
+    if stage < 2 and ev["leg1"]["goals_a"] > ev["leg1"]["goals_b"] and ev["leg1"]["wins_a"] >= ev["leg1"]["wins_b"]:
+        stage = 2
+    if stage < 3 and ev["mpc1"]["goals_a"] > ev["mpc1"]["goals_b"] and ev["leg2"]["goals_a"] >= ev["leg2"]["goals_b"]:
+        stage = 3
+    return stage
+
+
+def atomic_torch_save(payload: dict, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
+
+def atomic_write_bytes(data: bytes, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def cleanup_old_checkpoints():
+    """Deletes any stale/extra files in checkpoints/, keeping only latest.pt and best.pt."""
+    if not CKPT_DIR.exists():
+        return
+    keep = {LATEST_PT.name, BEST_PT.name}
+    for p in CKPT_DIR.iterdir():
+        if p.is_file() and p.name not in keep:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+def add_snapshot(lib: ctypes.CDLL, pool, blob: bytes):
+    arr = np.frombuffer(blob, dtype=np.uint8)
+    lib.rl_pool_add_snapshot(pool, arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(blob), MAX_SNAPSHOTS)
+
+
+def make_pool(lib: ctypes.CDLL, stage: int, seed: int, snapshots: list[bytes]):
+    pool = lib.rl_pool_new(NUM_ENVS, seed, stage)
     num_agents = lib.rl_pool_num_agents(pool)
-    print(f"[PPO] created pool (mode={'stage3' if stage3 else 'base'}): {num_envs} envs, {num_agents} controlled agents, batch={num_agents * rollout_steps:,} steps/update", flush=True)
-
+    for blob in snapshots[-MAX_SNAPSHOTS:]:
+        add_snapshot(lib, pool, blob)
     obs_np = np.zeros((num_agents, OBS_DIM), dtype=np.float32)
     act_np = np.zeros((num_agents, ACT_HEADS), dtype=np.uint8)
     rew_np = np.zeros((num_agents,), dtype=np.float32)
     done_np = np.zeros((num_agents,), dtype=np.uint8)
     stats_np = np.zeros((3,), dtype=np.uint32)
-
     lib.rl_pool_reset(pool, obs_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+    return pool, num_agents, obs_np, act_np, rew_np, done_np, stats_np
 
-    # Seed initial snapshot with current actor so Snapshot opponents are strong from update 1
-    bc_bytes = export_hsp1(actor)
-    bc_arr = np.frombuffer(bc_bytes, dtype=np.uint8)
-    lib.rl_pool_add_snapshot(pool, bc_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(bc_bytes), 16)
 
-    base_actor_lr = 8e-5 if stage3 else 1.2e-4
-    base_critic_lr = 4e-4 if stage3 else 6e-4
-    actor_opt = torch.optim.Adam(actor.parameters(), lr=base_actor_lr, eps=1e-5)
-    critic_opt = torch.optim.Adam(critic.parameters(), lr=base_critic_lr, eps=1e-5)
+def format_eval(upd: int, stage: int, total_steps: int, ev: dict) -> str:
+    return (
+        f"[EVAL upd {upd:05d} | {total_steps/1e6:.2f}M | S{stage}:{STAGES[stage]['name']}] "
+        f"1v1 CHAMP: {ev['chp1']['goals_a']}-{ev['chp1']['goals_b']} | "
+        f"1v1 LEGEND: {ev['leg1']['goals_a']}-{ev['leg1']['goals_b']} (W {ev['leg1']['wins_a']}-{ev['leg1']['wins_b']}) | "
+        f"1v1 MPC: {ev['mpc1']['goals_a']}-{ev['mpc1']['goals_b']} (W {ev['mpc1']['wins_a']}-{ev['mpc1']['wins_b']}) | "
+        f"2v2 LEGEND: {ev['leg2']['goals_a']}-{ev['leg2']['goals_b']} | "
+        f"2v2 MPC: {ev['mpc2']['goals_a']}-{ev['mpc2']['goals_b']} | "
+        f"score={ev['score']:.1f}"
+    )
 
-    obs_buf = torch.zeros((rollout_steps, num_agents, OBS_DIM), dtype=torch.float32, device=device)
-    act_buf = torch.zeros((rollout_steps, num_agents, ACT_HEADS), dtype=torch.int64, device=device)
-    logp_buf = torch.zeros((rollout_steps, num_agents), dtype=torch.float32, device=device)
-    val_buf = torch.zeros((rollout_steps, num_agents), dtype=torch.float32, device=device)
-    rew_buf = torch.zeros((rollout_steps, num_agents), dtype=torch.float32, device=device)
-    done_buf = torch.zeros((rollout_steps, num_agents), dtype=torch.float32, device=device)
 
-    gamma = 0.992
-    gae_lambda = 0.95
-    clip_eps = 0.2
-    best_score = init_best_score
+def main():
+    seed = int(time.time()) & 0x7FFFFFFF
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[init] device={device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'cpu'}) | pure from-scratch RL | Ctrl+C anytime to save & stop", flush=True)
+
+    lib = build_and_load_dll()
+    cleanup_old_checkpoints()
+
+    actor = ActorNet().to(device)
+    critic = CriticNet().to(device)
+    actor_opt = torch.optim.Adam(actor.parameters(), lr=STAGES[0]["actor_lr"], eps=1e-5)
+    critic_opt = torch.optim.Adam(critic.parameters(), lr=STAGES[0]["critic_lr"], eps=1e-5)
+
+    stage = 0
+    upd = 0
     total_env_steps = 0
-    last_upd = 0
+    best_score = -1e9
+    deployed_best_score = -1e9
+    snapshots: list[bytes] = []
+
+    # Protect any already-deployed live model from ever being overwritten by a weaker policy
+    if OUT_MODEL.exists() and OUT_MODEL.stat().st_size > 16:
+        try:
+            live_bytes = OUT_MODEL.read_bytes()
+            live_ev = evaluate_full(lib, live_bytes)
+            deployed_best_score = live_ev["score"]
+            snapshots.append(live_bytes)
+            print(f"[init] live deployed {OUT_MODEL.name} benchmarked at score={deployed_best_score:.1f} (protected — will only overwrite if beaten)", flush=True)
+        except Exception as exc:
+            print(f"[init] could not benchmark existing {OUT_MODEL.name}: {exc}", flush=True)
+
+    # Check best.pt threshold so best.pt can never be downgraded either
+    if BEST_PT.exists():
+        bck = torch.load(BEST_PT, map_location="cpu", weights_only=True)
+        best_score = float(bck.get("best_score", bck.get("score", -1e9)))
+        deployed_best_score = max(deployed_best_score, best_score)
+
+    # Auto-resume from latest.pt (or best.pt)
+    resume_path = LATEST_PT if LATEST_PT.exists() else (BEST_PT if BEST_PT.exists() else None)
+    if resume_path is not None:
+        ck = torch.load(resume_path, map_location=device, weights_only=True)
+        actor.load_state_dict(ck["actor"])
+        critic.load_state_dict(ck["critic"])
+        if "actor_opt" in ck:
+            try:
+                actor_opt.load_state_dict(ck["actor_opt"])
+                critic_opt.load_state_dict(ck["critic_opt"])
+            except Exception:
+                pass
+        upd = int(ck.get("upd", 0))
+        total_env_steps = int(ck.get("total_env_steps", 0))
+        best_score = max(best_score, float(ck.get("best_score", ck.get("score", -1e9))))
+        saved_stage = int(ck.get("stage", 0))
+
+        cur_bytes = export_hsp1(actor)
+        snapshots.append(cur_bytes)
+        init_ev = evaluate_full(lib, cur_bytes)
+        stage = detect_stage(init_ev, saved_stage)
+        print(f"[init] auto-resumed from {resume_path.name} (upd={upd}, steps={total_env_steps/1e6:.2f}M, best={best_score:.1f})", flush=True)
+        print(format_eval(upd, stage, total_env_steps, init_ev), flush=True)
+    else:
+        snapshots.append(export_hsp1(actor))
+        print("[init] no checkpoints found — starting completely from scratch (Stage 0: GENESIS)", flush=True)
+
+    # Also seed league with best.pt if it differs from latest.pt
+    if BEST_PT.exists():
+        try:
+            tmp_actor = ActorNet()
+            bck = torch.load(BEST_PT, map_location="cpu", weights_only=True)
+            tmp_actor.load_state_dict(bck["actor"])
+            snapshots.append(export_hsp1(tmp_actor))
+        except Exception:
+            pass
+
+    def make_checkpoint_payload(cur_score: float) -> dict:
+        return {
+            "actor": actor.state_dict(),
+            "critic": critic.state_dict(),
+            "actor_opt": actor_opt.state_dict(),
+            "critic_opt": critic_opt.state_dict(),
+            "upd": upd,
+            "total_env_steps": total_env_steps,
+            "stage": stage,
+            "score": cur_score,
+            "best_score": best_score,
+        }
+
+    pool, num_agents, obs_np, act_np, rew_np, done_np, stats_np = make_pool(lib, stage, seed, snapshots)
+    obs_buf = torch.zeros((ROLLOUT_STEPS, num_agents, OBS_DIM), dtype=torch.float32, device=device)
+    act_buf = torch.zeros((ROLLOUT_STEPS, num_agents, ACT_HEADS), dtype=torch.int64, device=device)
+    logp_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+    val_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+    rew_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+    done_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+
+    print(
+        f"[PPO] running forever in Stage {stage} ({STAGES[stage]['name']}) | "
+        f"{NUM_ENVS} envs, {num_agents} controlled agents, eval/save every {EVAL_EVERY} updates",
+        flush=True,
+    )
+
     t_start = time.time()
+    last_eval_score = best_score
 
     try:
-        for upd in range(1, total_updates + 1):
-            frac = 1.0 - (upd - 1) / max(1, total_updates)
-            shaping = (0.25 * frac) if stage3 else max(0.10, frac)
-            ent_coef = (0.00025 * frac) if stage3 else (0.0003 + 0.0012 * frac)
-            # Linear LR decay
-            actor_lr = base_actor_lr * (0.12 + 0.88 * frac) if upd > critic_warmup else 0.0
+        while True:
+            upd += 1
+            cfg = STAGES[stage]
             for pg in actor_opt.param_groups:
-                pg["lr"] = actor_lr
+                pg["lr"] = cfg["actor_lr"]
             for pg in critic_opt.param_groups:
-                pg["lr"] = base_critic_lr * (0.12 + 0.88 * frac)
+                pg["lr"] = cfg["critic_lr"]
+            shaping = cfg["shaping"]
+            ent_coef = cfg["ent_coef"]
 
             t_roll = time.time()
             ep_gs = ep_gc = ep_tc = 0
             actor.eval()
             critic.eval()
-            for t in range(rollout_steps):
+            for t in range(ROLLOUT_STEPS):
                 obs_t = torch.from_numpy(obs_np).to(device, non_blocking=True)
                 obs_buf[t] = obs_t
                 with torch.no_grad():
@@ -366,19 +480,19 @@ def run_ppo(
                 ep_gc += int(stats_np[1])
                 ep_tc += int(stats_np[2])
 
-            total_env_steps += rollout_steps * num_agents
+            total_env_steps += ROLLOUT_STEPS * num_agents
             dt_roll = time.time() - t_roll
 
-            # GAE computation
+            # GAE
             with torch.no_grad():
                 next_val = critic(torch.from_numpy(obs_np).to(device))
                 adv_buf = torch.zeros_like(rew_buf)
                 last_gae = torch.zeros(num_agents, device=device)
-                for t in reversed(range(rollout_steps)):
+                for t in reversed(range(ROLLOUT_STEPS)):
                     next_nonterm = 1.0 - done_buf[t]
-                    next_v = next_val if t == rollout_steps - 1 else val_buf[t + 1]
-                    delta = rew_buf[t] + gamma * next_v * next_nonterm - val_buf[t]
-                    last_gae = delta + gamma * gae_lambda * next_nonterm * last_gae
+                    next_v = next_val if t == ROLLOUT_STEPS - 1 else val_buf[t + 1]
+                    delta = rew_buf[t] + GAMMA * next_v * next_nonterm - val_buf[t]
+                    last_gae = delta + GAMMA * GAE_LAMBDA * next_nonterm * last_gae
                     adv_buf[t] = last_gae
                 ret_buf = adv_buf + val_buf
 
@@ -387,19 +501,18 @@ def run_ppo(
             b_logp = logp_buf.reshape(-1)
             b_adv = adv_buf.reshape(-1)
             b_ret = ret_buf.reshape(-1)
-            b_val = val_buf.reshape(-1)
             b_adv = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
 
             n_batch = b_obs.shape[0]
             actor.train()
             critic.train()
-            pg_losses, v_losses, ent_vals, kls = [], [], [], []
-            for _ in range(ppo_epochs):
+            v_losses, ent_vals, kls = [], [], []
+            for _ in range(PPO_EPOCHS):
                 perm = torch.randperm(n_batch, device=device)
                 kl_break = False
-                for i in range(0, n_batch, minibatch_size):
-                    mb = perm[i : i + minibatch_size]
-                    # Critic update
+                for i in range(0, n_batch, MINIBATCH_SIZE):
+                    mb = perm[i : i + MINIBATCH_SIZE]
+
                     v_pred = critic(b_obs[mb])
                     v_loss = 0.5 * F.mse_loss(v_pred, b_ret[mb])
                     critic_opt.zero_grad(set_to_none=True)
@@ -408,20 +521,17 @@ def run_ppo(
                     critic_opt.step()
                     v_losses.append(v_loss.item())
 
-                    if upd <= critic_warmup:
-                        continue
-
                     new_logp, ent = actor.eval_actions(b_obs[mb], b_act[mb])
                     log_ratio = new_logp - b_logp[mb]
                     ratio = log_ratio.exp()
                     approx_kl = ((ratio - 1.0) - log_ratio).mean().item()
                     kls.append(approx_kl)
-                    if approx_kl > 0.02:
+                    if approx_kl > 0.025:
                         kl_break = True
                         break
 
                     pg1 = -b_adv[mb] * ratio
-                    pg2 = -b_adv[mb] * torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+                    pg2 = -b_adv[mb] * torch.clamp(ratio, 1.0 - CLIP_EPS, 1.0 + CLIP_EPS)
                     pg_loss = torch.max(pg1, pg2).mean()
                     ent_mean = ent.mean()
                     loss = pg_loss - ent_coef * ent_mean
@@ -430,149 +540,73 @@ def run_ppo(
                     loss.backward()
                     nn.utils.clip_grad_norm_(actor.parameters(), 0.5)
                     actor_opt.step()
-                    pg_losses.append(pg_loss.item())
                     ent_vals.append(ent_mean.item())
                 if kl_break:
                     break
 
-            last_upd = upd
-            sps = (rollout_steps * num_agents) / max(1e-3, dt_roll)
-            if upd == 1 or upd % 5 == 0 or upd == critic_warmup:
-                mean_r = rew_buf.mean().item() * 30.0  # per-second reward
+            sps = (ROLLOUT_STEPS * num_agents) / max(1e-3, dt_roll)
+            if upd == 1 or upd % 10 == 0:
+                mean_r = rew_buf.mean().item() * 30.0
                 print(
-                    f"[PPO] upd {upd:03d}/{total_updates} steps={total_env_steps/1e6:.2f}M "
+                    f"[PPO S{stage}] upd {upd:05d} steps={total_env_steps/1e6:.2f}M "
                     f"sps={sps:,.0f} rew/s={mean_r:+.3f} vsBotG={ep_gs}-{ep_gc} touches={ep_tc} "
                     f"vloss={np.mean(v_losses):.3f} ent={np.mean(ent_vals) if ent_vals else 0:.2f} "
                     f"kl={np.mean(kls) if kls else 0:.4f} elapsed={(time.time()-t_start)/60:.1f}m",
                     flush=True,
                 )
 
-            # Periodically add snapshot to league pool & run native full-match evaluation
-            if upd % eval_every == 0 or upd == total_updates:
+            if upd % EVAL_EVERY == 0:
                 cand_bytes = export_hsp1(actor)
-                cand_arr = np.frombuffer(cand_bytes, dtype=np.uint8)
-                lib.rl_pool_add_snapshot(
-                    pool,
-                    cand_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
-                    len(cand_bytes),
-                    16,
-                )
-                e_chp1 = eval_against(lib, cand_bytes, opp_diff=3, team_size=1, matches=4, secs=180.0, arena=0)
-                e_leg1 = eval_against(lib, cand_bytes, opp_diff=4, team_size=1, matches=6, secs=180.0, arena=0)
-                e_mpc1 = eval_against(lib, cand_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=0)
-                e_mpc2 = eval_against(lib, cand_bytes, opp_diff=5, team_size=2, matches=4, secs=180.0, arena=0)
-                e_leg2 = eval_against(lib, cand_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0)
+                snapshots.append(cand_bytes)
+                if len(snapshots) > MAX_SNAPSHOTS:
+                    snapshots.pop(0)
+                add_snapshot(lib, pool, cand_bytes)
 
-                # Composite strength score prioritizing beating BOTH MPC-SAVANT and LEGEND across 1v1 & 2v2
-                gd_chp1 = e_chp1["goals_a"] - e_chp1["goals_b"]
-                gd_leg1 = e_leg1["goals_a"] - e_leg1["goals_b"]
-                gd_mpc1 = e_mpc1["goals_a"] - e_mpc1["goals_b"]
-                gd_mpc2 = e_mpc2["goals_a"] - e_mpc2["goals_b"]
-                gd_leg2 = e_leg2["goals_a"] - e_leg2["goals_b"]
-                score = gd_mpc1 * 2.5 + gd_mpc2 * 2.5 + gd_leg1 * 1.0 + gd_leg2 * 1.0 + gd_chp1 * 0.5 - (e_mpc1["owngoals_a"] + e_mpc2["owngoals_a"]) * 3.0
+                ev = evaluate_full(lib, cand_bytes)
+                score = ev["score"]
+                last_eval_score = score
+                print(format_eval(upd, stage, total_env_steps, ev), flush=True)
 
-                print(
-                    f"[EVAL upd {upd:03d}] "
-                    f"1v1 CHAMP: {e_chp1['goals_a']}-{e_chp1['goals_b']} | "
-                    f"1v1 LEGEND: {e_leg1['goals_a']}-{e_leg1['goals_b']} (W {e_leg1['wins_a']}-{e_leg1['wins_b']}) | "
-                    f"1v1 MPC: {e_mpc1['goals_a']}-{e_mpc1['goals_b']} (W {e_mpc1['wins_a']}-{e_mpc1['wins_b']}) | "
-                    f"2v2 LEGEND: {e_leg2['goals_a']}-{e_leg2['goals_b']} | "
-                    f"2v2 MPC: {e_mpc2['goals_a']}-{e_mpc2['goals_b']} | "
-                    f"score={score:.1f}",
-                    flush=True,
-                )
-                CKPT_DIR.mkdir(parents=True, exist_ok=True)
+                # Only ever overwrite best.pt with a strictly better checkpoint
                 if score > best_score:
                     best_score = score
-                    (CKPT_DIR / "best_policy.bin").write_bytes(cand_bytes)
-                    torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score, "best_score": best_score}, CKPT_DIR / "best.pt")
-                    if e_leg1["goals_a"] > e_leg1["goals_b"]:
-                        OUT_MODEL.write_bytes(cand_bytes)
-                        print(f"[SAVE] DEPLOYED NEW BEST SAVANT MLP -> {OUT_MODEL} ({len(cand_bytes):,} bytes, score={best_score:.1f})", flush=True)
-                    else:
-                        print(f"[SAVE] NEW BEST CKPT -> {CKPT_DIR / 'best_policy.bin'} (score={best_score:.1f}, waiting to beat LEGEND before deploying)", flush=True)
-                torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score, "best_score": best_score}, CKPT_DIR / "latest.pt")
+                    atomic_torch_save(make_checkpoint_payload(score), BEST_PT)
+                    print(f"[SAVE] NEW BEST checkpoint -> {BEST_PT.name} (score={best_score:.1f})", flush=True)
+
+                # Only ever overwrite the live game model if strictly better AND beats LEGEND 1v1
+                if score > deployed_best_score and ev["leg1"]["goals_a"] > ev["leg1"]["goals_b"]:
+                    deployed_best_score = score
+                    atomic_write_bytes(cand_bytes, OUT_MODEL)
+                    print(f"[DEPLOY] NEW LIVE SAVANT MODEL -> {OUT_MODEL} ({len(cand_bytes):,} bytes, score={deployed_best_score:.1f})", flush=True)
+
+                # Save latest.pt and clean up any old/stale files
+                atomic_torch_save(make_checkpoint_payload(score), LATEST_PT)
+                cleanup_old_checkpoints()
+
+                # Auto-advance curriculum stage if ready
+                next_stage = detect_stage(ev, stage)
+                if next_stage > stage:
+                    print(f"[STAGE] AUTO-PROMOTING Stage {stage} ({STAGES[stage]['name']}) -> Stage {next_stage} ({STAGES[next_stage]['name']})!", flush=True)
+                    stage = next_stage
+                    atomic_torch_save(make_checkpoint_payload(score), LATEST_PT)
+                    lib.rl_pool_free(pool)
+                    pool, num_agents, obs_np, act_np, rew_np, done_np, stats_np = make_pool(
+                        lib, stage, (seed + upd * 997) & 0x7FFFFFFF, snapshots
+                    )
+                    obs_buf = torch.zeros((ROLLOUT_STEPS, num_agents, OBS_DIM), dtype=torch.float32, device=device)
+                    act_buf = torch.zeros((ROLLOUT_STEPS, num_agents, ACT_HEADS), dtype=torch.int64, device=device)
+                    logp_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+                    val_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+                    rew_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+                    done_buf = torch.zeros((ROLLOUT_STEPS, num_agents), dtype=torch.float32, device=device)
+                    print(f"[PPO] rebuilt pool for Stage {stage} ({STAGES[stage]['name']}): {NUM_ENVS} envs, {num_agents} controlled agents", flush=True)
     except KeyboardInterrupt:
-        print(f"\n[INT] Ctrl+C received after update {last_upd} — saving {CKPT_DIR / 'latest.pt'}...", flush=True)
-        CKPT_DIR.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            {"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": last_upd, "score": best_score, "best_score": best_score},
-            CKPT_DIR / "latest.pt",
-        )
-        print(f"[INT] Saved latest.pt safely. Best deployed model remains intact at {OUT_MODEL} (best score={best_score:.1f}).", flush=True)
+        print(f"\n[STOP] Ctrl+C received at update {upd} ({total_env_steps/1e6:.2f}M steps) — saving {LATEST_PT.name}...", flush=True)
+        atomic_torch_save(make_checkpoint_payload(last_eval_score), LATEST_PT)
+        cleanup_old_checkpoints()
+        print(f"[STOP] Saved cleanly. Re-run `python tools\\savant_rl\\train.py` anytime to auto-resume.", flush=True)
     finally:
         lib.rl_pool_free(pool)
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bc-samples", type=int, default=800_000)
-    ap.add_argument("--bc-epochs", type=int, default=20)
-    ap.add_argument("--bc-batch", type=int, default=4096)
-    ap.add_argument("--envs", type=int, default=192)
-    ap.add_argument("--rollout-steps", type=int, default=128)
-    ap.add_argument("--updates", type=int, default=300)
-    ap.add_argument("--minibatch", type=int, default=4096)
-    ap.add_argument("--ppo-epochs", type=int, default=4)
-    ap.add_argument("--eval-every", type=int, default=20)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--resume", type=str, default="")
-    ap.add_argument("--stage3", action="store_true")
-    args = ap.parse_args()
-
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[init] device={device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'cpu'})", flush=True)
-
-    lib = build_and_load_dll()
-    actor = ActorNet().to(device)
-    critic = CriticNet().to(device)
-
-    init_best = -1e9
-    best_ckpt_path = CKPT_DIR / "best.pt"
-    if best_ckpt_path.exists():
-        bck = torch.load(best_ckpt_path, map_location="cpu", weights_only=True)
-        init_best = float(bck.get("best_score", bck.get("score", -1e9)))
-    if args.resume and Path(args.resume).exists():
-        ck = torch.load(args.resume, map_location=device, weights_only=True)
-        actor.load_state_dict(ck["actor"])
-        critic.load_state_dict(ck["critic"])
-        init_best = max(init_best, float(ck.get("best_score", ck.get("score", -1e9))))
-        print(f"[init] resumed from {args.resume} (best score threshold={init_best:.1f})", flush=True)
-    else:
-        run_bc_warmstart(lib, actor, device, args.bc_samples, args.bc_epochs, args.bc_batch, args.seed)
-        bc_bytes = export_hsp1(actor)
-        e_leg = eval_against(lib, bc_bytes, opp_diff=4, team_size=1, matches=6, secs=180.0, arena=0)
-        e_mpc = eval_against(lib, bc_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=0)
-        e_leg2 = eval_against(lib, bc_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0)
-        print(
-            f"[BC EVAL] 1v1 vs LEGEND: {e_leg['goals_a']}-{e_leg['goals_b']} (W {e_leg['wins_a']}-{e_leg['wins_b']}) | "
-            f"1v1 vs MPC: {e_mpc['goals_a']}-{e_mpc['goals_b']} (W {e_mpc['wins_a']}-{e_mpc['wins_b']}) | "
-            f"2v2 vs LEGEND: {e_leg2['goals_a']}-{e_leg2['goals_b']}",
-            flush=True,
-        )
-        # Save BC baseline immediately if it already beats LEGEND
-        if e_leg["goals_a"] > e_leg["goals_b"]:
-            OUT_MODEL.write_bytes(bc_bytes)
-            print(f"[SAVE] BC baseline saved -> {OUT_MODEL} ({len(bc_bytes):,} bytes)", flush=True)
-
-    run_ppo(
-        lib,
-        actor,
-        critic,
-        device,
-        num_envs=args.envs,
-        rollout_steps=args.rollout_steps,
-        total_updates=args.updates,
-        minibatch_size=args.minibatch,
-        ppo_epochs=args.ppo_epochs,
-        eval_every=args.eval_every,
-        seed=args.seed + (5000 if args.stage3 else 1000),
-        critic_warmup=3 if args.stage3 else 5,
-        stage3=args.stage3,
-        init_best_score=init_best,
-    )
 
 
 if __name__ == "__main__":
