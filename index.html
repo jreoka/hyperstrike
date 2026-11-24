@@ -364,13 +364,15 @@ button{font-family:inherit;color:inherit}
 .seg.team button.orange.on::before{background:linear-gradient(180deg,#ffb066,var(--orange));border-color:var(--orange);box-shadow:0 0 22px rgba(255,138,31,.45)}
 .seg.team button.rand.on,.seg button.rand.on{color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6)}
 .seg.team button.rand.on::before,.seg button.rand.on::before{background:linear-gradient(110deg,var(--blue) 0%,var(--blue) 48%,var(--orange) 52%,var(--orange) 100%);border-color:#fff}
-.seg button.savant{color:#ff85d0;animation:savantPop .32s cubic-bezier(.2,1.2,.3,1)}
+.seg button.savant{color:#ff85d0}
 .seg button.savant::before{border-color:rgba(255,46,136,.6);background:linear-gradient(180deg,rgba(255,46,136,.18),rgba(138,43,226,.16));box-shadow:0 0 14px rgba(255,46,136,.22)}
 .seg button.savant:hover:not(:disabled){color:#fff}
 .seg button.savant:hover:not(:disabled)::before{background:linear-gradient(180deg,rgba(255,46,136,.32),rgba(138,43,226,.28));border-color:#ff4da6;box-shadow:0 0 20px rgba(255,46,136,.4)}
 .seg button.savant.on{color:#fff;text-shadow:0 0 10px rgba(255,255,255,.55)}
 .seg button.savant.on::before{background:linear-gradient(135deg,#ff1f6d,#9b2cff);border-color:#ff9cd4;box-shadow:0 0 26px rgba(255,31,109,.55)}
-@keyframes savantPop{0%{opacity:0;transform:scale(.82) translateX(-8px)}100%{opacity:1;transform:none}}
+.savant-warn{display:flex;align-items:flex-start;gap:10px;margin:10px 0 4px;padding:10px 13px;border:1px solid rgba(255,46,136,.55);border-left:3px solid #ff2e88;background:linear-gradient(90deg,rgba(255,31,109,.18),rgba(138,43,226,.1));color:#ffd6e9;font-size:12.5px;line-height:1.45;font-weight:500;box-shadow:0 0 18px rgba(255,31,109,.15)}
+.savant-warn .sw-ic{flex:none;color:#ff4da6;font-size:15px;line-height:1.15;font-weight:900;text-shadow:0 0 10px rgba(255,46,136,.65)}
+.savant-warn b{color:#fff;letter-spacing:.06em;text-transform:uppercase;font-style:italic}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .card{--cbd:var(--line);--cbw:9.6px;position:relative;height:96px;border:1px solid var(--cbd);cursor:pointer;overflow:hidden;transition:transform .18s,border-color .15s,box-shadow .18s;outline:none;background:#0b1020;text-align:left;padding:0;
   clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)}
@@ -12373,9 +12375,8 @@ const resolveArena = a => {
 class UIManager {
   constructor(game) {
     this.g = game; this.menuScreen = 'play'; this.setup = Object.assign({ teamSize: 2, side: 'random', arena: -1, difficulty: 1, duration: 300, unlimited: false, tsize: 2, tdiff: 1, mode: 'standard', interval: 10, layout: 'default', tmode: 'standard' }, Settings.data.lastSetup || {});
-    if (this.setup.difficulty > 4) this.setup.difficulty = 4;
+    if (!Number.isInteger(this.setup.difficulty) || this.setup.difficulty < 0 || this.setup.difficulty >= DIFFICULTY.length) this.setup.difficulty = 1;
     if (this.setup.arena !== -1 && !ARENAS[this.setup.arena]) this.setup.arena = -1; if (!LAYOUTS.find(l => l.id === this.setup.layout)) this.setup.layout = 'default';
-    this.savantUnlocked = false; this._legendClicks = [];
     this.settingsTab = 'camera'; this.garageTab = 'body'; this.subTab = { play: 'mode', freeplay: 'arena', training: 'drills' }; this.tags = new Map(); this._sb = false;
     this.authMode = 'login';
     let t = ''; for (let i = 0; i <= 10; i++) { const a = (135 + i * 27) * PI / 180; const r1 = 50, r2 = i % 5 === 0 ? 43 : 46; t += `<line x1="${85 + Math.cos(a) * r1}" y1="${85 + Math.sin(a) * r1}" x2="${85 + Math.cos(a) * r2}" y2="${85 + Math.sin(a) * r2}" stroke="rgba(255,255,255,.35)" stroke-width="${i % 5 === 0 ? 2 : 1}"/>`; }
@@ -12620,32 +12621,11 @@ class UIManager {
   }
   hideMenu() { $('menu').classList.add('hidden'); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
   seg(key, opts, cls = '') { return `<div class="seg ${cls}">` + opts.map(([v, l, c]) => `<button class="${c || ''} ${this.setup[key] === v ? 'on' : ''}" data-set="${key}" data-val='${JSON.stringify(v)}'><span>${l}</span></button>`).join('') + '</div>'; }
-  visibleDifficulties(selectedVal = -1) {
-    const showSavant = this.savantUnlocked || selectedVal === 5;
-    return DIFFICULTY.slice(0, showSavant ? 6 : 5).map((d, i) => [i, d.name, i === 5 ? 'savant' : '']);
+  difficultyOpts() {
+    return DIFFICULTY.map((d, i) => [i, i === 5 ? '⚠ ' + d.name : d.name, i === 5 ? 'savant' : '']);
   }
-  registerLegendClick() {
-    if (this.savantUnlocked) return false;
-    const now = performance.now();
-    this._legendClicks.push(now);
-    this._legendClicks = this._legendClicks.filter(t => now - t <= 5000);
-    if (this._legendClicks.length >= 10) {
-      this._legendClicks = [];
-      this.savantUnlocked = true;
-      this.g.audio.ui('savant');
-      this.toast('SAVANT DIFFICULTY REVEALED', 3200);
-      return true;
-    }
-    return false;
-  }
-  lockSavant() {
-    this.savantUnlocked = false;
-    this._legendClicks = [];
-    if (this.setup.difficulty > 4) this.setup.difficulty = 4;
-    const on = this.g && this.g.online;
-    if (on && on.lobby && on.user && on.lobby.hostId === on.user.id && on.lobby.settings && on.lobby.settings.botDiff > 4) {
-      on.updateLobbySettings({ botDiff: 4 });
-    }
+  savantWarningHtml() {
+    return `<div class="savant-warn"><span class="sw-ic">⚠</span><div><b>Extreme Difficulty Warning:</b> <b>Savant</b> is a relentless neural-assisted elite bot built for world-champion-level play — no speed hacks or cheats, just ruthless speedflips, aerials, and precision reads.</div></div>`;
   }
   shapeSvg(def, layout) {
     const sh = new ArenaShape(def, { layout }); const pts = sh.path(4, 0).pts; const k = 28 / Math.max(sh.W, sh.L + sh.gd);
@@ -13038,7 +13018,7 @@ class UIManager {
           ${s.teamSize >= 4 ? '<div class="desc">4v4 and 5v5 matches are played on an extended pitch.</div>' : ''}
           <div class="sect">Your side</div>${this.seg('side', [['random', 'Random', 'rand'], [0, 'Blue', 'blue'], [1, 'Orange', 'orange'], [-1, 'Spectate AI']], 'team')}`;
         else if (t === 'arena') h += this.arenaTabHtml();
-        else h += `<div class="sect">Bot difficulty</div>${this.seg('difficulty', this.visibleDifficulties(s.difficulty))}
+        else h += `<div class="sect">Bot difficulty</div>${this.seg('difficulty', this.difficultyOpts())}${s.difficulty === 5 ? this.savantWarningHtml() : ''}
           <div class="sect">Match length</div>${this.seg('duration', [[120, '2 min'], [180, '3 min'], [300, '5 min'], [0, 'Unlimited']])}`;
         h += `<div class="dock"><button class="cta ${mayhem ? 'alt' : ''}" id="goMatch"><span>${ico('play')}Start ${mayhem ? 'Mayhem' : 'Match'}</span></button></div>`; break;
       }
@@ -13075,11 +13055,10 @@ class UIManager {
     P.innerHTML = h; P.style.animation = 'none'; void P.offsetWidth; P.style.animation = '';
     P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => {
       const sc = P.scrollTop; const key = b.dataset.set, raw = b.dataset.val, val = JSON.parse(raw);
-      const unlocked = (key === 'difficulty' && val === 4) ? this.registerLegendClick() : false;
-      if (!unlocked) this.g.audio.ui('click');
+      this.g.audio.ui(key === 'difficulty' && val === 5 ? 'savant' : 'click');
       this.setup[key] = val;
       if (key === 'arena' && ARENAS[this.setup.arena] && ARENAS[this.setup.arena].weird) this.setup.layout = 'default';
-      Settings.data.lastSetup = Object.assign({}, this.setup, { difficulty: Math.min(4, this.setup.difficulty) });
+      Settings.data.lastSetup = Object.assign({}, this.setup);
       Settings.save();
       this.renderPanel(`[data-set="${key}"][data-val='${raw}']`);
       P.scrollTop = sc;
@@ -13233,8 +13212,9 @@ class UIManager {
       <div class="sect">Bot Fill & Difficulty</div>
       <div class="mp-row" style="gap:10px">
         <div style="flex:1">${lseg('botFill', [[true, 'Bots On'], [false, 'Humans Only']])}</div>
-        <div style="flex:1">${lseg('botDiff', this.visibleDifficulties(S.botDiff))}</div>
+        <div style="flex:1">${lseg('botDiff', this.difficultyOpts())}</div>
       </div>
+      ${S.botDiff === 5 ? this.savantWarningHtml() : ''}
       ${!S.ranked ? `<div class="sect">Boost & Mutators (Casual)</div>
       <div class="mp-row" style="gap:10px">
         <div style="flex:1">${lseg('boostMode', [['normal', 'Normal'], ['recharge', 'Recharge'], ['unlimited', 'Unlimited']])}</div>
@@ -13277,18 +13257,16 @@ class UIManager {
     P.querySelectorAll('[data-joinlb]').forEach(b => b.onclick = () => on.joinLobby(b.dataset.joinlb));
 
     click('copyLbCode', () => on.lobby && copyTxt(on.lobby.code, 'LOBBY CODE'));
-    click('btnLbLeave', () => { this.lockSavant(); on.leaveLobby(); });
+    click('btnLbLeave', () => on.leaveLobby());
     click('btnLbReady', () => on.toggleReady());
     click('btnLbStart', () => on.startLobbyMatch());
     P.querySelectorAll('[data-lbt]').forEach(b => b.onclick = () => on.switchTeam(b.dataset.lbt === 'random' ? 'random' : +b.dataset.lbt));
     P.querySelectorAll('[data-lbkick]').forEach(b => b.onclick = () => on.kickLobby(b.dataset.lbkick));
     P.querySelectorAll('[data-lset]').forEach(b => b.onclick = () => {
       const k = b.dataset.lset, v = JSON.parse(b.dataset.lval);
-      const unlocked = (k === 'botDiff' && v === 4) ? this.registerLegendClick() : false;
-      if (!unlocked) this.g.audio.ui('click');
+      this.g.audio.ui(k === 'botDiff' && v === 5 ? 'savant' : 'click');
       const cur = on.lobby && on.lobby.settings ? on.lobby.settings[k] : undefined;
       if (cur !== v) on.updateLobbySettings({ [k]: v });
-      else if (unlocked) this.renderPanel(`[data-lset="${k}"][data-lval='${b.dataset.lval}']`);
     });
     const chatIn = $('inLbChat'), sendChat = () => { if (!chatIn) return; const t = chatIn.value.trim(); if (!t) return; on.sendChat(t); chatIn.value = ''; };
     click('btnLbSend', sendChat);
@@ -14940,7 +14918,6 @@ class GameEngine {
   }
   exitToMenu() {
     this.cancelMatchLoad();
-    this.ui.lockSavant();
     this.ui.hideArenaLoad(true);
     if (this.mode instanceof OnlineMatchMode && this.mode.isSolo && this.online && !this.mode.endedByServer) this.online.leaveSoloServerMatch();
     if (this.mode) this.mode.end(); this.mode = null;

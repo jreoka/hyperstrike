@@ -321,6 +321,7 @@ def run_ppo(
     clip_eps = 0.2
     best_score = init_best_score
     total_env_steps = 0
+    last_upd = 0
     t_start = time.time()
 
     try:
@@ -434,6 +435,7 @@ def run_ppo(
                 if kl_break:
                     break
 
+            last_upd = upd
             sps = (rollout_steps * num_agents) / max(1e-3, dt_roll)
             if upd == 1 or upd % 5 == 0 or upd == critic_warmup:
                 mean_r = rew_buf.mean().item() * 30.0  # per-second reward
@@ -480,16 +482,24 @@ def run_ppo(
                     flush=True,
                 )
                 CKPT_DIR.mkdir(parents=True, exist_ok=True)
-                torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score}, CKPT_DIR / "latest.pt")
                 if score > best_score:
                     best_score = score
                     (CKPT_DIR / "best_policy.bin").write_bytes(cand_bytes)
-                    torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score}, CKPT_DIR / "best.pt")
+                    torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score, "best_score": best_score}, CKPT_DIR / "best.pt")
                     if e_leg1["goals_a"] > e_leg1["goals_b"]:
                         OUT_MODEL.write_bytes(cand_bytes)
                         print(f"[SAVE] DEPLOYED NEW BEST SAVANT MLP -> {OUT_MODEL} ({len(cand_bytes):,} bytes, score={best_score:.1f})", flush=True)
                     else:
                         print(f"[SAVE] NEW BEST CKPT -> {CKPT_DIR / 'best_policy.bin'} (score={best_score:.1f}, waiting to beat LEGEND before deploying)", flush=True)
+                torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": upd, "score": score, "best_score": best_score}, CKPT_DIR / "latest.pt")
+    except KeyboardInterrupt:
+        print(f"\n[INT] Ctrl+C received after update {last_upd} — saving {CKPT_DIR / 'latest.pt'}...", flush=True)
+        CKPT_DIR.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {"actor": actor.state_dict(), "critic": critic.state_dict(), "upd": last_upd, "score": best_score, "best_score": best_score},
+            CKPT_DIR / "latest.pt",
+        )
+        print(f"[INT] Saved latest.pt safely. Best deployed model remains intact at {OUT_MODEL} (best score={best_score:.1f}).", flush=True)
     finally:
         lib.rl_pool_free(pool)
 
@@ -520,12 +530,16 @@ def main():
     critic = CriticNet().to(device)
 
     init_best = -1e9
+    best_ckpt_path = CKPT_DIR / "best.pt"
+    if best_ckpt_path.exists():
+        bck = torch.load(best_ckpt_path, map_location="cpu", weights_only=True)
+        init_best = float(bck.get("best_score", bck.get("score", -1e9)))
     if args.resume and Path(args.resume).exists():
         ck = torch.load(args.resume, map_location=device, weights_only=True)
         actor.load_state_dict(ck["actor"])
         critic.load_state_dict(ck["critic"])
-        init_best = float(ck.get("score", -1e9))
-        print(f"[init] resumed from {args.resume} (prev score={init_best:.1f})", flush=True)
+        init_best = max(init_best, float(ck.get("best_score", ck.get("score", -1e9))))
+        print(f"[init] resumed from {args.resume} (best score threshold={init_best:.1f})", flush=True)
     else:
         run_bc_warmstart(lib, actor, device, args.bc_samples, args.bc_epochs, args.bc_batch, args.seed)
         bc_bytes = export_hsp1(actor)
