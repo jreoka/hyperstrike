@@ -1,6 +1,7 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::slice;
-use std::sync::Arc;
-use std::thread;
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
 
 use glam::DVec3;
 use rand::rngs::StdRng;
@@ -566,7 +567,11 @@ impl SingleEnv {
                     r += 20.0;
                 }
             }
-            rew_out[slot] = r as f32;
+            rew_out[slot] = if r.is_finite() {
+                r.clamp(-50.0, 50.0) as f32
+            } else {
+                0.0
+            };
             done_out[slot] = u8::from(done);
         }
 
@@ -577,12 +582,82 @@ impl SingleEnv {
     }
 }
 
+#[derive(Clone)]
+enum PoolJob {
+    Idle,
+    Reset {
+        obs_ptr: usize,
+        n_snaps: usize,
+    },
+    Step {
+        acts_ptr: usize,
+        obs_ptr: usize,
+        rew_ptr: usize,
+        done_ptr: usize,
+        shaping_scale: f32,
+        snapshots: Arc<Vec<Arc<SavantPolicy>>>,
+    },
+    Shutdown,
+}
+
+struct PoolSharedState {
+    epoch: u64,
+    remaining: usize,
+    job: PoolJob,
+    tot_gs: u32,
+    tot_gc: u32,
+    tot_tc: u32,
+}
+
+struct PoolSync {
+    state: Mutex<PoolSharedState>,
+    job_cv: Condvar,
+    done_cv: Condvar,
+}
+
 pub struct EnvPool {
-    envs: Vec<SingleEnv>,
-    agent_offsets: Vec<usize>,
+    sync: Arc<PoolSync>,
+    workers: Vec<JoinHandle<()>>,
     total_agents: usize,
-    snapshots: Vec<Arc<SavantPolicy>>,
-    n_threads: usize,
+    snapshots: Arc<Vec<Arc<SavantPolicy>>>,
+}
+
+impl EnvPool {
+    fn run_job(&self, job: PoolJob) -> (u32, u32, u32) {
+        let n_workers = self.workers.len();
+        if n_workers == 0 {
+            return (0, 0, 0);
+        }
+        let mut st = self.sync.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.job = job;
+        st.remaining = n_workers;
+        st.tot_gs = 0;
+        st.tot_gc = 0;
+        st.tot_tc = 0;
+        st.epoch = st.epoch.wrapping_add(1);
+        self.sync.job_cv.notify_all();
+        while st.remaining > 0 {
+            st = self.sync.done_cv.wait(st).unwrap_or_else(|e| e.into_inner());
+        }
+        let res = (st.tot_gs, st.tot_gc, st.tot_tc);
+        st.job = PoolJob::Idle;
+        res
+    }
+}
+
+impl Drop for EnvPool {
+    fn drop(&mut self) {
+        {
+            let mut st = self.sync.state.lock().unwrap_or_else(|e| e.into_inner());
+            st.job = PoolJob::Shutdown;
+            st.remaining = self.workers.len();
+            st.epoch = st.epoch.wrapping_add(1);
+            self.sync.job_cv.notify_all();
+        }
+        for h in self.workers.drain(..) {
+            let _ = h.join();
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -671,12 +746,137 @@ pub extern "C" fn rl_pool_new(num_envs: usize, seed: u64, pool_mode: u32) -> *mu
         .min(24)
         .min(num_envs.max(1));
 
+    let sync = Arc::new(PoolSync {
+        state: Mutex::new(PoolSharedState {
+            epoch: 0,
+            remaining: 0,
+            job: PoolJob::Idle,
+            tot_gs: 0,
+            tot_gc: 0,
+            tot_tc: 0,
+        }),
+        job_cv: Condvar::new(),
+        done_cv: Condvar::new(),
+    });
+
+    let chunk_envs = (num_envs + n_threads - 1) / n_threads;
+    let mut workers = Vec::with_capacity(n_threads);
+    let mut env_iter = envs.into_iter();
+    let mut env_idx = 0usize;
+
+    while env_idx < num_envs {
+        let take = chunk_envs.min(num_envs - env_idx);
+        let a_start = agent_offsets[env_idx];
+        let a_end = if env_idx + take < num_envs {
+            agent_offsets[env_idx + take]
+        } else {
+            total_agents
+        };
+        let a_cnt = a_end - a_start;
+        let mut my_envs: Vec<SingleEnv> = env_iter.by_ref().take(take).collect();
+        env_idx += take;
+
+        let sync_w = Arc::clone(&sync);
+        workers.push(thread::spawn(move || {
+            let mut my_epoch = 0u64;
+            loop {
+                let job = {
+                    let mut st = sync_w.state.lock().unwrap_or_else(|e| e.into_inner());
+                    while st.epoch == my_epoch {
+                        st = sync_w.job_cv.wait(st).unwrap_or_else(|e| e.into_inner());
+                    }
+                    my_epoch = st.epoch;
+                    st.job.clone()
+                };
+
+                let mut gs = 0u32;
+                let mut gc = 0u32;
+                let mut tc = 0u32;
+
+                match job {
+                    PoolJob::Shutdown => break,
+                    PoolJob::Idle => {}
+                    PoolJob::Reset { obs_ptr, n_snaps } => {
+                        let _ = catch_unwind(AssertUnwindSafe(|| {
+                            let o_chunk = unsafe {
+                                slice::from_raw_parts_mut(
+                                    (obs_ptr as *mut f32).add(a_start * OBS_DIM),
+                                    a_cnt * OBS_DIM,
+                                )
+                            };
+                            let mut local_off = 0usize;
+                            for env in my_envs.iter_mut() {
+                                let na = env.rl_cars.len();
+                                env.reset(n_snaps);
+                                env.write_obs(&mut o_chunk[local_off * OBS_DIM..(local_off + na) * OBS_DIM]);
+                                local_off += na;
+                            }
+                        }));
+                    }
+                    PoolJob::Step {
+                        acts_ptr,
+                        obs_ptr,
+                        rew_ptr,
+                        done_ptr,
+                        shaping_scale,
+                        snapshots,
+                    } => {
+                        let _ = catch_unwind(AssertUnwindSafe(|| {
+                            let a_slice = unsafe {
+                                slice::from_raw_parts(
+                                    (acts_ptr as *const u8).add(a_start * ACT_HEADS),
+                                    a_cnt * ACT_HEADS,
+                                )
+                            };
+                            let o_chunk = unsafe {
+                                slice::from_raw_parts_mut(
+                                    (obs_ptr as *mut f32).add(a_start * OBS_DIM),
+                                    a_cnt * OBS_DIM,
+                                )
+                            };
+                            let r_chunk = unsafe {
+                                slice::from_raw_parts_mut((rew_ptr as *mut f32).add(a_start), a_cnt)
+                            };
+                            let d_chunk = unsafe {
+                                slice::from_raw_parts_mut((done_ptr as *mut u8).add(a_start), a_cnt)
+                            };
+                            let mut local_off = 0usize;
+                            for env in my_envs.iter_mut() {
+                                let na = env.rl_cars.len();
+                                env.step(
+                                    &a_slice[local_off * ACT_HEADS..(local_off + na) * ACT_HEADS],
+                                    shaping_scale,
+                                    &snapshots,
+                                    &mut o_chunk[local_off * OBS_DIM..(local_off + na) * OBS_DIM],
+                                    &mut r_chunk[local_off..local_off + na],
+                                    &mut d_chunk[local_off..local_off + na],
+                                    &mut gs,
+                                    &mut gc,
+                                    &mut tc,
+                                );
+                                local_off += na;
+                            }
+                        }));
+                    }
+                }
+
+                let mut st = sync_w.state.lock().unwrap_or_else(|e| e.into_inner());
+                st.tot_gs += gs;
+                st.tot_gc += gc;
+                st.tot_tc += tc;
+                st.remaining = st.remaining.saturating_sub(1);
+                if st.remaining == 0 {
+                    sync_w.done_cv.notify_one();
+                }
+            }
+        }));
+    }
+
     Box::into_raw(Box::new(EnvPool {
-        envs,
-        agent_offsets,
+        sync,
+        workers,
         total_agents,
-        snapshots: Vec::new(),
-        n_threads,
+        snapshots: Arc::new(Vec::new()),
     }))
 }
 
@@ -695,13 +895,10 @@ pub unsafe extern "C" fn rl_pool_reset(pool: *mut EnvPool, obs_out: *mut f32) {
     }
     let p = unsafe { &mut *pool };
     let n_snaps = p.snapshots.len();
-    let obs_all = unsafe { slice::from_raw_parts_mut(obs_out, p.total_agents * OBS_DIM) };
-    for (ei, env) in p.envs.iter_mut().enumerate() {
-        env.reset(n_snaps);
-        let off = p.agent_offsets[ei];
-        let n_a = env.rl_cars.len();
-        env.write_obs(&mut obs_all[off * OBS_DIM..(off + n_a) * OBS_DIM]);
-    }
+    p.run_job(PoolJob::Reset {
+        obs_ptr: obs_out as usize,
+        n_snaps,
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -719,12 +916,15 @@ pub unsafe extern "C" fn rl_pool_add_snapshot(
     let Some(pol) = SavantPolicy::from_bytes(bytes) else {
         return 0;
     };
-    p.snapshots.push(Arc::new(pol));
+    let mut next = (*p.snapshots).clone();
+    next.push(Arc::new(pol));
     let cap = max_keep.max(1);
-    if p.snapshots.len() > cap {
-        p.snapshots.remove(0);
+    while next.len() > cap {
+        next.remove(0);
     }
-    p.snapshots.len() as i32
+    let len = next.len() as i32;
+    p.snapshots = Arc::new(next);
+    len
 }
 
 #[unsafe(no_mangle)]
@@ -741,81 +941,13 @@ pub unsafe extern "C" fn rl_pool_step(
         return;
     }
     let p = unsafe { &mut *pool };
-    let total = p.total_agents;
-    let acts_all = unsafe { slice::from_raw_parts(actions_in, total * ACT_HEADS) };
-    let obs_all = unsafe { slice::from_raw_parts_mut(obs_out, total * OBS_DIM) };
-    let rew_all = unsafe { slice::from_raw_parts_mut(rew_out, total) };
-    let done_all = unsafe { slice::from_raw_parts_mut(done_out, total) };
-
-    let n_envs = p.envs.len();
-    let n_threads = p.n_threads.min(n_envs.max(1));
-    let chunk_envs = (n_envs + n_threads - 1) / n_threads;
-    let snaps = &p.snapshots;
-
-    let mut tot_gs = 0u32;
-    let mut tot_gc = 0u32;
-    let mut tot_tc = 0u32;
-
-    thread::scope(|s| {
-        let mut env_rest = p.envs.as_mut_slice();
-        let mut off_idx = 0usize;
-        let mut obs_rest = obs_all;
-        let mut rew_rest = rew_all;
-        let mut done_rest = done_all;
-        let mut handles = Vec::with_capacity(n_threads);
-
-        while !env_rest.is_empty() {
-            let take = chunk_envs.min(env_rest.len());
-            let (e_chunk, e_next) = env_rest.split_at_mut(take);
-            env_rest = e_next;
-
-            let a_start = p.agent_offsets[off_idx];
-            let a_end = if off_idx + take < n_envs {
-                p.agent_offsets[off_idx + take]
-            } else {
-                total
-            };
-            let a_cnt = a_end - a_start;
-            off_idx += take;
-
-            let a_slice = &acts_all[a_start * ACT_HEADS..a_end * ACT_HEADS];
-            let (o_chunk, o_next) = obs_rest.split_at_mut(a_cnt * OBS_DIM);
-            obs_rest = o_next;
-            let (r_chunk, r_next) = rew_rest.split_at_mut(a_cnt);
-            rew_rest = r_next;
-            let (d_chunk, d_next) = done_rest.split_at_mut(a_cnt);
-            done_rest = d_next;
-
-            handles.push(s.spawn(move || {
-                let mut gs = 0u32;
-                let mut gc = 0u32;
-                let mut tc = 0u32;
-                let mut local_off = 0usize;
-                for env in e_chunk.iter_mut() {
-                    let na = env.rl_cars.len();
-                    env.step(
-                        &a_slice[local_off * ACT_HEADS..(local_off + na) * ACT_HEADS],
-                        shaping_scale,
-                        snaps,
-                        &mut o_chunk[local_off * OBS_DIM..(local_off + na) * OBS_DIM],
-                        &mut r_chunk[local_off..local_off + na],
-                        &mut d_chunk[local_off..local_off + na],
-                        &mut gs,
-                        &mut gc,
-                        &mut tc,
-                    );
-                    local_off += na;
-                }
-                (gs, gc, tc)
-            }));
-        }
-
-        for h in handles {
-            let (gs, gc, tc) = h.join().unwrap();
-            tot_gs += gs;
-            tot_gc += gc;
-            tot_tc += tc;
-        }
+    let (tot_gs, tot_gc, tot_tc) = p.run_job(PoolJob::Step {
+        acts_ptr: actions_in as usize,
+        obs_ptr: obs_out as usize,
+        rew_ptr: rew_out as usize,
+        done_ptr: done_out as usize,
+        shaping_scale,
+        snapshots: Arc::clone(&p.snapshots),
     });
 
     if !stats_out.is_null() {
@@ -849,7 +981,7 @@ pub unsafe extern "C" fn rl_eval_policy(
     mayhem: u8,
     out_metrics: *mut i32, // [goals_a, goals_b, wins_a, wins_b, shots_a, shots_b, owngoals_a]
 ) -> i32 {
-    if bytes_ptr.is_null() || bytes_len == 0 || out_metrics.is_null() {
+    if bytes_ptr.is_null() || bytes_len == 0 || out_metrics.is_null() || !secs.is_finite() || secs <= 0.0 {
         return 0;
     }
     let bytes = unsafe { slice::from_raw_parts(bytes_ptr, bytes_len) };
