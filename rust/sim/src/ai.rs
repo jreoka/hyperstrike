@@ -573,8 +573,8 @@ impl BotAi {
     }
 
     pub fn update(&mut self, car_idx: usize, dt: f64, w: &mut World) {
-        self.update_core(car_idx, dt, w);
-        if w.powers.is_some() && !w.cars[car_idx].demolished && !w.kickoff {
+        let used_policy = self.update_core(car_idx, dt, w);
+        if !used_policy && w.powers.is_some() && !w.cars[car_idx].demolished && !w.kickoff {
             self.use_items(car_idx, dt, w);
         }
     }
@@ -786,7 +786,7 @@ impl BotAi {
         }
     }
 
-    fn update_core(&mut self, car_idx: usize, dt: f64, w: &mut World) {
+    fn update_core(&mut self, car_idx: usize, dt: f64, w: &mut World) -> bool {
         self.now = w.time;
         {
             let c = &mut w.cars[car_idx].controls;
@@ -804,7 +804,7 @@ impl BotAi {
         if w.cars[car_idx].demolished {
             self.policy_rem = 0;
             self.policy_cache.reset();
-            return;
+            return false;
         }
         self.decide_t -= dt;
         if self.decide_t <= 0.0 {
@@ -812,9 +812,10 @@ impl BotAi {
             self.decide(car_idx, w);
         }
         // Hybrid Neural-MPC SAVANT:
-        // In 1v1/2v2 close-quarters scrambles, dribbles, and 50/50 challenges where the physics
-        // planner has no high-value direct shot/clear (`score < 35`), hand off to our trained RL
-        // causal RoPE Transformer (`savant_policy.bin`) for relentless pressure & ball control.
+        // In 1v1/2v2 close-quarters scrambles, dribbles, and 50/50 challenges (across standard
+        // arenas, experimental Labs arenas, and Mayhem power-ups) where the physics planner has no
+        // high-value direct shot/clear (`score < 35`), hand off to our trained RL causal RoPE
+        // Transformer (`savant_policy.bin`) for relentless pressure, ball control & item timing.
         let mut used_policy = false;
         if self.is_savant()
             && !self.force_mpc
@@ -851,7 +852,7 @@ impl BotAi {
             }
         }
         if used_policy {
-            return;
+            return true;
         }
         if self.policy_rem > 0 || !self.policy_cache.is_empty() {
             self.policy_rem = 0;
@@ -873,7 +874,7 @@ impl BotAi {
                 self.seq = None;
                 car.controls.jump = !car.prev_jump;
                 car.controls.throttle = 1.0;
-                return;
+                return false;
             }
         }
         if let Some(mut pl) = self.strike
@@ -883,33 +884,33 @@ impl BotAi {
                 let ctl = strike_controls(&mut pl, &w.cars[car_idx], w.ball.pos, w.time, &w.phys);
                 self.strike = Some(pl);
                 w.cars[car_idx].controls = ctl;
-                return;
+                return false;
             }
             self.strike = None;
         }
         if self.aer.is_some() {
             self.fly_aerial(car_idx, dt, w);
-            return;
+            return false;
         }
         if self.seq.is_some() {
             self.run_seq(car_idx, dt, w);
-            return;
+            return false;
         }
         if !w.cars[car_idx].on_ground && w.cars[car_idx].contacts == 0 {
             self.recover(car_idx, dt, w);
-            return;
+            return false;
         }
         if w.cars[car_idx].body_contact && w.cars[car_idx].contacts < 2 {
             let j = w.rng.r#gen::<f64>() < 0.35;
             w.cars[car_idx].controls.jump = j;
             w.cars[car_idx].controls.throttle = 1.0;
-            return;
+            return false;
         }
         if self.unstuck > 0.0 {
             self.unstuck -= dt;
             w.cars[car_idx].controls.throttle = -1.0;
             w.cars[car_idx].controls.steer = self.unstuck_steer;
-            return;
+            return false;
         }
         self.act(car_idx, dt, w);
         let car = &w.cars[car_idx];
@@ -924,6 +925,7 @@ impl BotAi {
         } else {
             self.stuck_t = 0.0;
         }
+        false
     }
 
     fn decide(&mut self, car_idx: usize, w: &mut World) {

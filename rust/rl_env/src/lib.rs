@@ -8,13 +8,63 @@ use rand::{Rng, SeedableRng};
 use sim::*;
 
 const STANDARD_ARENAS: usize = 18;
+const EXPERIMENTAL_ARENAS_START: usize = 18;
+const EVAL_ARENA_EXPERIMENTAL_CYCLE: usize = 99;
 
 fn pick_training_arena(rng: &mut StdRng) -> usize {
-    if rng.r#gen::<f64>() < 0.55 {
+    let roll: f64 = rng.r#gen();
+    if roll < 0.45 {
         0
-    } else {
+    } else if roll < 0.75 {
         rng.gen_range(0..STANDARD_ARENAS)
+    } else {
+        rng.gen_range(EXPERIMENTAL_ARENAS_START..ARENAS.len())
     }
+}
+
+/// Pushes `(x, z)` safely inside the arena wall and outside Standalone goal-box walls/interior.
+fn safe_spawn_xz(shape: &ArenaShape, x: f64, z: f64, margin: f64) -> (f64, f64) {
+    let (mut vx, mut vz) = shape.push_inside_xz(x, z, margin);
+    if shape.goal_mode == GoalMode::Standalone {
+        let az = vz.abs();
+        let box_min_z = shape.goal_z - margin;
+        let box_max_z = shape.goal_z + shape.gd + shape.gt + margin;
+        let box_half_x = shape.gw + shape.gt + margin;
+        if az > box_min_z && az < box_max_z && vx.abs() < box_half_x {
+            if az < shape.goal_z + 1.5 {
+                vz = (if vz < 0.0 { -1.0 } else { 1.0 }) * (box_min_z - 1.0);
+            } else {
+                let sx = if vx >= 0.0 { 1.0 } else { -1.0 };
+                vx = sx * (box_half_x + 1.5);
+            }
+            let (px, pz) = shape.push_inside_xz(vx, vz, margin);
+            vx = px;
+            vz = pz;
+        }
+    }
+    (vx, vz)
+}
+
+#[inline]
+fn primary_goal_pos(shape: &ArenaShape, ball_pos: DVec3, ad: f64) -> DVec3 {
+    if let Some(sg) = shape.split_goal {
+        let sx = if ball_pos.x >= 0.0 { 1.0 } else { -1.0 };
+        DVec3::new(sx * sg.gx, 1.5, ad * sg.gz)
+    } else {
+        DVec3::new(0.0, 1.5, ad * shape.goal_line_z())
+    }
+}
+
+/// Normalized ball progress in `[-1, 1]` toward team 0's opponent goal (`+Z`).
+/// Uses goal-distance differential so SplitGoal and Standalone behind-goal rallies shape cleanly.
+#[inline]
+fn ball_goal_progress(shape: &ArenaShape, bpos: DVec3) -> f64 {
+    let g0 = primary_goal_pos(shape, bpos, 1.0);
+    let g1 = primary_goal_pos(shape, bpos, -1.0);
+    let d_opp = (bpos - g0).length();
+    let d_own = (bpos - g1).length();
+    let span = (shape.goal_line_z() * 2.0).max(1.0);
+    (d_own - d_opp) / span
 }
 
 fn setup_kickoff(w: &mut World, team_size: usize) {
@@ -42,6 +92,10 @@ fn setup_kickoff(w: &mut World, team_size: usize) {
         }
     }
     w.reset_pads();
+    if let Some(mut powers) = w.powers.take() {
+        powers.reset(w);
+        w.powers = Some(powers);
+    }
     w.kickoff = true;
     w.brain.choose_kickers(&w.cars, &w.ball);
     w.pred.update(&w.ball, &w.shape, &w.phys);
@@ -52,7 +106,8 @@ fn setup_kickoff(w: &mut World, team_size: usize) {
     };
 }
 
-/// Resets `w` into a rich mix of kickoffs, aerials, defensive saves, and open-play states.
+/// Resets `w` into a rich mix of kickoffs, aerials, defensive saves, and open-play states
+/// across all standard and experimental Labs arenas (and Mayhem mode when enabled).
 fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
     let roll: f64 = w.rng.r#gen();
     if roll < kickoff_prob {
@@ -71,8 +126,8 @@ fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
         let bx = rand_range(&mut w.rng, -shape.w * 0.55, shape.w * 0.55);
         let bz = rand_range(&mut w.rng, -glz * 0.65, glz * 0.65);
         let by = rand_range(&mut w.rng, 4.0, 12.5);
-        let p = shape.push_inside(DVec3::new(bx, by, bz), 3.0);
-        w.ball.reset(p.x, by, p.z);
+        let (px, pz) = safe_spawn_xz(&shape, bx, bz, 3.0);
+        w.ball.reset(px, by, pz);
         w.ball.vel = DVec3::new(
             rand_range(&mut w.rng, -14.0, 14.0),
             rand_range(&mut w.rng, 2.0, 11.0),
@@ -81,24 +136,40 @@ fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
     } else if roll < kickoff_prob + 0.44 {
         // Defensive save / shot-on-goal setup (randomly attacks team 0 or team 1)
         let target_team: f64 = if w.rng.r#gen::<bool>() { 1.0 } else { -1.0 };
-        let bx = rand_range(&mut w.rng, -shape.w * 0.45, shape.w * 0.45);
-        let bz = target_team * rand_range(&mut w.rng, glz * 0.15, glz * 0.55);
+        let (bx, bz, gx, gz) = if let Some(sg) = shape.split_goal {
+            let sx: f64 = if w.rng.r#gen::<bool>() { 1.0 } else { -1.0 };
+            let bx = sx * rand_range(&mut w.rng, 2.0, shape.w * 0.55);
+            let bz = target_team * rand_range(&mut w.rng, glz * 0.10, glz * 0.48);
+            let off = rand_range(&mut w.rng, -shape.gw * 0.75, shape.gw * 0.75);
+            let gx = sx * (sg.gx + sg.gtx * off + sg.gnx * 1.5);
+            let gz = target_team * (sg.gz + sg.gtz * off + sg.gnz * 1.5);
+            (bx, bz, gx, gz)
+        } else {
+            let bx = rand_range(&mut w.rng, -shape.w * 0.45, shape.w * 0.45);
+            let bz = target_team * rand_range(&mut w.rng, glz * 0.12, glz * 0.55);
+            let gx = rand_range(&mut w.rng, -shape.gw * 0.85, shape.gw * 0.85);
+            let gz = target_team * (glz + 1.0);
+            (bx, bz, gx, gz)
+        };
         let by = rand_range(&mut w.rng, r, 5.5);
-        let p = shape.push_inside(DVec3::new(bx, by, bz), 3.5);
-        w.ball.reset(p.x, by, p.z);
-        let gx = rand_range(&mut w.rng, -shape.gw * 0.85, shape.gw * 0.85);
+        let (px, pz) = safe_spawn_xz(&shape, bx, bz, 3.5);
+        w.ball.reset(px, by, pz);
         let gy = rand_range(&mut w.rng, 1.0, shape.gh * 0.85);
-        let gz = target_team * (glz + 1.0);
         let dir = (DVec3::new(gx, gy, gz) - w.ball.pos).three_normalize();
         let spd = rand_range(&mut w.rng, 18.0, 36.0);
         w.ball.vel = dir * spd;
     } else {
-        // Random open play / corner / wall roll
+        // Random open play / corner / wall roll (includes behind-goal space on Standalone!)
+        let z_lim = if shape.goal_mode == GoalMode::Standalone {
+            shape.l * 0.88
+        } else {
+            glz * 0.82
+        };
         let bx = rand_range(&mut w.rng, -shape.w * 0.82, shape.w * 0.82);
-        let bz = rand_range(&mut w.rng, -glz * 0.82, glz * 0.82);
+        let bz = rand_range(&mut w.rng, -z_lim, z_lim);
         let by = rand_range(&mut w.rng, r, 6.0);
-        let p = shape.push_inside(DVec3::new(bx, by, bz), 2.5);
-        w.ball.reset(p.x, by, p.z);
+        let (px, pz) = safe_spawn_xz(&shape, bx, bz, 2.8);
+        w.ball.reset(px, by, pz);
         w.ball.vel = DVec3::new(
             rand_range(&mut w.rng, -22.0, 22.0),
             rand_range(&mut w.rng, -2.0, 10.0),
@@ -107,22 +178,27 @@ fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
     }
 
     let bpos = w.ball.pos;
+    let car_z_lim = if shape.goal_mode == GoalMode::Standalone {
+        shape.l - 4.0
+    } else {
+        glz - 4.0
+    };
     for ci in 0..w.cars.len() {
         let team = w.cars[ci].team;
         let ad = if team == 0 { 1.0 } else { -1.0 };
         // Place car mostly goal-side of ball with randomized offset & momentum
         let cz = clamp(
             bpos.z - ad * rand_range(&mut w.rng, 4.0, 28.0) + rand_range(&mut w.rng, -8.0, 8.0),
-            -glz + 4.0,
-            glz - 4.0,
+            -car_z_lim,
+            car_z_lim,
         );
         let cx = rand_range(&mut w.rng, -shape.w * 0.72, shape.w * 0.72);
-        let cp = shape.push_inside(DVec3::new(cx, 0.35, cz), 3.5);
-        let yaw = yaw_toward(cp.x, cp.z, bpos.x, bpos.z) + rand_range(&mut w.rng, -0.55, 0.55);
+        let (cpx, cpz) = safe_spawn_xz(&shape, cx, cz, 3.8);
+        let yaw = yaw_toward(cpx, cpz, bpos.x, bpos.z) + rand_range(&mut w.rng, -0.55, 0.55);
         let spd = rand_range(&mut w.rng, 2.0, 18.0);
         let boost = rand_range(&mut w.rng, 15.0, 100.0);
         let car = &mut w.cars[ci];
-        car.place(cp.x, 0.35, cp.z, yaw);
+        car.place(cpx, 0.35, cpz, yaw);
         car.vel = car.basis.f * spd;
         car.boost = boost;
         car.demolished = false;
@@ -131,6 +207,22 @@ fn setup_training_episode(w: &mut World, team_size: usize, kickoff_prob: f64) {
             bot.decide_t = 0.0;
         }
     }
+
+    if let Some(mut powers) = w.powers.take() {
+        powers.reset(w);
+        // Pre-seed items in ~45% of randomized Mayhem episodes so agents get dense power-up experience
+        for ci in 0..w.cars.len() {
+            if w.rng.r#gen::<f64>() < 0.45 {
+                let id = powers.pick_item(&mut w.cars[ci], &mut w.rng);
+                w.cars[ci].item = Some(id);
+                w.cars[ci].item_next = 0.0;
+            } else {
+                w.cars[ci].item_next = rand_range(&mut w.rng, 0.5, 3.0);
+            }
+        }
+        w.powers = Some(powers);
+    }
+
     w.pred.update(&w.ball, &w.shape, &w.phys);
     w.last_threat = Threat {
         team: w.pred.goal_team,
@@ -155,6 +247,7 @@ enum OppKind {
 struct SingleEnv {
     world: World,
     team_size: usize,
+    mayhem: bool,
     opp_kind: OppKind,
     /// Which team is controlled by the external Python learner when not SelfPlay (0 or 1).
     rl_team: u8,
@@ -167,16 +260,19 @@ struct SingleEnv {
     prev_ctls: Vec<Controls>,
     ep_steps: usize,
     since_kick: f64,
-    prev_ball_z_norm: f64,
+    prev_ball_prog: f64,
     prev_boost: Vec<f64>,
     rng: StdRng,
 }
 
 impl SingleEnv {
-    fn new(team_size: usize, opp_kind: OppKind, rl_team: u8, seed: u64) -> Self {
+    fn new(team_size: usize, mayhem: bool, opp_kind: OppKind, rl_team: u8, seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let arena_idx = pick_training_arena(&mut rng);
         let mut world = World::with_seed(ARENAS[arena_idx], &ArenaOpts::default(), rng.r#gen());
+        if mayhem {
+            world.powers = Some(PowerSystem::new(10.0));
+        }
         let mut rl_cars = Vec::new();
         let mut snap_cars = Vec::new();
         let mut id = 0usize;
@@ -215,6 +311,7 @@ impl SingleEnv {
         let mut env = Self {
             world,
             team_size,
+            mayhem,
             opp_kind,
             rl_team,
             rl_cars,
@@ -224,7 +321,7 @@ impl SingleEnv {
             prev_ctls: vec![Controls::default(); n_cars],
             ep_steps: 0,
             since_kick: 0.0,
-            prev_ball_z_norm: 0.0,
+            prev_ball_prog: 0.0,
             prev_boost: vec![33.0; n_cars],
             rng,
         };
@@ -240,6 +337,9 @@ impl SingleEnv {
             self.world.shape = ArenaShape::new(&new_def, &ArenaOpts::default());
             self.world.pads = make_boost_pads(&self.world.shape);
         }
+        if self.mayhem && self.world.powers.is_none() {
+            self.world.powers = Some(PowerSystem::new(10.0));
+        }
         setup_training_episode(&mut self.world, self.team_size, 0.35);
         for c in &mut self.prev_ctls {
             *c = Controls::default();
@@ -249,8 +349,7 @@ impl SingleEnv {
         }
         self.ep_steps = 0;
         self.since_kick = 0.0;
-        let glz = self.world.shape.goal_line_z().max(1.0);
-        self.prev_ball_z_norm = self.world.ball.pos.z / glz;
+        self.prev_ball_prog = ball_goal_progress(&self.world.shape, self.world.ball.pos);
         for (i, c) in self.world.cars.iter().enumerate() {
             self.prev_boost[i] = c.boost;
         }
@@ -315,7 +414,7 @@ impl SingleEnv {
         }
 
         let dt = self.world.phys.dt;
-        let glz = self.world.shape.goal_line_z().max(1.0);
+        let sh = shaping_scale as f64;
         let mut car_event_rew = [0.0_f64; 8];
         let mut goal_team: i32 = -1;
 
@@ -338,7 +437,7 @@ impl SingleEnv {
                     WorldEvent::Hit(h) => {
                         let ci = h.car_idx;
                         let ad = if self.world.cars[ci].team == 0 { 1.0 } else { -1.0 };
-                        let opp_g = DVec3::new(0.0, 1.5, ad * glz);
+                        let opp_g = primary_goal_pos(&self.world.shape, self.world.ball.pos, ad);
                         let to_goal = (opp_g - self.world.ball.pos).three_normalize();
                         let goal_dir_q = self.world.ball.vel.dot(to_goal) / 35.0;
                         let touch_r = 0.14
@@ -364,6 +463,19 @@ impl SingleEnv {
                         car_event_rew[attacker_idx] += 1.0;
                         car_event_rew[victim_idx] -= 1.0;
                     }
+                    WorldEvent::Power(ref pe) if sh > 0.0 => match *pe {
+                        PowerEvent::Use { car_idx, .. } => car_event_rew[car_idx] += 0.06 * sh,
+                        PowerEvent::Fail { car_idx, .. } => car_event_rew[car_idx] -= 0.02 * sh,
+                        PowerEvent::Attach { car_idx, .. } => car_event_rew[car_idx] += 0.35 * sh,
+                        PowerEvent::PunchHit { car_idx, .. }
+                        | PowerEvent::Hook { car_idx, .. }
+                        | PowerEvent::Shock { car_idx, .. }
+                        | PowerEvent::BootHit { car_idx, .. } => car_event_rew[car_idx] += 0.16 * sh,
+                        PowerEvent::Scrambled { by_idx, .. } => car_event_rew[by_idx] += 0.16 * sh,
+                        PowerEvent::Swap { car_idx, .. } => car_event_rew[car_idx] += 0.10 * sh,
+                        PowerEvent::Freeze { car_idx } => car_event_rew[car_idx] += 0.08 * sh,
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -375,9 +487,9 @@ impl SingleEnv {
         }
 
         self.ep_steps += 1;
-        let new_ball_z_norm = self.world.ball.pos.z / glz;
-        let dz_ball = new_ball_z_norm - self.prev_ball_z_norm;
-        self.prev_ball_z_norm = new_ball_z_norm;
+        let new_ball_prog = ball_goal_progress(&self.world.shape, self.world.ball.pos);
+        let d_prog = new_ball_prog - self.prev_ball_prog;
+        self.prev_ball_prog = new_ball_prog;
 
         // Compute per-car dense shaping
         let mut dense = [0.0_f64; 8];
@@ -386,7 +498,7 @@ impl SingleEnv {
         for ci in 0..n_cars {
             let car = &self.world.cars[ci];
             let ad = if car.team == 0 { 1.0 } else { -1.0 };
-            let opp_g = DVec3::new(0.0, 1.5, ad * glz);
+            let opp_g = primary_goal_pos(&self.world.shape, bpos, ad);
             let to_goal = (opp_g - bpos).three_normalize();
             let vel_to_goal = bvel.dot(to_goal) / 40.0;
 
@@ -398,8 +510,7 @@ impl SingleEnv {
             self.prev_boost[ci] = car.boost;
 
             // Potential ball progress + ball velocity toward goal + boost pickup + annealed ball-approach
-            let sh = shaping_scale as f64;
-            let mut r_dense = 0.28 * (dz_ball * ad)
+            let mut r_dense = 0.28 * (d_prog * ad)
                 + 0.022 * vel_to_goal
                 + 0.10 * dboost
                 + 0.045 * sh * vel_to_ball
@@ -540,8 +651,11 @@ pub extern "C" fn rl_pool_new(num_envs: usize, seed: u64, pool_mode: u32) -> *mu
             }
         };
         let rl_team = (i % 2) as u8;
+        // ~28.6% Mayhem environments (gcd(7, 2) = gcd(7, 20) = gcd(7, 100) = 1 for exact balance)
+        let mayhem = (i % 7) < 2;
         let env = SingleEnv::new(
             team_size,
+            mayhem,
             opp_kind,
             rl_team,
             seed.wrapping_add((i as u64 + 1) * 0x517CC1B727220A95),
@@ -732,6 +846,7 @@ pub unsafe extern "C" fn rl_eval_policy(
     num_matches: usize,
     secs: f64,
     arena_idx: usize,
+    mayhem: u8,
     out_metrics: *mut i32, // [goals_a, goals_b, wins_a, wins_b, shots_a, shots_b, owngoals_a]
 ) -> i32 {
     if bytes_ptr.is_null() || bytes_len == 0 || out_metrics.is_null() {
@@ -742,17 +857,26 @@ pub unsafe extern "C" fn rl_eval_policy(
         return 0;
     };
     let pol = Arc::new(pol);
-    let arena = ARENAS[arena_idx.min(ARENAS.len() - 1)];
+    let n_exp = ARENAS.len() - EXPERIMENTAL_ARENAS_START;
 
     let mut agg = [0i32; 7];
     thread::scope(|s| {
         let mut handles = Vec::with_capacity(num_matches);
         for m in 0..num_matches {
             let pol = Arc::clone(&pol);
+            let a_idx = if arena_idx == EVAL_ARENA_EXPERIMENTAL_CYCLE {
+                EXPERIMENTAL_ARENAS_START + (m % n_exp)
+            } else {
+                arena_idx.min(ARENAS.len() - 1)
+            };
+            let arena = ARENAS[a_idx];
             handles.push(s.spawn(move || {
                 let swap = m % 2 == 1;
                 let a_team: u8 = if swap { 1 } else { 0 };
                 let mut w = World::with_seed(arena, &ArenaOpts::default(), 5000 + m as u64);
+                if mayhem != 0 {
+                    w.powers = Some(PowerSystem::new(10.0));
+                }
                 let mut id = 0usize;
                 let mut a_cars = Vec::new();
                 for team in [0u8, 1u8] {

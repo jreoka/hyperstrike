@@ -39,13 +39,14 @@ CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
 LATEST_PT = CKPT_DIR / "latest.pt"
 BEST_PT = CKPT_DIR / "best.pt"
 
-ARCH_TAG = "rope_transformer_v1"
+ARCH_TAG = "rope_transformer_v2"
 POLICY_MAGIC = b"HSP2"
 
-OBS_DIM = 100
-ACT_BRANCHES = (3, 5, 3, 3, 3, 2, 2, 2)
+OBS_DIM = 146
+ACT_BRANCHES = (3, 5, 3, 3, 3, 2, 2, 2, 2)
 ACT_HEADS = len(ACT_BRANCHES)
 TOTAL_LOGITS = sum(ACT_BRANCHES)
+EVAL_ARENA_EXPERIMENTAL_CYCLE = 99
 
 # Causal RoPE Transformer hyperparameters
 ACTOR_D_MODEL = 128
@@ -127,6 +128,7 @@ def build_and_load_dll() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_size_t,
+        ctypes.c_uint8,
         ctypes.POINTER(ctypes.c_int32),
     ]
     lib.rl_eval_policy.restype = ctypes.c_int
@@ -487,7 +489,16 @@ def export_hsp2(actor: ActorNet) -> bytes:
     return bytes(buf)
 
 
-def eval_against(lib: ctypes.CDLL, model_bytes: bytes, opp_diff: int, team_size: int = 1, matches: int = 6, secs: float = 180.0, arena: int = 0):
+def eval_against(
+    lib: ctypes.CDLL,
+    model_bytes: bytes,
+    opp_diff: int,
+    team_size: int = 1,
+    matches: int = 6,
+    secs: float = 180.0,
+    arena: int = 0,
+    mayhem: int = 0,
+):
     arr = np.frombuffer(model_bytes, dtype=np.uint8)
     metrics = np.zeros(7, dtype=np.int32)
     ok = lib.rl_eval_policy(
@@ -498,6 +509,7 @@ def eval_against(lib: ctypes.CDLL, model_bytes: bytes, opp_diff: int, team_size:
         matches,
         secs,
         arena,
+        mayhem,
         metrics.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
     )
     assert ok == 1, "rl_eval_policy failed to parse HSP2 bytes"
@@ -513,24 +525,35 @@ def eval_against(lib: ctypes.CDLL, model_bytes: bytes, opp_diff: int, team_size:
 
 
 def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
-    e_chp1 = eval_against(lib, model_bytes, opp_diff=3, team_size=1, matches=4, secs=180.0, arena=0)
-    e_leg1 = eval_against(lib, model_bytes, opp_diff=4, team_size=1, matches=6, secs=180.0, arena=0)
-    e_mpc1 = eval_against(lib, model_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=0)
-    e_leg2 = eval_against(lib, model_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0)
-    e_mpc2 = eval_against(lib, model_bytes, opp_diff=5, team_size=2, matches=4, secs=180.0, arena=0)
+    e_chp1 = eval_against(lib, model_bytes, opp_diff=3, team_size=1, matches=4, secs=180.0, arena=0, mayhem=0)
+    e_leg1 = eval_against(lib, model_bytes, opp_diff=4, team_size=1, matches=6, secs=180.0, arena=0, mayhem=0)
+    e_mpc1 = eval_against(lib, model_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=0, mayhem=0)
+    e_leg2 = eval_against(lib, model_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0, mayhem=0)
+    e_mpc2 = eval_against(lib, model_bytes, opp_diff=5, team_size=2, matches=4, secs=180.0, arena=0, mayhem=0)
+    e_exp1 = eval_against(
+        lib, model_bytes, opp_diff=5, team_size=1, matches=6, secs=180.0, arena=EVAL_ARENA_EXPERIMENTAL_CYCLE, mayhem=0
+    )
+    e_may1 = eval_against(lib, model_bytes, opp_diff=5, team_size=1, matches=4, secs=180.0, arena=0, mayhem=1)
+    e_may2 = eval_against(lib, model_bytes, opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0, mayhem=1)
 
     gd_chp1 = e_chp1["goals_a"] - e_chp1["goals_b"]
     gd_leg1 = e_leg1["goals_a"] - e_leg1["goals_b"]
     gd_mpc1 = e_mpc1["goals_a"] - e_mpc1["goals_b"]
     gd_leg2 = e_leg2["goals_a"] - e_leg2["goals_b"]
     gd_mpc2 = e_mpc2["goals_a"] - e_mpc2["goals_b"]
+    gd_exp1 = e_exp1["goals_a"] - e_exp1["goals_b"]
+    gd_may1 = e_may1["goals_a"] - e_may1["goals_b"]
+    gd_may2 = e_may2["goals_a"] - e_may2["goals_b"]
     score = (
         gd_mpc1 * 2.5
         + gd_mpc2 * 2.5
+        + gd_exp1 * 1.5
+        + gd_may1 * 1.5
+        + gd_may2 * 1.0
         + gd_leg1 * 1.0
         + gd_leg2 * 1.0
         + gd_chp1 * 0.5
-        - (e_mpc1["owngoals_a"] + e_mpc2["owngoals_a"]) * 3.0
+        - (e_mpc1["owngoals_a"] + e_mpc2["owngoals_a"] + e_exp1["owngoals_a"] + e_may1["owngoals_a"]) * 3.0
     )
     return {
         "chp1": e_chp1,
@@ -538,6 +561,9 @@ def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
         "mpc1": e_mpc1,
         "leg2": e_leg2,
         "mpc2": e_mpc2,
+        "exp1": e_exp1,
+        "may1": e_may1,
+        "may2": e_may2,
         "score": float(score),
     }
 
@@ -625,8 +651,36 @@ def format_eval(upd: int, stage: int, total_steps: int, ev: dict) -> str:
         f"1v1 MPC: {ev['mpc1']['goals_a']}-{ev['mpc1']['goals_b']} (W {ev['mpc1']['wins_a']}-{ev['mpc1']['wins_b']}) | "
         f"2v2 LEGEND: {ev['leg2']['goals_a']}-{ev['leg2']['goals_b']} | "
         f"2v2 MPC: {ev['mpc2']['goals_a']}-{ev['mpc2']['goals_b']} | "
+        f"1v1 LABS: {ev['exp1']['goals_a']}-{ev['exp1']['goals_b']} | "
+        f"1v1 MAYHEM: {ev['may1']['goals_a']}-{ev['may1']['goals_b']} | "
+        f"2v2 MAYHEM: {ev['may2']['goals_a']}-{ev['may2']['goals_b']} | "
         f"score={ev['score']:.1f}"
     )
+
+
+def is_compatible_ckpt(ck: dict) -> bool:
+    if ck.get("arch") != ARCH_TAG:
+        return False
+    cfg = ck.get("config", {})
+    return (
+        cfg.get("obs_dim") == OBS_DIM
+        and cfg.get("total_logits") == TOTAL_LOGITS
+        and cfg.get("actor_d_model") == ACTOR_D_MODEL
+        and cfg.get("actor_layers") == ACTOR_LAYERS
+        and cfg.get("actor_heads") == ACTOR_HEADS
+        and cfg.get("actor_ffn_dim") == ACTOR_FFN_DIM
+        and cfg.get("critic_d_model") == CRITIC_D_MODEL
+        and cfg.get("critic_layers") == CRITIC_LAYERS
+        and cfg.get("critic_heads") == CRITIC_HEADS
+        and cfg.get("critic_ffn_dim") == CRITIC_FFN_DIM
+    )
+
+
+def is_compatible_hsp2(blob: bytes) -> bool:
+    if len(blob) < 24 or blob[:4] != POLICY_MAGIC:
+        return False
+    obs_d, _d, _l, _h, _ffn, _ctx, out_d, _flags, _theta = struct.unpack("<HHHHHHHHf", blob[4:24])
+    return obs_d == OBS_DIM and out_d == TOTAL_LOGITS
 
 
 def main():
@@ -660,26 +714,43 @@ def main():
     deployed_best_score = -1e9
     snapshots: list[bytes] = []
 
-    # Protect any already-deployed live model from ever being overwritten by a weaker policy
+    # Protect any already-deployed compatible live model from ever being overwritten by a weaker policy
     if OUT_MODEL.exists() and OUT_MODEL.stat().st_size > 24:
         live_bytes = OUT_MODEL.read_bytes()
-        live_ev = evaluate_full(lib, live_bytes)
-        deployed_best_score = live_ev["score"]
-        snapshots.append(live_bytes)
-        print(
-            f"[init] live deployed {OUT_MODEL.name} benchmarked at score={deployed_best_score:.1f} "
-            f"(protected — will only overwrite if beaten)",
-            flush=True,
-        )
+        if is_compatible_hsp2(live_bytes):
+            live_ev = evaluate_full(lib, live_bytes)
+            deployed_best_score = live_ev["score"]
+            snapshots.append(live_bytes)
+            print(
+                f"[init] live deployed {OUT_MODEL.name} benchmarked at score={deployed_best_score:.1f} "
+                f"(protected — will only overwrite if beaten)",
+                flush=True,
+            )
+        else:
+            print(
+                f"[init] ignoring incompatible legacy {OUT_MODEL.name} (expected obs={OBS_DIM}, logits={TOTAL_LOGITS})",
+                flush=True,
+            )
 
     # Check best.pt threshold so best.pt can never be downgraded either
     if BEST_PT.exists():
         bck = torch.load(BEST_PT, map_location="cpu", weights_only=True)
-        best_score = float(bck.get("best_score", bck.get("score", -1e9)))
-        deployed_best_score = max(deployed_best_score, best_score)
+        if is_compatible_ckpt(bck):
+            best_score = float(bck.get("best_score", bck.get("score", -1e9)))
+            deployed_best_score = max(deployed_best_score, best_score)
+        else:
+            print(f"[init] ignoring incompatible legacy {BEST_PT.name}", flush=True)
 
-    # Auto-resume from latest.pt (or best.pt)
-    resume_path = LATEST_PT if LATEST_PT.exists() else (BEST_PT if BEST_PT.exists() else None)
+    # Auto-resume from latest.pt (or best.pt) if compatible
+    resume_path = None
+    for cand_path in (LATEST_PT, BEST_PT):
+        if cand_path.exists():
+            cand_ck = torch.load(cand_path, map_location="cpu", weights_only=True)
+            if is_compatible_ckpt(cand_ck):
+                resume_path = cand_path
+                break
+            print(f"[init] skipping incompatible legacy {cand_path.name}", flush=True)
+
     if resume_path is not None:
         ck = torch.load(resume_path, map_location=device, weights_only=True)
         actor.load_state_dict(ck["actor"])
@@ -703,19 +774,23 @@ def main():
         print(format_eval(upd, stage, total_env_steps, init_ev), flush=True)
     else:
         snapshots.append(export_hsp2(actor))
-        print("[init] no checkpoints found — starting completely from scratch (Stage 0: GENESIS)", flush=True)
+        print("[init] no compatible checkpoints found — starting completely from scratch (Stage 0: GENESIS)", flush=True)
 
-    # Also seed league with best.pt if it differs from latest.pt
+    # Also seed league with best.pt if it is compatible
     if BEST_PT.exists():
-        tmp_actor = ActorNet()
         bck = torch.load(BEST_PT, map_location="cpu", weights_only=True)
-        tmp_actor.load_state_dict(bck["actor"])
-        snapshots.append(export_hsp2(tmp_actor))
+        if is_compatible_ckpt(bck):
+            tmp_actor = ActorNet()
+            tmp_actor.load_state_dict(bck["actor"])
+            snapshots.append(export_hsp2(tmp_actor))
 
     def make_checkpoint_payload(cur_score: float) -> dict:
         return {
             "arch": ARCH_TAG,
             "config": {
+                "obs_dim": OBS_DIM,
+                "act_branches": list(ACT_BRANCHES),
+                "total_logits": TOTAL_LOGITS,
                 "actor_d_model": ACTOR_D_MODEL,
                 "actor_layers": ACTOR_LAYERS,
                 "actor_heads": ACTOR_HEADS,

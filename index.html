@@ -9206,9 +9206,9 @@ function simulateStrike(pl, car, ball, now, w, ad, sc, savant = false, save = fa
 const _noCars = [];
 
 // ----- SAVANT Quantized Causal RoPE Transformer Policy (HSP2, mirrors rust/sim/src/policy.rs) -----
-const SAVANT_OBS_DIM = 100;
-const SAVANT_BRANCHES = [3, 5, 3, 3, 3, 2, 2, 2];
-const SAVANT_TOTAL_LOGITS = 23;
+const SAVANT_OBS_DIM = 146;
+const SAVANT_BRANCHES = [3, 5, 3, 3, 3, 2, 2, 2, 2];
+const SAVANT_TOTAL_LOGITS = 25;
 const SAVANT_TICK_SKIP = 4;
 const _savObs = new Float32Array(SAVANT_OBS_DIM);
 const _savV1 = new V3(), _savV2 = new V3();
@@ -9286,7 +9286,7 @@ class SavantPolicyJS {
     this.cos = new Float32Array(this.halfDim);
     this.sin = new Float32Array(this.halfDim);
     this.logits = new Float32Array(SAVANT_TOTAL_LOGITS);
-    this.act = new Uint8Array(8);
+    this.act = new Uint8Array(SAVANT_BRANCHES.length);
   }
   newCache() {
     const total = this.nLayers * this.ctxLen * this.dModel;
@@ -9386,7 +9386,7 @@ class SavantPolicyJS {
   actGreedy(obs, cache) {
     this.forwardStep(obs, cache);
     let off = 0;
-    for (let h = 0; h < 8; h++) {
+    for (let h = 0; h < SAVANT_BRANCHES.length; h++) {
       const n = SAVANT_BRANCHES[h];
       let bi = 0, bv = -1e30;
       for (let i = 0; i < n; i++) { const v = this.logits[off + i]; if (v > bv) { bv = v; bi = i; } }
@@ -9466,9 +9466,16 @@ function extractSavantObs(w, car, prevCtl, out) {
     push(mate.boost / 100); push(mateD < myBD ? 1 : 0); push(1);
   } else { for (let i = 0; i < 12; i++) push(0); }
   // 5. Goals, arena, pads (14)
-  car.basis.toLocal(_savV1.set(0, 2, -flip * glz).sub(car.pos).normalize(), _savV2);
+  let ownGx = 0, ownGz = -flip * glz, oppGx = 0, oppGz = flip * glz, hasAltOpp = false, altOppGx = 0, altOppGz = 0;
+  if (shape.splitGoal) {
+    const sg = shape.splitGoal, sx = b.pos.x >= 0 ? 1 : -1;
+    ownGx = sx * sg.gx; ownGz = -flip * sg.gz;
+    oppGx = sx * sg.gx; oppGz = flip * sg.gz;
+    hasAltOpp = true; altOppGx = -sx * sg.gx; altOppGz = flip * sg.gz;
+  }
+  car.basis.toLocal(_savV1.set(ownGx, 2, ownGz).sub(car.pos).normalize(), _savV2);
   push(_savV2.x); push(_savV2.y); push(_savV2.z);
-  car.basis.toLocal(_savV1.set(0, 2, flip * glz).sub(car.pos).normalize(), _savV2);
+  car.basis.toLocal(_savV1.set(oppGx, 2, oppGz).sub(car.pos).normalize(), _savV2);
   push(_savV2.x); push(_savV2.y); push(_savV2.z);
   push(shape.gw / 10); push(w.kickoff ? 1 : 0); push(shape.dist(car.pos.x, car.pos.y, car.pos.z) / 10);
   let bestBig = null, bigD = 1e9, bestAny = null, anyD = 1e9;
@@ -9486,12 +9493,83 @@ function extractSavantObs(w, car, prevCtl, out) {
   _savV1.copy(b.pos).sub(car.pos);
   const bdist = _savV1.length();
   if (bdist > 1e-4) _savV1.multiplyScalar(1 / bdist); else _savV1.copy(car.basis.f);
-  _savV2.set(0, 2, flip * glz).sub(b.pos).normalize();
+  _savV2.set(oppGx, 2, oppGz).sub(b.pos).normalize();
   push(car.speed / 23);
   push(bdist / 80);
   push(car.basis.f.dot(_savV1));
   push(car.basis.r.dot(_savV1));
   push(_savV1.dot(_savV2));
+  // 7. Experimental / Labs arena geometry (10)
+  push(shape.fig8 ? 1 : 0);
+  push(shape.goalMode === 'standalone' ? 1 : 0);
+  push(shape.goalMode === 'split' ? 1 : 0);
+  push(glz / Math.max(1, shape.L));
+  push(shape.W / 45);
+  push(shape.L / 55);
+  if (hasAltOpp) {
+    car.basis.toLocal(_savV1.set(altOppGx, 2, altOppGz).sub(car.pos).normalize(), _savV2);
+    push(_savV2.x); push(_savV2.z);
+  } else { push(0); push(0); }
+  push(shape.wallDist2D(car.pos.x, car.pos.z) / 20);
+  push(shape.wallDist2D(b.pos.x, b.pos.z) / 20);
+  // 8. Mayhem mode & power-up state (36; all 0 in standard matches)
+  const pw = w.powers;
+  if (pw) {
+    push(1);
+    for (let i = 0; i < POWERS.length; i++) push(car.item === POWERS[i].id ? 1 : 0);
+    const tgt = car.item ? pw.targetFor(car, car.item) : null;
+    const canFire = (b.stuckTo === car || !!tgt) ? 1 : 0;
+    push(canFire);
+    push(!car.item ? clamp((car.itemNext || 0) / 10, 0, 1) : 0);
+    push(car.prevItem ? 1 : 0);
+    let tgtDist = 0;
+    if (tgt === b) tgtDist = Math.min(1, b.pos.distanceTo(car.pos) / 80);
+    else if (tgt && tgt !== true && tgt.pos) tgtDist = Math.min(1, tgt.pos.distanceTo(car.pos) / 60);
+    push(tgtDist);
+    // Self active power timers (7)
+    push(clamp((car.spikeT || 0) / 7.5, 0, 1));
+    push(clamp((car.magT || 0) / 6.0, 0, 1));
+    push(clamp((car.ovT || 0) / 8.0, 0, 1));
+    push(clamp((car.nitroT || 0) / 5.0, 0, 1));
+    push(clamp((car.scrT || 0) / 4.5, 0, 1));
+    push(clamp((car.tornT || 0) / 6.5, 0, 1));
+    push(clamp((car.hookT || 0) / 0.2, 0, 1));
+    // Ball power state (5)
+    push(b.stuckTo === car ? 1 : 0);
+    push(b.stuckTo && b.stuckTo !== car && b.stuckTo.team === car.team ? 1 : 0);
+    push(b.stuckTo && b.stuckTo.team !== car.team ? 1 : 0);
+    push(clamp((b.iceT || 0) / 3.2, 0, 1));
+    push(clamp((b.antiT || 0) / 6.0, 0, 1));
+    // Nearest other tornado (3)
+    let bestTorn = null, tornD2 = 1e18;
+    for (let i = 0; i < pw.tornados.length; i++) {
+      const t = pw.tornados[i]; if (t.owner === car) continue;
+      const d2 = car.pos.distanceToSquared(t.pos);
+      if (d2 < tornD2) { tornD2 = d2; bestTorn = t; }
+    }
+    if (bestTorn) {
+      car.basis.toLocal(_savV1.copy(bestTorn.pos).sub(car.pos), _savV2);
+      push(_savV2.x / 40); push(_savV2.z / 40); push(1);
+    } else { push(0); push(0); push(0); }
+    // Opponent active danger + swap charge signal (2)
+    let oppDanger = 0;
+    for (let i = 0; i < w.cars.length; i++) {
+      const o = w.cars[i];
+      if (o.team !== car.team && !o.demolished && ((o.ovT || 0) > 0 || (o.spikeT || 0) > 0 || (o.tornT || 0) > 0)) { oppDanger = 1; break; }
+    }
+    push(oppDanger);
+    let swapSig = 0;
+    for (let i = 0; i < pw.shots.length; i++) {
+      const s = pw.shots[i];
+      if (s.kind === 'swap') {
+        if (s.from === car) { swapSig = 1; break; }
+        else if (s.to === car) { swapSig = -1; }
+      }
+    }
+    push(swapSig);
+  } else {
+    for (let i = 0; i < 36; i++) push(0);
+  }
 }
 function applySavantAction(act, out) {
   out.throttle = act[0] === 0 ? -1 : (act[0] === 2 ? 1 : 0);
@@ -9503,7 +9581,7 @@ function applySavantAction(act, out) {
   out.boost = act[6] !== 0;
   out.handbrake = act[7] !== 0;
   out.airRollFree = false;
-  out.item = false;
+  out.item = act[8] !== 0;
 }
 
 class BotAI {
@@ -9562,8 +9640,8 @@ class BotAI {
     return this.isChamp ? (aReq < PHYS.boostAcc * 0.92 && fuel < car.boost - 2) : (aReq < PHYS.boostAcc * 0.85 && fuel < car.boost - 5);
   }
   update(dt, w) {
-    this.updateCore(dt, w);
-    if (w.powers && !this.car.demolished && !w.kickoff) this.useItems(dt, w);
+    const usedPolicy = this.updateCore(dt, w);
+    if (!usedPolicy && w.powers && !this.car.demolished && !w.kickoff) this.useItems(dt, w);
   }
   useItems(dt, w) {
     const car = this.car, c = car.controls, ball = w.ball, s = w.shape, ad = this.attackDir, savant = this.isSavant;
@@ -9648,12 +9726,11 @@ class BotAI {
   updateCore(dt, w) {
     const car = this.car, c = car.controls; this.now = w.time;
     c.throttle = 0; c.steer = 0; c.pitch = 0; c.yaw = 0; c.roll = 0; c.jump = false; c.boost = false; c.handbrake = false; c.airRollFree = false; c.item = false;
-    if (car.demolished) { this.policyRem = 0; if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; } return; }
+    if (car.demolished) { this.policyRem = 0; if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; } return false; }
     this.decideT -= dt;
     if (this.decideT <= 0) { this.decideT = this.d.react * (0.7 + Math.random() * 0.6); this.decide(w); }
-    const powerCalm = !w.powers || (!w.powers.tornados.length && !w.powers.shots.length);
     let usedPolicy = false;
-    if (this.isSavant && !this.forceMpc && !w.kickoff && w.cars.length <= 4 && this.mode === 'attack' && !this.aer && !this.seq && _savantPolicy && w.shape.goalMode === 'standard' && !w.shape.fig8 && !w.ball.stuckTo && !w.ball.frozen && powerCalm) {
+    if (this.isSavant && !this.forceMpc && !w.kickoff && w.cars.length <= 4 && this.mode === 'attack' && !this.aer && !this.seq && _savantPolicy && !w.ball.frozen) {
       const ad = this.attackDir, glz = w.shape.goalLineZ();
       if ((w.ball.pos.z * ad) > -glz * 0.35 && car.pos.distanceTo(w.ball.pos) < 11) {
         if (this.d.plan > 0 && w.time >= this.strikeNext) { this.strikeNext = w.time + this.d.plan; this.planStrike(w, false); }
@@ -9672,27 +9749,28 @@ class BotAI {
         }
       }
     }
-    if (usedPolicy) return;
+    if (usedPolicy) return true;
     if (this.policyRem > 0 || (this.policyCache && this.policyCache.len > 0)) {
       this.policyRem = 0;
       if (this.policyCache) { this.policyCache.pos = 0; this.policyCache.len = 0; }
     }
     // Landed on the roof (e.g. after a flip): press jump to roll back onto the wheels
     if (this.d.fix >= 0.5 && car.contacts === 0 && car.bodyContact && car.basis.u.y < 0.5 && car.pos.y < 1.4 && car.vel.y < 2 && !this.aer) {
-      this.seq = null; c.jump = !car.prevJump; c.throttle = 1; return;
+      this.seq = null; c.jump = !car.prevJump; c.throttle = 1; return false;
     }
     if (this.strike && this.strike.seqT0 !== null) {
-      if (w.time - this.strike.seqT0 < 0.7) { strikeControls(this.strike, car, w.ball.pos, w.time, c); return; }
+      if (w.time - this.strike.seqT0 < 0.7) { strikeControls(this.strike, car, w.ball.pos, w.time, c); return false; }
       this.strike = null;
     }
-    if (this.aer) { this.flyAerial(dt, w); return; }
-    if (this.seq) { this.runSeq(dt, w); return; }
-    if (!car.onGround && car.contacts === 0) { this.recover(dt, w); return; }
-    if (car.bodyContact && car.contacts < 2) { c.jump = Math.random() < 0.35; c.throttle = 1; return; }
-    if (this.unstuck > 0) { this.unstuck -= dt; c.throttle = -1; c.steer = this.unstuckSteer; return; }
+    if (this.aer) { this.flyAerial(dt, w); return false; }
+    if (this.seq) { this.runSeq(dt, w); return false; }
+    if (!car.onGround && car.contacts === 0) { this.recover(dt, w); return false; }
+    if (car.bodyContact && car.contacts < 2) { c.jump = Math.random() < 0.35; c.throttle = 1; return false; }
+    if (this.unstuck > 0) { this.unstuck -= dt; c.throttle = -1; c.steer = this.unstuckSteer; return false; }
     this.act(dt, w);
     if (Math.abs(c.throttle) > 0.5 && car.vel.length() < 1.2 && car.onGround) { this.stuckT += dt; if (this.stuckT > 0.6) { this.stuckT = 0; this.unstuck = 0.85; this.unstuckSteer = -(Math.sign(c.steer) || 1); } }
     else this.stuckT = 0;
+    return false;
   }
   decide(w) {
     const car = this.car, ball = w.ball;

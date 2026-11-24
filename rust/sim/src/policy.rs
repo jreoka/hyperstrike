@@ -10,12 +10,13 @@ use glam::DVec3;
 
 use crate::arena::GoalMode;
 use crate::math_ext::{Controls, ThreeVec3Ext, clamp};
+use crate::powers::{POWERS, PowerTarget, ShotTarget};
 use crate::world::World;
 
-pub const OBS_DIM: usize = 100;
-pub const ACT_HEADS: usize = 8;
-pub const ACT_BRANCHES: [usize; ACT_HEADS] = [3, 5, 3, 3, 3, 2, 2, 2];
-pub const TOTAL_LOGITS: usize = 23;
+pub const OBS_DIM: usize = 146;
+pub const ACT_HEADS: usize = 9;
+pub const ACT_BRANCHES: [usize; ACT_HEADS] = [3, 5, 3, 3, 3, 2, 2, 2, 2];
+pub const TOTAL_LOGITS: usize = 25;
 /// Decision period in 120 Hz physics ticks (4 ticks = 30 Hz = 33.3 ms per action).
 pub const POLICY_TICK_SKIP: u64 = 4;
 
@@ -37,7 +38,8 @@ fn canon_vec(v: DVec3, flip: f64) -> DVec3 {
     DVec3::new(v.x * flip, v.y, v.z * flip)
 }
 
-/// Extracts the 100-float team-symmetric observation vector for `car_idx`.
+/// Extracts the 146-float team-symmetric observation vector for `car_idx`
+/// (covers standard arenas, experimental Labs arenas, and Mayhem power-ups).
 pub fn extract_obs(w: &World, car_idx: usize, prev_ctl: &Controls, out: &mut [f32; OBS_DIM]) {
     out.fill(0.0);
     let car = &w.cars[car_idx];
@@ -220,8 +222,20 @@ pub fn extract_obs(w: &World, car_idx: usize, prev_ctl: &Controls, out: &mut [f3
     }
 
     // 5. Goals, arena & nearest active boost pads (14 floats)
-    let own_g = DVec3::new(0.0, 2.0, -flip * glz);
-    let opp_g = DVec3::new(0.0, 2.0, flip * glz);
+    let (own_g, opp_g, alt_opp_g) = if let Some(sg) = shape.split_goal {
+        let sx = if w.ball.pos.x >= 0.0 { 1.0 } else { -1.0 };
+        (
+            DVec3::new(sx * sg.gx, 2.0, -flip * sg.gz),
+            DVec3::new(sx * sg.gx, 2.0, flip * sg.gz),
+            Some(DVec3::new(-sx * sg.gx, 2.0, flip * sg.gz)),
+        )
+    } else {
+        (
+            DVec3::new(0.0, 2.0, -flip * glz),
+            DVec3::new(0.0, 2.0, flip * glz),
+            None,
+        )
+    };
     let loc_own = car.basis.to_local((own_g - car.pos).three_normalize());
     let loc_opp = car.basis.to_local((opp_g - car.pos).three_normalize());
     push(loc_own.x);
@@ -282,6 +296,120 @@ pub fn extract_obs(w: &World, car_idx: usize, prev_ctl: &Controls, out: &mut [f3
     push(car.basis.r.dot(to_ball_n));
     push(to_ball_n.dot(ball_to_opp_g));
 
+    // 7. Experimental / Labs arena geometry (10 floats)
+    push(if shape.fig8.is_some() { 1.0 } else { 0.0 });
+    push(if shape.goal_mode == GoalMode::Standalone { 1.0 } else { 0.0 });
+    push(if shape.goal_mode == GoalMode::Split { 1.0 } else { 0.0 });
+    push(glz / shape.l.max(1.0));
+    push(shape.w / 45.0);
+    push(shape.l / 55.0);
+    if let Some(alt_g) = alt_opp_g {
+        let loc_alt = car.basis.to_local((alt_g - car.pos).three_normalize());
+        push(loc_alt.x);
+        push(loc_alt.z);
+    } else {
+        push(0.0);
+        push(0.0);
+    }
+    push(shape.wall_dist_2d(car.pos.x, car.pos.z) / 20.0);
+    push(shape.wall_dist_2d(w.ball.pos.x, w.ball.pos.z) / 20.0);
+
+    // 8. Mayhem mode & power-up state (36 floats; all 0.0 in standard matches)
+    if let Some(pw) = w.powers.as_ref() {
+        push(1.0);
+        for pdef in &POWERS {
+            push(if car.item == Some(pdef.id) { 1.0 } else { 0.0 });
+        }
+        let tgt = car
+            .item
+            .and_then(|id| pw.target_for(car_idx, id, &w.cars, &w.ball));
+        let can_fire = w.ball.stuck_to == Some(car_idx) || tgt.is_some();
+        push(if can_fire { 1.0 } else { 0.0 });
+        push(if car.item.is_none() {
+            clamp(car.item_next / 10.0, 0.0, 1.0)
+        } else {
+            0.0
+        });
+        push(if car.prev_item { 1.0 } else { 0.0 });
+        let tgt_dist = match tgt {
+            Some(PowerTarget::Ball) => (w.ball.pos.distance(car.pos) / 80.0).min(1.0),
+            Some(PowerTarget::Enemy(ei)) => (w.cars[ei].pos.distance(car.pos) / 60.0).min(1.0),
+            _ => 0.0,
+        };
+        push(tgt_dist);
+
+        // Self active power timers (7)
+        push(clamp(car.spike_t / 7.5, 0.0, 1.0));
+        push(clamp(car.mag_t / 6.0, 0.0, 1.0));
+        push(clamp(car.ov_t / 8.0, 0.0, 1.0));
+        push(clamp(car.nitro_t / 5.0, 0.0, 1.0));
+        push(clamp(car.scr_t / 4.5, 0.0, 1.0));
+        push(clamp(car.torn_t / 6.5, 0.0, 1.0));
+        push(clamp(car.hook_t / 0.2, 0.0, 1.0));
+
+        // Ball power state (5)
+        let stuck_self = w.ball.stuck_to == Some(car_idx);
+        let stuck_mate = w
+            .ball
+            .stuck_to
+            .is_some_and(|si| si != car_idx && w.cars[si].team == car.team);
+        let stuck_opp = w
+            .ball
+            .stuck_to
+            .is_some_and(|si| w.cars[si].team != car.team);
+        push(if stuck_self { 1.0 } else { 0.0 });
+        push(if stuck_mate { 1.0 } else { 0.0 });
+        push(if stuck_opp { 1.0 } else { 0.0 });
+        push(clamp(w.ball.ice_t / 3.2, 0.0, 1.0));
+        push(clamp(w.ball.anti_t / 6.0, 0.0, 1.0));
+
+        // Nearest other tornado (3)
+        let mut best_torn: Option<(DVec3, f64)> = None;
+        for t in &pw.tornados {
+            if t.owner == car_idx {
+                continue;
+            }
+            let d2 = car.pos.distance_squared(t.pos);
+            if best_torn.is_none_or(|(_, bd)| d2 < bd) {
+                best_torn = Some((t.pos, d2));
+            }
+        }
+        if let Some((tp, _)) = best_torn {
+            let lt = car.basis.to_local(tp - car.pos);
+            push(lt.x / 40.0);
+            push(lt.z / 40.0);
+            push(1.0);
+        } else {
+            push(0.0);
+            push(0.0);
+            push(0.0);
+        }
+
+        // Opponent active danger + swap charge signal (2)
+        let opp_danger = w.cars.iter().any(|o| {
+            o.team != car.team
+                && !o.demolished
+                && (o.ov_t > 0.0 || o.spike_t > 0.0 || o.torn_t > 0.0)
+        });
+        push(if opp_danger { 1.0 } else { 0.0 });
+        let mut swap_sig = 0.0;
+        for s in &pw.shots {
+            if s.kind == "swap" {
+                if s.from == car_idx {
+                    swap_sig = 1.0;
+                    break;
+                } else if s.to == ShotTarget::Car(car_idx) {
+                    swap_sig = -1.0;
+                }
+            }
+        }
+        push(swap_sig);
+    } else {
+        for _ in 0..36 {
+            push(0.0);
+        }
+    }
+
     let _ = prev_ctl;
     debug_assert_eq!(k, OBS_DIM);
 }
@@ -300,7 +428,7 @@ pub fn decode_action(act: &[u8; ACT_HEADS]) -> Controls {
         boost: act[6] != 0,
         handbrake: act[7] != 0,
         air_roll_free: false,
-        item: false,
+        item: act[8] != 0,
     }
 }
 
@@ -332,6 +460,7 @@ pub fn encode_action(c: &Controls) -> [u8; ACT_HEADS] {
         u8::from(c.jump),
         u8::from(c.boost),
         u8::from(c.handbrake),
+        u8::from(c.item),
     ]
 }
 
@@ -813,15 +942,11 @@ pub fn embedded_savant_policy() -> Option<&'static SavantPolicy> {
 }
 
 /// Returns true if the arena shape and match state are supported by the trained neural policy.
+/// Trained across all standard arenas, experimental Labs arenas (Figure-8, Standalone, Split-Goal),
+/// and Mayhem power-up matches — only paused while the ball is frozen for countdown/goal replay.
 #[inline]
 pub fn policy_supports_world(w: &World) -> bool {
-    w.shape.goal_mode == GoalMode::Standard
-        && w.shape.fig8.is_none()
-        && w.ball.stuck_to.is_none()
-        && !w.ball.frozen
-        && w.powers
-            .as_ref()
-            .is_none_or(|p| p.tornados.is_empty() && p.shots.is_empty())
+    !w.ball.frozen
 }
 
 #[cfg(test)]
@@ -965,5 +1090,56 @@ mod tests {
         let mut bad = make_synthetic_hsp2(32, 2, 4, 64, 8, 100.0);
         bad[3] = b'X';
         assert!(SavantPolicy::from_bytes(&bad).is_none());
+    }
+
+    #[test]
+    fn obs_and_action_handle_experimental_arenas_and_mayhem() {
+        use crate::arena::{ARENAS, ArenaOpts};
+        use crate::physics::Car;
+        use crate::powers::PowerSystem;
+
+        for arena_idx in [0usize, 18, 19, 20] {
+            let mut w = World::with_seed(ARENAS[arena_idx], &ArenaOpts::default(), 42 + arena_idx as u64);
+            w.powers = Some(PowerSystem::new(10.0));
+            let c0 = w.add_car(Car::new(0, 0, "A", 0));
+            let c1 = w.add_car(Car::new(1, 1, "B", 0));
+            w.cars[c0].place(4.0, 0.35, -10.0, 0.0);
+            w.cars[c1].place(-4.0, 0.35, 10.0, std::f64::consts::PI);
+            w.cars[c0].item = Some("punch");
+            w.cars[c1].ov_t = 3.0;
+            w.ball.reset(2.0, 2.0, 0.0);
+            w.ball.ice_t = 1.5;
+            w.ball.anti_t = 2.0;
+
+            let mut obs = [0.0_f32; OBS_DIM];
+            extract_obs(&w, c0, &Controls::default(), &mut obs);
+            assert!(obs.iter().all(|v| v.is_finite()));
+            // Mayhem active flag
+            assert_eq!(obs[110], 1.0);
+            // Experimental arena flags
+            assert_eq!(obs[100], if arena_idx == 18 { 1.0 } else { 0.0 });
+            assert_eq!(obs[101], if arena_idx == 19 { 1.0 } else { 0.0 });
+            assert_eq!(obs[102], if arena_idx == 20 { 1.0 } else { 0.0 });
+            assert!(policy_supports_world(&w));
+        }
+
+        let ctl = Controls {
+            throttle: 1.0,
+            steer: -0.5,
+            pitch: 1.0,
+            yaw: -1.0,
+            roll: 0.0,
+            jump: true,
+            boost: true,
+            handbrake: false,
+            air_roll_free: false,
+            item: true,
+        };
+        let enc = encode_action(&ctl);
+        let dec = decode_action(&enc);
+        assert!(dec.item);
+        assert!(dec.jump);
+        assert!(dec.boost);
+        assert!(!dec.handbrake);
     }
 }
