@@ -7,7 +7,8 @@ Just run:
 Everything is handled automatically:
 - Causal RoPE Transformer (Pre-RMSNorm + RoPE sliding-window attention + SwiGLU FFN) for both Actor and Critic.
 - Exact zero-skew streaming KV-cache rollouts + prefix-padded sliding-window chunked PPO updates.
-- Pure from-scratch raw-button RL (no imitation / BC warmstart).
+- Pure from-scratch raw-button RL (no imitation / BC warmstart): 0.1-granular
+  analog-resolution axes (21 levels each) + binary buttons.
 - Auto-resumes from `checkpoints/latest.pt` (or `best.pt`) if present.
 - Auto-detects & auto-advances curriculum stages (Genesis -> Rising -> Competitive -> Apex).
 - Trains forever until you press Ctrl+C (safely saves `latest.pt` on Ctrl+C).
@@ -41,11 +42,14 @@ CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
 LATEST_PT = CKPT_DIR / "latest.pt"
 BEST_PT = CKPT_DIR / "best.pt"
 
-ARCH_TAG = "rope_transformer_v2"
+ARCH_TAG = "rope_transformer_v3"
 POLICY_MAGIC = b"HSP2"
 
 OBS_DIM = 146
-ACT_BRANCHES = (3, 5, 3, 3, 3, 2, 2, 2, 2)
+# Fine-grained action space: throttle/steer/pitch/yaw/roll are 21-level axes
+# (uniform 0.1 steps across [-1, 1], i.e. analog-thumbstick resolution),
+# then jump/boost/handbrake/item are binary.
+ACT_BRANCHES = (21, 21, 21, 21, 21, 2, 2, 2, 2)
 ACT_HEADS = len(ACT_BRANCHES)
 TOTAL_LOGITS = sum(ACT_BRANCHES)
 EVAL_ARENA_EXPERIMENTAL_CYCLE = 99

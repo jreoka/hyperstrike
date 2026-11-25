@@ -15,8 +15,20 @@ use crate::world::World;
 
 pub const OBS_DIM: usize = 146;
 pub const ACT_HEADS: usize = 9;
-pub const ACT_BRANCHES: [usize; ACT_HEADS] = [3, 5, 3, 3, 3, 2, 2, 2, 2];
-pub const TOTAL_LOGITS: usize = 25;
+/// Per-head action branch sizes: `throttle, steer, pitch, yaw, roll` are fine-grained
+/// 21-level axes (uniform 0.1 steps across [-1, 1], analog-thumbstick resolution);
+/// `jump, boost, handbrake, item` are binary.
+pub const ACT_BRANCHES: [usize; ACT_HEADS] = [21, 21, 21, 21, 21, 2, 2, 2, 2];
+/// Sum of `ACT_BRANCHES` (derived so the three can never drift apart).
+pub const TOTAL_LOGITS: usize = {
+    let mut total = 0usize;
+    let mut i = 0usize;
+    while i < ACT_HEADS {
+        total += ACT_BRANCHES[i];
+        i += 1;
+    }
+    total
+};
 /// Decision period in 120 Hz physics ticks (4 ticks = 30 Hz = 33.3 ms per action).
 pub const POLICY_TICK_SKIP: u64 = 4;
 
@@ -27,9 +39,21 @@ const MAX_N_LAYERS: usize = 16;
 const MAX_FFN_DIM: usize = 2048;
 const MAX_CTX_LEN: usize = 128;
 
-const THROTTLE_VALS: [f64; 3] = [-1.0, 0.0, 1.0];
-const STEER_VALS: [f64; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
-const AXIS3_VALS: [f64; 3] = [-1.0, 0.0, 1.0];
+/// Uniform `n`-level bin spanning `[-1, 1]` (level 0 = -1, level n-1 = +1).
+#[inline]
+fn axis_val(idx: usize, n: usize) -> f64 {
+    let n = n.max(2);
+    let i = idx.min(n - 1) as f64;
+    -1.0 + 2.0 * i / (n - 1) as f64
+}
+
+/// Nearest bin for a continuous control value in `[-1, 1]`.
+#[inline]
+fn quantize_axis(v: f64, n: usize) -> u8 {
+    let n = n.max(2);
+    let i = ((clamp(v, -1.0, 1.0) + 1.0) * 0.5 * (n - 1) as f64).round() as i32;
+    i.clamp(0, n as i32 - 1) as u8
+}
 
 /// Canonicalize a world-space vector into team-attacking `+Z` frame (180° Y-rotation for team 1).
 /// Proper rotation (`det = +1`), so `car.basis.to_local(...)` is invariant without sign flips.
@@ -416,14 +440,12 @@ pub fn extract_obs(w: &World, car_idx: usize, prev_ctl: &Controls, out: &mut [f3
 
 #[inline]
 pub fn decode_action(act: &[u8; ACT_HEADS]) -> Controls {
-    let steer = STEER_VALS[(act[1] as usize).min(4)];
-    let yaw = AXIS3_VALS[(act[3] as usize).min(2)];
     Controls {
-        throttle: THROTTLE_VALS[(act[0] as usize).min(2)],
-        steer,
-        pitch: AXIS3_VALS[(act[2] as usize).min(2)],
-        yaw,
-        roll: AXIS3_VALS[(act[4] as usize).min(2)],
+        throttle: axis_val(act[0] as usize, ACT_BRANCHES[0]),
+        steer: axis_val(act[1] as usize, ACT_BRANCHES[1]),
+        pitch: axis_val(act[2] as usize, ACT_BRANCHES[2]),
+        yaw: axis_val(act[3] as usize, ACT_BRANCHES[3]),
+        roll: axis_val(act[4] as usize, ACT_BRANCHES[4]),
         jump: act[5] != 0,
         boost: act[6] != 0,
         handbrake: act[7] != 0,
@@ -433,30 +455,13 @@ pub fn decode_action(act: &[u8; ACT_HEADS]) -> Controls {
 }
 
 #[inline]
-fn quantize3(v: f64) -> u8 {
-    if v < -0.33 {
-        0
-    } else if v > 0.33 {
-        2
-    } else {
-        1
-    }
-}
-
-#[inline]
-fn quantize5(v: f64) -> u8 {
-    let idx = ((clamp(v, -1.0, 1.0) + 1.0) * 2.0).round() as i32;
-    idx.clamp(0, 4) as u8
-}
-
-#[inline]
 pub fn encode_action(c: &Controls) -> [u8; ACT_HEADS] {
     [
-        quantize3(c.throttle),
-        quantize5(c.steer),
-        quantize3(c.pitch),
-        quantize3(c.yaw),
-        quantize3(c.roll),
+        quantize_axis(c.throttle, ACT_BRANCHES[0]),
+        quantize_axis(c.steer, ACT_BRANCHES[1]),
+        quantize_axis(c.pitch, ACT_BRANCHES[2]),
+        quantize_axis(c.yaw, ACT_BRANCHES[3]),
+        quantize_axis(c.roll, ACT_BRANCHES[4]),
         u8::from(c.jump),
         u8::from(c.boost),
         u8::from(c.handbrake),
@@ -1141,5 +1146,19 @@ mod tests {
         assert!(dec.jump);
         assert!(dec.boost);
         assert!(!dec.handbrake);
+
+        // Fine-grained action space: 21-level (0.1-step) axes round-trip exactly.
+        assert_eq!(ACT_BRANCHES, [21, 21, 21, 21, 21, 2, 2, 2, 2]);
+        assert_eq!(TOTAL_LOGITS, 113);
+        for v in [-1.0, -0.7, -0.3, -0.1, 0.0, 0.1, 0.3, 0.7, 1.0] {
+            let enc = encode_action(&Controls { throttle: v, ..ctl });
+            let dec = decode_action(&enc);
+            assert!((dec.throttle - v).abs() < 1e-9, "throttle {v} -> {dec:?}");
+            assert!((dec.steer - ctl.steer).abs() < 1e-9);
+        }
+        // Max steering granularity is 0.1.
+        let lo = decode_action(&[0, 10, 10, 10, 10, 0, 0, 0, 0]);
+        let hi = decode_action(&[0, 11, 10, 10, 10, 0, 0, 0, 0]);
+        assert!((hi.steer - lo.steer - 0.1).abs() < 1e-9);
     }
 }

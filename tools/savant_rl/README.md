@@ -1,7 +1,7 @@
 # SAVANT Neural Policy Training (`savant_rl`)
 
 Zero-flag, pure from-scratch reinforcement learning for **SAVANT**.  
-The **Causal RoPE Transformer** (Pre-RMSNorm + Rotary Position Embedding sliding-window attention + SwiGLU FFN, exported to int8 `HSP2` format with O(1)-projection KV-cached inference in Rust and JS) gets raw controller access (`throttle`, `steer`, `pitch`, `yaw`, `roll`, `jump`, `boost`, `handbrake`, `item`) with zero imitation/BC warmstart and figures out how to play across **all standard arenas, experimental Labs arenas (`HYPERLOOP 8`, `THROWBACK CORE`, `TWIN VORTEX`), and Mayhem power-up mode** through multi-threaded Rust self-play + league RL on your CPU/GPU.
+The **Causal RoPE Transformer** (Pre-RMSNorm + Rotary Position Embedding sliding-window attention + SwiGLU FFN, exported to int8 `HSP2` format with O(1)-projection KV-cached inference in Rust and JS) gets raw controller access with **fine-grained analog-resolution axes** — `throttle`, `steer`, `pitch`, `yaw`, `roll` each quantized to **21 levels (uniform 0.1 steps across [-1, 1])** — plus binary `jump`, `boost`, `handbrake`, `item`, with zero imitation/BC warmstart and figures out how to play across **all standard arenas, experimental Labs arenas (`HYPERLOOP 8`, `THROWBACK CORE`, `TWIN VORTEX`), and Mayhem power-up mode** through multi-threaded Rust self-play + league RL on your CPU/GPU.
 
 ---
 

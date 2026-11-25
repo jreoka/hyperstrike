@@ -9207,8 +9207,10 @@ const _noCars = [];
 
 // ----- SAVANT Quantized Causal RoPE Transformer Policy (HSP2, mirrors rust/sim/src/policy.rs) -----
 const SAVANT_OBS_DIM = 146;
-const SAVANT_BRANCHES = [3, 5, 3, 3, 3, 2, 2, 2, 2];
-const SAVANT_TOTAL_LOGITS = 25;
+// Fine-grained action space (mirrors rust/sim/src/policy.rs): throttle/steer/pitch/yaw/roll
+// are 21-level axes (uniform 0.1 steps across [-1, 1]), then jump/boost/handbrake/item binary.
+const SAVANT_BRANCHES = [21, 21, 21, 21, 21, 2, 2, 2, 2];
+const SAVANT_TOTAL_LOGITS = SAVANT_BRANCHES.reduce((a, b) => a + b, 0);
 const SAVANT_TICK_SKIP = 4;
 const _savObs = new Float32Array(SAVANT_OBS_DIM);
 const _savV1 = new V3(), _savV2 = new V3();
@@ -9572,11 +9574,12 @@ function extractSavantObs(w, car, prevCtl, out) {
   }
 }
 function applySavantAction(act, out) {
-  out.throttle = act[0] === 0 ? -1 : (act[0] === 2 ? 1 : 0);
-  out.steer = (act[1] - 2) * 0.5;
-  out.pitch = act[2] === 0 ? -1 : (act[2] === 2 ? 1 : 0);
-  out.yaw = act[3] === 0 ? -1 : (act[3] === 2 ? 1 : 0);
-  out.roll = act[4] === 0 ? -1 : (act[4] === 2 ? 1 : 0);
+  const ax = (i) => -1 + (2 * act[i]) / (SAVANT_BRANCHES[i] - 1);
+  out.throttle = ax(0);
+  out.steer = ax(1);
+  out.pitch = ax(2);
+  out.yaw = ax(3);
+  out.roll = ax(4);
   out.jump = act[5] !== 0;
   out.boost = act[6] !== 0;
   out.handbrake = act[7] !== 0;
