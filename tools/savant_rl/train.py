@@ -12,7 +12,8 @@ Everything is handled automatically:
 - Auto-detects & auto-advances curriculum stages (Genesis -> Rising -> Competitive -> Apex).
 - Trains forever until you press Ctrl+C (safely saves `latest.pt` on Ctrl+C).
 - Evaluates & checkpoints every 50 updates.
-- Only ever overwrites `best.pt` and `rust/sim/assets/savant_policy.bin` with a strictly better model.
+- Every new best checkpoint is written to `best.pt` **and** exported to `rust/sim/assets/savant_policy.bin`
+  (no opponent / score gate while training — the best model seen is always the live one).
 - Automatically cleans up any old/stale checkpoint files, keeping only `latest.pt` and `best.pt`.
 """
 
@@ -828,36 +829,29 @@ def main():
     upd = 0
     total_env_steps = 0
     best_score = -1e9
-    deployed_best_score = -1e9
     actor_lr = STAGES[0]["actor_lr"]
     best_bytes: bytes | None = None
     snapshots: list[bytes] = []
 
-    # Protect any already-deployed compatible live model from ever being overwritten by a weaker policy
+    # Seed the self-play league with the currently deployed live model (no protection gate —
+    # the best model is exported to OUT_MODEL on every new best below)
     if OUT_MODEL.exists() and OUT_MODEL.stat().st_size > 24:
         live_bytes = OUT_MODEL.read_bytes()
         if is_compatible_hsp2(live_bytes):
-            live_ev = evaluate_full(lib, live_bytes)
-            deployed_best_score = live_ev["score"]
             best_bytes = live_bytes
             snapshots.append(live_bytes)
-            print(
-                f"[init] live deployed {OUT_MODEL.name} benchmarked at score={deployed_best_score:.1f} "
-                f"(protected — will only overwrite if beaten)",
-                flush=True,
-            )
+            print(f"[init] live {OUT_MODEL.name} added to the league snapshot pool", flush=True)
         else:
             print(
                 f"[init] ignoring incompatible legacy {OUT_MODEL.name} (expected obs={OBS_DIM}, logits={TOTAL_LOGITS})",
                 flush=True,
             )
 
-    # Check best.pt threshold so best.pt can never be downgraded either
+    # Resume the best-score tracker so `best.pt` keeps meaning "best ever seen"
     if BEST_PT.exists():
         bck = torch.load(BEST_PT, map_location="cpu", weights_only=True)
         if is_compatible_ckpt(bck):
             best_score = float(bck.get("best_score", bck.get("score", -1e9)))
-            deployed_best_score = max(deployed_best_score, best_score)
         else:
             print(f"[init] ignoring incompatible legacy {BEST_PT.name}", flush=True)
 
@@ -921,6 +915,12 @@ def main():
             if models_finite(tmp_actor):
                 best_bytes = export_hsp2(tmp_actor)
                 snapshots.append(best_bytes)
+                # Make sure the live game asset always holds the best model, from startup onward
+                atomic_write_bytes(best_bytes, OUT_MODEL)
+                print(
+                    f"[init] exported best.pt (score={best_score:.1f}) -> {OUT_MODEL}",
+                    flush=True,
+                )
 
     def make_checkpoint_payload(cur_score: float) -> dict:
         return {
@@ -1207,18 +1207,14 @@ def main():
                 last_eval_score = score
                 print(format_eval(upd, stage, total_env_steps, ev), flush=True)
 
-                # Only ever overwrite best.pt with a strictly better checkpoint
+                # No quality gate: every new best goes to best.pt AND the live game asset
                 if score > best_score:
                     best_score = score
                     best_bytes = cand_bytes
                     atomic_torch_save(make_checkpoint_payload(score), BEST_PT)
-                    print(f"[SAVE] NEW BEST checkpoint -> {BEST_PT.name} (score={best_score:.1f})", flush=True)
-
-                # Only ever overwrite the live game model if strictly better AND beats LEGEND 1v1
-                if score > deployed_best_score and ev["leg1"]["goals_a"] > ev["leg1"]["goals_b"]:
-                    deployed_best_score = score
                     atomic_write_bytes(cand_bytes, OUT_MODEL)
-                    print(f"[DEPLOY] NEW LIVE SAVANT MODEL -> {OUT_MODEL} ({len(cand_bytes):,} bytes, score={deployed_best_score:.1f})", flush=True)
+                    print(f"[SAVE] NEW BEST checkpoint -> {BEST_PT.name} (score={best_score:.1f})", flush=True)
+                    print(f"[DEPLOY] NEW LIVE SAVANT MODEL -> {OUT_MODEL} ({len(cand_bytes):,} bytes, score={best_score:.1f})", flush=True)
 
                 # Save latest.pt and clean up any old/stale files
                 atomic_torch_save(make_checkpoint_payload(score), LATEST_PT)

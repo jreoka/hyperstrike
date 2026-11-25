@@ -27,7 +27,7 @@ That's it — **no flags needed.**
 - **Evaluates & saves every 50 updates** (~5 minutes on Ryzen 9 5950X + RTX 4090).
 - **Safe checkpointing & cleanup:**
   - Keeps **only** `latest.pt` and `best.pt` in `tools/savant_rl/checkpoints/` (automatically deletes stale/old checkpoint files and uses atomic writes so `Ctrl+C` never corrupts a file).
-  - **Never overwrites** `best.pt` or the live game model (`rust/sim/assets/savant_policy.bin`) unless a candidate achieves a strictly higher score (and beats `LEGEND` 1v1 for live deployment).
+  - **No quality gate while training:** every new best checkpoint is written to `best.pt` **and** exported straight to the live game model (`rust/sim/assets/savant_policy.bin`) — no "must beat LEGEND 1v1" or score-protection gate. On startup, an existing `best.pt` is also exported to `rust/sim/assets/savant_policy.bin` so the asset always holds the best model.
 - **Graceful `Ctrl+C`:** Press `Ctrl+C` once and wait ~1 second — it saves `latest.pt` safely and exits cleanly.
 
 ---
