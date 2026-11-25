@@ -3,3 +3,4 @@ data/
 rust/*/target/
 tools/anticheat/data/
 __pycache__/
+tools/savant_rl/checkpoints/
