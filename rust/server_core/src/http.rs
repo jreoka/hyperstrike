@@ -396,6 +396,64 @@ fn serve_index(state: &AppState, headers: &HeaderMap) -> Response {
     resp
 }
 
+fn captcha_error_response(state: &AppState, err: crate::captcha::CaptchaError) -> Response {
+    let status = match err {
+        crate::captcha::CaptchaError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::FORBIDDEN,
+    };
+    let mut resp = json_response(
+        state,
+        status,
+        &json!({ "error": err.message(), "captchaRequired": true }),
+    );
+    if let crate::captcha::CaptchaError::RateLimited(wait_secs) = err
+        && let Ok(val) = HeaderValue::from_str(&wait_secs.max(1).to_string())
+    {
+        resp.headers_mut().insert(header::RETRY_AFTER, val);
+    }
+    resp
+}
+
+pub async fn captcha(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    body: Bytes,
+) -> Response {
+    if let Err(resp) = check_api_access(&state, &headers) {
+        return *resp;
+    }
+    if !crate::captcha::is_enabled() {
+        return json_response(&state, StatusCode::OK, &json!({ "enabled": false }));
+    }
+    let parsed = match parse_json_body(&state, &body) {
+        Ok(v) => v,
+        Err(resp) => return *resp,
+    };
+    let action = parsed
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("login");
+    let signals: crate::captcha::BrowserSignals = parsed
+        .get("signals")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let remote = extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
+    let ip = state.config.get_client_ip(&headers, remote);
+    match state
+        .captcha
+        .issue_challenge(&headers, &ip, action, &signals)
+    {
+        Ok(ch) => json_response(
+            &state,
+            StatusCode::OK,
+            &serde_json::to_value(ch).unwrap_or_else(|_| json!({})),
+        ),
+        Err(err) => captcha_error_response(&state, err),
+    }
+}
+
 pub async fn register(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -417,11 +475,32 @@ pub async fn register(
             );
         }
     }
+    if let Some(wait_secs) = state.captcha.registration_throttled_secs(&ip) {
+        return captcha_error_response(&state, crate::captcha::CaptchaError::RateLimited(wait_secs));
+    }
 
     let parsed = match parse_json_body(&state, &body) {
         Ok(v) => v,
         Err(resp) => return *resp,
     };
+
+    let captcha_sol: Option<crate::captcha::CaptchaSolution> = parsed
+        .get("captcha")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok());
+    let hp_token = parsed
+        .get("hpToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if let Err(err) = state.captcha.verify_solution(
+        &headers,
+        &ip,
+        "register",
+        captcha_sol.as_ref(),
+        hp_token,
+    ) {
+        return captcha_error_response(&state, err);
+    }
 
     let username = parsed
         .get("username")
@@ -529,6 +608,7 @@ pub async fn register(
     let token = db.create_session_with_meta(&key, &ip, ua);
     db.mark_dirty();
     drop(db);
+    state.captcha.record_ip_registration(&ip);
     state
         .metrics
         .registrations_total
@@ -568,6 +648,24 @@ pub async fn login(
         Err(resp) => return *resp,
     };
 
+    let captcha_sol: Option<crate::captcha::CaptchaSolution> = parsed
+        .get("captcha")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok());
+    let hp_token = parsed
+        .get("hpToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if let Err(err) = state.captcha.verify_solution(
+        &headers,
+        &ip,
+        "login",
+        captcha_sol.as_ref(),
+        hp_token,
+    ) {
+        return captcha_error_response(&state, err);
+    }
+
     let username = parsed
         .get("username")
         .and_then(|v| v.as_str())
@@ -588,6 +686,7 @@ pub async fn login(
     };
 
     let Some((salt, expected_hash)) = creds else {
+        state.captcha.record_ip_failure(&ip);
         return json_response(
             &state,
             StatusCode::UNAUTHORIZED,
@@ -596,6 +695,7 @@ pub async fn login(
     };
 
     if !verify_password(password.to_string(), salt, expected_hash).await {
+        state.captcha.record_ip_failure(&ip);
         return json_response(
             &state,
             StatusCode::UNAUTHORIZED,

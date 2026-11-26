@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod anticheat;
 pub mod auth;
+pub mod captcha;
 pub mod cluster;
 pub mod config;
 pub mod db;
@@ -35,6 +36,7 @@ pub struct AppState {
     pub cached_index_html: RwLock<Option<CachedIndexHtml>>,
     pub db: Mutex<Database>,
     pub rate_limiter: Mutex<RateLimiter>,
+    pub captcha: captcha::CaptchaState,
     pub rt: Mutex<RuntimeState>,
     pub backend: Arc<dyn MatchBackend>,
     pub metrics: admin::MetricsState,
@@ -57,6 +59,7 @@ impl AppState {
             cached_index_html: RwLock::new(None),
             db: Mutex::new(database),
             rate_limiter: Mutex::new(RateLimiter::default()),
+            captcha: captcha::CaptchaState::new(),
             rt: Mutex::new(RuntimeState::default()),
             backend,
             metrics: admin::MetricsState::default(),
@@ -127,6 +130,8 @@ impl AppState {
                     _ = interval.tick() => {
                         let mut rl = state_rl.rate_limiter.lock().unwrap();
                         rl.cleanup();
+                        drop(rl);
+                        state_rl.captcha.cleanup();
                     }
                 }
             }
@@ -286,6 +291,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/icon-512.png", get(http::icon_512_get))
         .route("/icon-maskable-512.png", get(http::icon_maskable_512_get))
         .route("/apple-touch-icon.png", get(http::apple_touch_icon_get))
+        .route(
+            "/api/captcha",
+            post(http::captcha).options(http::options_handler),
+        )
         .route(
             "/api/register",
             post(http::register).options(http::options_handler),
@@ -473,6 +482,44 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    async fn solve_http_captcha(
+        app: &Router,
+        cookie_pair: &str,
+        ua: Option<&str>,
+        action: &str,
+    ) -> captcha::CaptchaSolution {
+        let mut req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/captcha")
+            .header("cookie", cookie_pair);
+        if let Some(ua_val) = ua {
+            req = req.header("user-agent", ua_val);
+        }
+        let body = json!({
+            "action": action,
+            "signals": {
+                "languages": 2,
+                "screenW": 1920,
+                "screenH": 1080,
+                "innerW": 1440,
+                "innerH": 900,
+                "cores": 8,
+                "canvasOk": true,
+                "layoutOk": true,
+                "workerOk": true,
+                "signalsPresent": true
+            }
+        });
+        let resp = app
+            .clone()
+            .oneshot(req.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ch: captcha::CaptchaChallenge = serde_json::from_value(body_json(resp).await).unwrap();
+        captcha::solve_challenge_sync(&ch)
+    }
+
     #[tokio::test]
     async fn health_and_full_auth_http_flow() {
         let state = test_state("auth_flow");
@@ -579,11 +626,36 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         assert_eq!(body_json(resp).await["error"], "Invalid JSON");
 
-        // 5. Register user -> 201
+        // 5. Register without captcha -> 403, then with solved captcha -> 201
+        let reg_no_cap = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/register")
+                    .header("cookie", &cookie_pair)
+                    .body(Body::from(
+                        json!({
+                            "username": "AceDriver",
+                            "password": "password123",
+                            "confirmPassword": "password123"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reg_no_cap.status(), StatusCode::FORBIDDEN);
+        assert_eq!(body_json(reg_no_cap).await["captchaRequired"], true);
+
+        let reg_sol = solve_http_captcha(&app, &cookie_pair, None, "register").await;
         let reg_body = json!({
             "username": "AceDriver",
             "password": "password123",
-            "confirmPassword": "password123"
+            "confirmPassword": "password123",
+            "captcha": reg_sol,
+            "hpToken": ""
         });
         let resp = app
             .clone()
@@ -640,7 +712,8 @@ mod tests {
         assert_eq!(car_json["car"]["body"], 4);
         assert_eq!(car_json["car"]["primary"], 3);
 
-        // 8. POST /api/login -> 200
+        // 8. POST /api/login -> 200 (after solving captcha; replay rejected)
+        let login_sol = solve_http_captcha(&app, &cookie_pair, None, "login").await;
         let resp = app
             .clone()
             .oneshot(
@@ -649,13 +722,42 @@ mod tests {
                     .uri("/api/login")
                     .header("cookie", &cookie_pair)
                     .body(Body::from(
-                        json!({"username":"acedriver","password":"password123"}).to_string(),
+                        json!({
+                            "username": "acedriver",
+                            "password": "password123",
+                            "captcha": login_sol,
+                            "hpToken": ""
+                        })
+                        .to_string(),
                     ))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+
+        // Replaying the same solved captcha fails -> 403
+        let replay = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/login")
+                    .header("cookie", &cookie_pair)
+                    .body(Body::from(
+                        json!({
+                            "username": "acedriver",
+                            "password": "password123",
+                            "captcha": login_sol,
+                            "hpToken": ""
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::FORBIDDEN);
 
         // 9. POST /api/password -> 200 and invalidates other sessions
         let resp = app
@@ -872,6 +974,8 @@ mod tests {
         assert!(html.contains("Admin Console"));
 
         // 2. Register admin user ("jreoka") and regular user ("player1")
+        let win_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36";
+        let admin_reg_sol = solve_http_captcha(&app, &cookie_pair, Some(win_ua), "register").await;
         let reg_admin = app
             .clone()
             .oneshot(
@@ -879,15 +983,13 @@ mod tests {
                     .method(Method::POST)
                     .uri("/api/register")
                     .header("cookie", &cookie_pair)
-                    .header(
-                        "user-agent",
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36",
-                    )
+                    .header("user-agent", win_ua)
                     .body(Body::from(
                         json!({
                             "username": "jreoka",
                             "password": "password123",
-                            "confirmPassword": "password123"
+                            "confirmPassword": "password123",
+                            "captcha": admin_reg_sol
                         })
                         .to_string(),
                     ))
@@ -901,6 +1003,8 @@ mod tests {
         let admin_tok1 = admin_json["token"].as_str().unwrap().to_string();
 
         // Login admin from a second device (iPhone)
+        let ios_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1";
+        let admin_login_sol = solve_http_captcha(&app, &cookie_pair, Some(ios_ua), "login").await;
         let login_admin2 = app
             .clone()
             .oneshot(
@@ -908,12 +1012,14 @@ mod tests {
                     .method(Method::POST)
                     .uri("/api/login")
                     .header("cookie", &cookie_pair)
-                    .header(
-                        "user-agent",
-                        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
-                    )
+                    .header("user-agent", ios_ua)
                     .body(Body::from(
-                        json!({ "username": "JREOKA", "password": "password123" }).to_string(),
+                        json!({
+                            "username": "JREOKA",
+                            "password": "password123",
+                            "captcha": admin_login_sol
+                        })
+                        .to_string(),
                     ))
                     .unwrap(),
             )
@@ -926,6 +1032,7 @@ mod tests {
             .to_string();
 
         // Register regular user
+        let user_reg_sol = solve_http_captcha(&app, &cookie_pair, None, "register").await;
         let reg_user = app
             .clone()
             .oneshot(
@@ -937,7 +1044,8 @@ mod tests {
                         json!({
                             "username": "player1",
                             "password": "password123",
-                            "confirmPassword": "password123"
+                            "confirmPassword": "password123",
+                            "captcha": user_reg_sol
                         })
                         .to_string(),
                     ))

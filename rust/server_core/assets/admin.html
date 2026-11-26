@@ -58,6 +58,29 @@ a{color:inherit;text-decoration:none}
 .btn-sm{padding:5px 9px;font-size:11px}
 .btn-block{width:100%}
 .err-text{color:var(--red);font-size:12px;margin-bottom:12px;min-height:16px}
+.hp-field{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+.cap-wrap{position:relative;margin:0 0 12px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;transition:border-color .15s,background .15s}
+.cap-wrap[data-state="interactive"]{border-color:var(--acc);background:var(--acc-dim)}
+.cap-wrap[data-state="verified"]{border-color:rgba(34,197,94,.45)}
+.cap-wrap[data-state="error"]{border-color:rgba(239,68,68,.5)}
+.cap-btn{width:100%;display:flex;align-items:center;gap:10px;padding:9px 11px;background:none;border:0;text-align:left;cursor:pointer}
+.cap-ind{width:18px;height:18px;flex:none;display:grid;place-items:center}
+.cap-box{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--line2);background:var(--surf)}
+.cap-spin,.cap-chk,.cap-err{display:none}
+.cap-wrap[data-state="checking"] .cap-box,.cap-wrap[data-state="solving"] .cap-box,.cap-wrap[data-state="verified"] .cap-box,.cap-wrap[data-state="error"] .cap-box{display:none}
+@keyframes capSpin{to{transform:rotate(360deg)}}
+.cap-wrap[data-state="checking"] .cap-spin,.cap-wrap[data-state="solving"] .cap-spin{display:block;width:16px;height:16px;border-radius:50%;border:2px solid var(--line2);border-top-color:var(--acc);animation:capSpin .7s linear infinite}
+.cap-wrap[data-state="verified"] .cap-ind{background:var(--green);color:#04120a;border-radius:50%}
+.cap-wrap[data-state="verified"] .cap-chk{display:block;width:12px;height:12px}
+.cap-wrap[data-state="error"] .cap-err{display:block;width:16px;height:16px;color:var(--red)}
+.cap-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.cap-lbl{font-size:12px;font-weight:600;color:var(--ink)}
+.cap-sub{font-size:10.5px;color:var(--ink3);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap-wrap[data-state="verified"] .cap-sub{color:var(--green)}
+.cap-wrap[data-state="error"] .cap-sub{color:var(--red)}
+.cap-bar{position:absolute;left:0;right:0;bottom:0;height:2px;pointer-events:none}
+.cap-bar-fill{height:100%;width:0%;background:var(--acc);opacity:0;transition:width .14s linear,opacity .2s}
+.cap-wrap[data-state="checking"] .cap-bar-fill,.cap-wrap[data-state="solving"] .cap-bar-fill{opacity:1}
 
 /* App Shell */
 .shell{display:grid;grid-template-columns:224px 1fr;min-height:100vh}
@@ -231,6 +254,22 @@ tbody tr:hover{background:var(--surf2)}
         <label for="inPass">Password</label>
         <input id="inPass" type="password" autocomplete="current-password" required placeholder="Password">
       </div>
+      <input id="adminHp" class="hp-field" type="text" name="hp_contact_token" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div id="adminCap" class="cap-wrap" data-state="idle">
+        <button type="button" id="adminCapBtn" class="cap-btn" role="checkbox" aria-checked="false">
+          <span class="cap-ind" aria-hidden="true">
+            <span class="cap-box"></span>
+            <span class="cap-spin"></span>
+            <svg class="cap-chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg class="cap-err" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12.5"/><circle cx="12" cy="16.2" r=".8" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="cap-copy">
+            <span id="adminCapLbl" class="cap-lbl">Verify you&apos;re human</span>
+            <span id="adminCapSub" class="cap-sub">Browser &amp; proof-of-work check</span>
+          </span>
+        </button>
+        <div class="cap-bar" aria-hidden="true"><div id="adminCapFill" class="cap-bar-fill"></div></div>
+      </div>
       <div class="err-text" id="loginErr"></div>
       <button type="submit" class="btn btn-primary btn-block" id="loginBtn">Sign In</button>
     </form>
@@ -372,6 +411,201 @@ tbody tr:hover{background:var(--surf2)}
     return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  // ---- Smart PoW Captcha ----
+  const ADMIN_POW_CORE = `
+    const K = new Int32Array([
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ]);
+    const W = new Int32Array(64);
+    const BUF = new Uint8Array(192);
+    function sha256FirstWordAscii(pb, plen, nStr) {
+      const nLen = nStr.length, len = plen + nLen, total = ((len + 9 + 63) >> 6) << 6;
+      for (let i = 0; i < plen; i++) BUF[i] = pb[i];
+      for (let i = 0; i < nLen; i++) BUF[plen + i] = nStr.charCodeAt(i) & 0xff;
+      BUF[len] = 0x80;
+      for (let i = len + 1; i < total - 4; i++) BUF[i] = 0;
+      const bitLen = len * 8;
+      BUF[total - 4] = (bitLen >>> 24) & 0xff; BUF[total - 3] = (bitLen >>> 16) & 0xff;
+      BUF[total - 2] = (bitLen >>> 8) & 0xff; BUF[total - 1] = bitLen & 0xff;
+      let h0 = 0x6a09e667 | 0, h1 = 0xbb67ae85 | 0, h2 = 0x3c6ef372 | 0, h3 = 0xa54ff53a | 0;
+      let h4 = 0x510e527f | 0, h5 = 0x9b05688c | 0, h6 = 0x1f83d9ab | 0, h7 = 0x5be0cd19 | 0;
+      for (let off = 0; off < total; off += 64) {
+        for (let i = 0; i < 16; i++) { const j = off + (i << 2); W[i] = (BUF[j] << 24) | (BUF[j + 1] << 16) | (BUF[j + 2] << 8) | BUF[j + 3]; }
+        for (let i = 16; i < 64; i++) {
+          const w15 = W[i - 15], w2 = W[i - 2];
+          const s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+          const s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+          W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+        for (let i = 0; i < 64; i++) {
+          const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+          const ch = (e & f) ^ (~e & g);
+          const t1 = (h + S1 + ch + K[i] + W[i]) | 0;
+          const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+          const maj = (a & b) ^ (a & c) ^ (b & c);
+          const t2 = (S0 + maj) | 0;
+          h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+        }
+        h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+        h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+      }
+      return h0 >>> 0;
+    }
+    function matchesDifficulty(h0, bits) {
+      if (bits <= 0) return true;
+      if (bits >= 32) return h0 === 0;
+      return (h0 >>> (32 - bits)) === 0;
+    }
+  `;
+  const adminCap = { enabled: true, status: 'idle', ch: null, sol: null, interacted: false, runId: 0, worker: null, url: '', timer: null, inFlight: null, wOk: typeof Worker === 'function' && typeof Blob === 'function' };
+  function setAdminCapUi(st, lbl, sub, pct) {
+    adminCap.status = st;
+    $('adminCap').classList.toggle('hidden', !adminCap.enabled);
+    $('adminCap').dataset.state = st;
+    $('adminCapBtn').setAttribute('aria-checked', st === 'verified' ? 'true' : 'false');
+    if (lbl !== undefined) $('adminCapLbl').textContent = lbl;
+    if (sub !== undefined) $('adminCapSub').textContent = sub;
+    if (pct !== undefined) $('adminCapFill').style.width = Math.max(0, Math.min(100, pct)) + '%';
+  }
+  function cancelAdminCap() {
+    adminCap.runId += 1; adminCap.inFlight = null;
+    if (adminCap.timer) { clearTimeout(adminCap.timer); adminCap.timer = null; }
+    if (adminCap.worker) { try { adminCap.worker.terminate(); } catch (_) {} adminCap.worker = null; }
+    if (adminCap.url) { try { URL.revokeObjectURL(adminCap.url); } catch (_) {} adminCap.url = ''; }
+  }
+  function adminCapSignals() {
+    const rect = $('gateCard').getBoundingClientRect();
+    let canvasOk = false;
+    try {
+      const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+      const ctx = c.getContext && c.getContext('2d');
+      if (ctx) { ctx.fillStyle = '#38bdf8'; ctx.fillRect(2, 2, 12, 12); canvasOk = ctx.getImageData(4, 4, 1, 1).data[3] > 0; }
+    } catch (_) {}
+    return {
+      webdriver: navigator.webdriver === true,
+      automation: !!(window.__playwright || window.__nightmare || window._phantom || window.domAutomation),
+      headlessUa: /HeadlessChrome|PhantomJS|Playwright|Puppeteer|Selenium/i.test(navigator.userAgent || ''),
+      languages: Array.isArray(navigator.languages) ? navigator.languages.length : (navigator.language ? 1 : 0),
+      screenW: (screen && screen.width) | 0, screenH: (screen && screen.height) | 0,
+      innerW: window.innerWidth | 0, innerH: window.innerHeight | 0,
+      cores: (navigator.hardwareConcurrency || 0) | 0,
+      canvasOk, layoutOk: rect.width > 100 && rect.height > 100, workerOk: adminCap.wOk, signalsPresent: true,
+    };
+  }
+  function solveAdminPow(ch, probeAns, runId) {
+    const prefix = `${ch.id}:${ch.salt}:${probeAns}:`;
+    const diff = ch.difficulty | 0;
+    const expected = Math.max(1, Math.pow(2, diff));
+    const fallback = () => new Promise((resolve, reject) => {
+      const t0 = performance.now();
+      const fn = new Function('prefix', 'diff', 'start', 'batch', `${ADMIN_POW_CORE}
+        const plen = prefix.length, pb = new Uint8Array(plen);
+        for (let i = 0; i < plen; i++) pb[i] = prefix.charCodeAt(i) & 0xff;
+        for (let i = 0; i < batch; i++) { const n = start + i; if (matchesDifficulty(sha256FirstWordAscii(pb, plen, String(n)), diff)) return n; }
+        return -1;`);
+      let nonce = 0;
+      const tick = () => {
+        if (runId !== adminCap.runId) { reject(new Error('cancelled')); return; }
+        const found = fn(prefix, diff, nonce, 4096);
+        if (found >= 0) { resolve({ nonce: found, elapsedMs: Math.max(1, Math.round(performance.now() - t0)) }); return; }
+        nonce += 4096;
+        $('adminCapFill').style.width = Math.min(94, 18 + Math.round((1 - Math.exp(-nonce / expected)) * 76)) + '%';
+        adminCap.timer = setTimeout(tick, 0);
+      };
+      tick();
+    });
+    if (!adminCap.wOk) return fallback();
+    return new Promise((resolve, reject) => {
+      try {
+        const wSrc = `${ADMIN_POW_CORE}
+          self.onmessage = function(e) {
+            const { prefix, diff } = e.data, plen = prefix.length, pb = new Uint8Array(plen);
+            for (let i = 0; i < plen; i++) pb[i] = prefix.charCodeAt(i) & 0xff;
+            const t0 = performance.now(); let nonce = 0;
+            while (true) {
+              for (let i = 0; i < 8192; i++) {
+                if (matchesDifficulty(sha256FirstWordAscii(pb, plen, String(nonce)), diff)) { self.postMessage({ type: 'done', nonce, elapsedMs: Math.max(1, Math.round(performance.now() - t0)) }); return; }
+                nonce++;
+              }
+              self.postMessage({ type: 'progress', tried: nonce });
+            }
+          };`;
+        const url = URL.createObjectURL(new Blob([wSrc], { type: 'application/javascript' }));
+        const w = new Worker(url); adminCap.worker = w; adminCap.url = url;
+        const clean = () => { if (adminCap.worker === w) adminCap.worker = null; try { w.terminate(); } catch (_) {} if (adminCap.url === url) adminCap.url = ''; try { URL.revokeObjectURL(url); } catch (_) {} };
+        w.onmessage = (ev) => {
+          if (runId !== adminCap.runId) { clean(); reject(new Error('cancelled')); return; }
+          const m = ev.data || {};
+          if (m.type === 'progress') $('adminCapFill').style.width = Math.min(94, 18 + Math.round((1 - Math.exp(-m.tried / expected)) * 76)) + '%';
+          else if (m.type === 'done') { clean(); resolve({ nonce: m.nonce, elapsedMs: m.elapsedMs }); }
+        };
+        w.onerror = () => { clean(); adminCap.wOk = false; if (runId !== adminCap.runId) reject(new Error('cancelled')); else fallback().then(resolve, reject); };
+        w.postMessage({ prefix, diff });
+      } catch (_) { adminCap.wOk = false; fallback().then(resolve, reject); }
+    });
+  }
+  async function solveAdminChallenge(runId, userTriggered) {
+    const ch = adminCap.ch;
+    if (!ch) return null;
+    if (userTriggered) adminCap.interacted = true;
+    setAdminCapUi('solving', 'Verifying browser...', 'Solving proof-of-work...', 18);
+    const probe = ch.probe ? ((Math.imul(ch.probe.a | 0, ch.probe.b | 0) ^ (ch.probe.c | 0)) >>> 0) : 0;
+    const res = await solveAdminPow(ch, probe, runId);
+    if (runId !== adminCap.runId) return null;
+    adminCap.sol = { id: ch.id, nonce: res.nonce, mac: ch.mac, probe, interacted: adminCap.interacted, elapsedMs: res.elapsedMs };
+    setAdminCapUi('verified', 'Verified', `Browser check passed · ${res.elapsedMs} ms`, 100);
+    return adminCap.sol;
+  }
+  function startAdminCap(userTriggered = false) {
+    cancelAdminCap();
+    const runId = adminCap.runId;
+    adminCap.ch = null; adminCap.sol = null; adminCap.interacted = Boolean(userTriggered);
+    const p = (async () => {
+      setAdminCapUi('checking', 'Checking browser...', 'Inspecting environment', 10);
+      try {
+        const ch = await api('/api/captcha', { method: 'POST', body: { action: 'login', signals: adminCapSignals() } });
+        if (runId !== adminCap.runId) return null;
+        if (ch && ch.enabled === false) { adminCap.enabled = false; setAdminCapUi('verified', 'Verified', '', 100); return null; }
+        adminCap.enabled = true; adminCap.ch = ch;
+        if (ch.interactive && !adminCap.interacted) {
+          setAdminCapUi('interactive', "Click to verify you're human", 'Additional verification required', 0);
+          return null;
+        }
+        return await solveAdminChallenge(runId, adminCap.interacted);
+      } catch (err) {
+        if (runId !== adminCap.runId) return null;
+        setAdminCapUi('error', 'Verification failed', `${err.message || 'Error'} — click to retry`, 0);
+        return null;
+      } finally { if (adminCap.inFlight === p) adminCap.inFlight = null; }
+    })();
+    adminCap.inFlight = p;
+    return p;
+  }
+  function adminCapFresh() {
+    return !adminCap.enabled || (adminCap.status === 'verified' && adminCap.sol && adminCap.ch && Date.now() < (adminCap.ch.expiresAt || 0) - 10_000);
+  }
+  $('adminCapBtn').onclick = async (e) => {
+    $('loginErr').textContent = '';
+    const trusted = Boolean(e && e.isTrusted);
+    if (adminCapFresh()) return;
+    if (adminCap.status === 'checking' || adminCap.status === 'solving') { if (trusted) adminCap.interacted = true; return; }
+    if (adminCap.status === 'interactive' && adminCap.ch && Date.now() < (adminCap.ch.expiresAt || 0) - 15_000) {
+      const runId = adminCap.runId;
+      adminCap.inFlight = solveAdminChallenge(runId, trusted).catch(() => { if (runId === adminCap.runId) setAdminCapUi('error', 'Verification failed', 'Click to retry', 0); return null; });
+      await adminCap.inFlight;
+      return;
+    }
+    await startAdminCap(trusted);
+  };
+
   // ---- Auth flow ----
   function showLogin(sub = 'Sign in with an admin account to continue.') {
     $('appView').classList.add('hidden');
@@ -380,9 +614,12 @@ tbody tr:hover{background:var(--surf2)}
     $('loginForm').classList.remove('hidden');
     $('deniedBox').classList.add('hidden');
     $('loginErr').textContent = '';
+    $('adminHp').value = '';
+    startAdminCap(false);
   }
 
   function showDenied(username) {
+    cancelAdminCap();
     $('appView').classList.add('hidden');
     $('gateView').classList.remove('hidden');
     $('gateSub').textContent = `Signed in as ${username}`;
@@ -419,7 +656,20 @@ tbody tr:hover{background:var(--surf2)}
     $('loginErr').textContent = '';
     btn.disabled = true;
     try {
-      const data = await api('/api/login', { method: 'POST', body: { username: u, password: p } });
+      if (adminCap.enabled && !adminCapFresh()) {
+        if (adminCap.status === 'interactive') throw new Error('Please click the verification checkbox above to continue.');
+        if (adminCap.inFlight) await adminCap.inFlight;
+        if (adminCap.enabled && !adminCapFresh()) {
+          if (adminCap.status === 'interactive') throw new Error('Please click the verification checkbox above to continue.');
+          await startAdminCap(Boolean(e && e.isTrusted));
+        }
+        if (adminCap.enabled && !adminCapFresh()) throw new Error('Please complete the verification check above.');
+      }
+      const data = await api('/api/login', {
+        method: 'POST',
+        body: { username: u, password: p, captcha: adminCap.enabled ? adminCap.sol : null, hpToken: $('adminHp').value || '' },
+      });
+      cancelAdminCap();
       state.token = data.token;
       state.user = data.user;
       localStorage.setItem('hyperstrike.token', data.token);
@@ -430,6 +680,7 @@ tbody tr:hover{background:var(--surf2)}
       }
     } catch (err) {
       $('loginErr').textContent = err.message || 'Sign in failed.';
+      startAdminCap(false);
     } finally {
       btn.disabled = false;
     }

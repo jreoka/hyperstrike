@@ -803,6 +803,37 @@ table.stats .mvp{color:#140818;background:var(--gold);font-size:9px;letter-spaci
 .auth-err.ok{color:var(--good)}
 .auth-sub{margin-top:4px}
 .auth-foot{margin-top:18px;text-align:center;font-size:10px;letter-spacing:.24em;color:var(--ink3);font-weight:700}
+.auth-hp{position:absolute!important;left:-9999px!important;top:-9999px!important;width:1px!important;height:1px!important;padding:0!important;margin:0!important;border:0!important;opacity:0!important;pointer-events:none!important;overflow:hidden!important}
+.auth-captcha{position:relative;margin:4px 0 12px;background:rgba(2,5,14,.8);border:1px solid rgba(255,255,255,.12);border-left:3px solid var(--line2);overflow:hidden;transition:border-color .16s,background .16s,box-shadow .16s}
+.auth-captcha:hover{border-color:rgba(140,185,255,.35)}
+.auth-captcha[data-state="checking"],.auth-captcha[data-state="solving"]{border-left-color:var(--accent)}
+.auth-captcha[data-state="interactive"]{border-color:rgba(62,242,255,.45);border-left-color:var(--accent);background:rgba(62,242,255,.06);box-shadow:0 0 0 2px rgba(62,242,255,.09)}
+.auth-captcha[data-state="verified"]{border-color:rgba(77,255,136,.32);border-left-color:var(--good)}
+.auth-captcha[data-state="error"]{border-color:rgba(255,90,106,.4);border-left-color:var(--bad)}
+.auth-captcha-btn{width:100%;display:flex;align-items:center;gap:12px;padding:10px 12px;background:none;border:0;color:var(--ink);text-align:left;cursor:pointer}
+.auth-captcha-btn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.auth-captcha-ind{position:relative;width:22px;height:22px;flex:none;display:grid;place-items:center}
+.auth-captcha-box{width:18px;height:18px;border:1.5px solid var(--line2);background:rgba(7,11,24,.9);transition:border-color .15s,box-shadow .15s}
+.auth-captcha-btn:hover .auth-captcha-box,.auth-captcha[data-state="interactive"] .auth-captcha-box{border-color:var(--accent);box-shadow:0 0 8px rgba(62,242,255,.28)}
+.auth-captcha-spin,.auth-captcha-chk,.auth-captcha-err-ico{display:none}
+.auth-captcha[data-state="checking"] .auth-captcha-box,.auth-captcha[data-state="solving"] .auth-captcha-box,.auth-captcha[data-state="verified"] .auth-captcha-box,.auth-captcha[data-state="error"] .auth-captcha-box{display:none}
+@keyframes hsCapSpin{to{transform:rotate(360deg)}}
+.auth-captcha[data-state="checking"] .auth-captcha-spin,.auth-captcha[data-state="solving"] .auth-captcha-spin{display:block;width:19px;height:19px;border-radius:50%;border:2px solid rgba(140,185,255,.24);border-top-color:var(--accent);animation:hsCapSpin .7s linear infinite}
+.auth-captcha[data-state="verified"] .auth-captcha-ind{background:var(--good);color:#03140c;border-radius:2px;box-shadow:0 0 12px rgba(77,255,136,.35)}
+.auth-captcha[data-state="verified"] .auth-captcha-chk{display:block;width:14px;height:14px}
+.auth-captcha[data-state="error"] .auth-captcha-err-ico{display:block;width:19px;height:19px;color:var(--bad)}
+.auth-captcha-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.auth-captcha-lbl{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#fff;line-height:1.2}
+.auth-captcha-sub{font-size:10px;font-family:var(--mono);letter-spacing:.04em;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.25}
+.auth-captcha[data-state="verified"] .auth-captcha-sub{color:rgba(77,255,136,.82)}
+.auth-captcha[data-state="error"] .auth-captcha-sub{color:#ff8a96}
+.auth-captcha-brand{flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding-left:10px;border-left:1px solid var(--line);color:var(--ink3);font-size:8.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}
+.auth-captcha-brand svg{width:14px;height:14px;color:var(--ink2)}
+.auth-captcha[data-state="verified"] .auth-captcha-brand svg{color:var(--good)}
+.auth-captcha-bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent;overflow:hidden;pointer-events:none}
+.auth-captcha-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:width .14s linear,opacity .2s}
+.auth-captcha[data-state="checking"] .auth-captcha-bar-fill,.auth-captcha[data-state="solving"] .auth-captcha-bar-fill{opacity:1}
+@media(prefers-reduced-motion:reduce){.auth-captcha[data-state="checking"] .auth-captcha-spin,.auth-captcha[data-state="solving"] .auth-captcha-spin{animation:none;border-color:var(--accent)}}
 
 /* ============ ACCOUNT / SESSIONS ============ */
 .acct-grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(300px,1fr);gap:14px;align-items:start}
@@ -1350,6 +1381,26 @@ body.touch-on #toast{bottom:auto;top:calc(var(--sat) + 30%)}
       <div class="auth-field hidden" id="authConfirmWrap">
         <label for="authPass2">Confirm Password</label>
         <input type="password" id="authPass2" minlength="6" maxlength="128" autocomplete="new-password" placeholder="Re-enter password">
+      </div>
+      <input type="text" id="authHp" class="auth-hp" name="hp_contact_token" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div id="authCaptcha" class="auth-captcha" data-state="idle">
+        <button type="button" id="authCaptchaBtn" class="auth-captcha-btn" role="checkbox" aria-checked="false" aria-describedby="authCaptchaSub">
+          <span class="auth-captcha-ind" aria-hidden="true">
+            <span class="auth-captcha-box"></span>
+            <span class="auth-captcha-spin"></span>
+            <svg class="auth-captcha-chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg class="auth-captcha-err-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12.5"/><circle cx="12" cy="16.2" r=".8" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="auth-captcha-copy">
+            <span id="authCaptchaLbl" class="auth-captcha-lbl">Verify You&apos;re Human</span>
+            <span id="authCaptchaSub" class="auth-captcha-sub">Browser &amp; proof-of-work check</span>
+          </span>
+          <span class="auth-captcha-brand" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v6c0 4.5 3 7.8 7 9 4-1.2 7-4.5 7-9V6l-7-3z"/><path d="m9.5 12 1.8 1.8 3.5-3.8"/></svg>
+            <span>Shield</span>
+          </span>
+        </button>
+        <div class="auth-captcha-bar" aria-hidden="true"><div id="authCaptchaBarFill" class="auth-captcha-bar-fill"></div></div>
       </div>
       <div class="auth-err" id="authErr"></div>
       <button type="submit" class="cta auth-sub" id="authSubmit"><span id="authSubmitTxt">Sign In</span></button>
@@ -12389,14 +12440,17 @@ class OnlineManager {
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     return data;
   }
-  async register(username, password, confirmPassword) {
-    const data = await this.api('/api/register', { method: 'POST', body: { username, password, confirmPassword } });
+  async fetchCaptcha(action, signals) {
+    return await this.api('/api/captcha', { method: 'POST', body: { action, signals } });
+  }
+  async register(username, password, confirmPassword, captcha = null, hpToken = '') {
+    const data = await this.api('/api/register', { method: 'POST', body: { username, password, confirmPassword, captcha, hpToken } });
     this.isAdmin = !!data.isAdmin;
     this._onAuthed(data.token, data.user);
     return data.user;
   }
-  async login(username, password) {
-    const data = await this.api('/api/login', { method: 'POST', body: { username, password } });
+  async login(username, password, captcha = null, hpToken = '') {
+    const data = await this.api('/api/login', { method: 'POST', body: { username, password, captcha, hpToken } });
     this.isAdmin = !!data.isAdmin;
     this._onAuthed(data.token, data.user);
     return data.user;
@@ -12838,15 +12892,383 @@ class UIManager {
     const tabLogin = $('authTabLogin'), tabReg = $('authTabReg'), form = $('authForm');
     const cWrap = $('authConfirmWrap'), pass2 = $('authPass2'), pass1 = $('authPass');
     const errEl = $('authErr'), subTxt = $('authSubmitTxt');
+
+    const POW_CORE = `
+      const K = new Int32Array([
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+      ]);
+      const W = new Int32Array(64);
+      const BUF = new Uint8Array(192);
+      function sha256FirstWordAscii(prefixBytes, prefixLen, nonceStr) {
+        const nLen = nonceStr.length;
+        const len = prefixLen + nLen;
+        const total = ((len + 9 + 63) >> 6) << 6;
+        for (let i = 0; i < prefixLen; i++) BUF[i] = prefixBytes[i];
+        for (let i = 0; i < nLen; i++) BUF[prefixLen + i] = nonceStr.charCodeAt(i) & 0xff;
+        BUF[len] = 0x80;
+        for (let i = len + 1; i < total - 4; i++) BUF[i] = 0;
+        const bitLen = len * 8;
+        BUF[total - 4] = (bitLen >>> 24) & 0xff;
+        BUF[total - 3] = (bitLen >>> 16) & 0xff;
+        BUF[total - 2] = (bitLen >>> 8) & 0xff;
+        BUF[total - 1] = bitLen & 0xff;
+        let h0 = 0x6a09e667 | 0, h1 = 0xbb67ae85 | 0, h2 = 0x3c6ef372 | 0, h3 = 0xa54ff53a | 0;
+        let h4 = 0x510e527f | 0, h5 = 0x9b05688c | 0, h6 = 0x1f83d9ab | 0, h7 = 0x5be0cd19 | 0;
+        for (let off = 0; off < total; off += 64) {
+          for (let i = 0; i < 16; i++) {
+            const j = off + (i << 2);
+            W[i] = (BUF[j] << 24) | (BUF[j + 1] << 16) | (BUF[j + 2] << 8) | BUF[j + 3];
+          }
+          for (let i = 16; i < 64; i++) {
+            const w15 = W[i - 15], w2 = W[i - 2];
+            const s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+            const s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+            W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+          }
+          let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+          for (let i = 0; i < 64; i++) {
+            const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ (~e & g);
+            const t1 = (h + S1 + ch + K[i] + W[i]) | 0;
+            const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const t2 = (S0 + maj) | 0;
+            h = g; g = f; f = e; e = (d + t1) | 0;
+            d = c; c = b; b = a; a = (t1 + t2) | 0;
+          }
+          h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+          h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+        }
+        return h0 >>> 0;
+      }
+      function matchesDifficulty(h0, bits) {
+        if (bits <= 0) return true;
+        if (bits >= 32) return h0 === 0;
+        return (h0 >>> (32 - bits)) === 0;
+      }
+    `;
+
+    const cap = {
+      enabled: true,
+      status: 'idle',
+      action: 'login',
+      challenge: null,
+      solution: null,
+      interacted: false,
+      runId: 0,
+      worker: null,
+      workerUrl: '',
+      fallbackTimer: null,
+      expiryTimer: null,
+      autoStartTimer: null,
+      inFlight: null,
+      workerSupported: typeof Worker === 'function' && typeof Blob === 'function',
+    };
+    this._captcha = cap;
+
+    const computeProbe = (p) => p ? ((Math.imul(p.a | 0, p.b | 0) ^ (p.c | 0)) >>> 0) : 0;
+    const detectAutomation = () => {
+      try {
+        for (const k of ['__playwright', '__pw_manual', '__PW_inspect', '__nightmare', '_phantom', 'callPhantom', 'domAutomation', 'domAutomationController', '__selenium_unwrapped', '__webdriver_evaluate', '__driver_evaluate']) {
+          if (k in window && window[k]) return true;
+        }
+        for (const k of Object.keys(document)) {
+          if (k.startsWith('$cdc_') || k.startsWith('$wdc_')) return true;
+        }
+      } catch (_) {}
+      return false;
+    };
+    const checkCanvas = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 16; c.height = 16;
+        const ctx = c.getContext && c.getContext('2d');
+        if (!ctx) return false;
+        ctx.fillStyle = '#3ef2ff';
+        ctx.fillRect(2, 2, 12, 12);
+        const d = ctx.getImageData(4, 4, 1, 1).data;
+        return !!(d && d.length === 4 && d[3] > 0);
+      } catch (_) { return false; }
+    };
+    const collectSignals = () => {
+      const card = document.querySelector('#authGate .auth-card');
+      const rect = card && card.getBoundingClientRect ? card.getBoundingClientRect() : null;
+      return {
+        webdriver: navigator.webdriver === true,
+        automation: detectAutomation(),
+        headlessUa: /HeadlessChrome|PhantomJS|Playwright|Puppeteer|Selenium/i.test(String(navigator.userAgent || '')),
+        languages: Array.isArray(navigator.languages) ? navigator.languages.length : (navigator.language ? 1 : 0),
+        screenW: (window.screen && window.screen.width) | 0,
+        screenH: (window.screen && window.screen.height) | 0,
+        innerW: window.innerWidth | 0,
+        innerH: window.innerHeight | 0,
+        cores: (navigator.hardwareConcurrency || 0) | 0,
+        canvasOk: checkCanvas(),
+        layoutOk: !!(rect && rect.width > 100 && rect.height > 100),
+        workerOk: cap.workerSupported,
+        signalsPresent: true,
+      };
+    };
+
+    const setBar = (pct) => {
+      const fill = $('authCaptchaBarFill');
+      if (fill) fill.style.width = `${Math.max(0, Math.min(100, Number(pct) || 0))}%`;
+    };
+    const setCapUi = (status, label, sub, pct) => {
+      cap.status = status;
+      const root = $('authCaptcha'), btn = $('authCaptchaBtn'), lbl = $('authCaptchaLbl'), subEl = $('authCaptchaSub');
+      if (root) {
+        root.classList.toggle('hidden', !cap.enabled);
+        root.dataset.state = status;
+      }
+      if (btn) btn.setAttribute('aria-checked', status === 'verified' ? 'true' : 'false');
+      if (lbl && label !== undefined) lbl.textContent = label;
+      if (subEl && sub !== undefined) subEl.textContent = sub;
+      if (pct !== undefined) setBar(pct);
+    };
+    const cancelCap = () => {
+      cap.runId += 1;
+      cap.inFlight = null;
+      if (cap.autoStartTimer) { clearTimeout(cap.autoStartTimer); cap.autoStartTimer = null; }
+      if (cap.expiryTimer) { clearTimeout(cap.expiryTimer); cap.expiryTimer = null; }
+      if (cap.fallbackTimer) { clearTimeout(cap.fallbackTimer); cap.fallbackTimer = null; }
+      if (cap.worker) { try { cap.worker.terminate(); } catch (_) {} cap.worker = null; }
+      if (cap.workerUrl) { try { URL.revokeObjectURL(cap.workerUrl); } catch (_) {} cap.workerUrl = ''; }
+    };
+    const solvePow = (ch, probeAns, runId, onProg) => {
+      const prefix = `${ch.id}:${ch.salt}:${probeAns}:`;
+      const difficulty = ch.difficulty | 0;
+      const expected = Math.max(1, Math.pow(2, difficulty));
+      const t0 = performance.now ? performance.now() : Date.now();
+      const runFallback = () => new Promise((resolve, reject) => {
+        const stepFn = new Function('prefix', 'difficulty', 'startNonce', 'batch', `${POW_CORE}
+          const plen = prefix.length;
+          const pb = new Uint8Array(plen);
+          for (let i = 0; i < plen; i++) pb[i] = prefix.charCodeAt(i) & 0xff;
+          for (let i = 0; i < batch; i++) {
+            const n = startNonce + i;
+            if (matchesDifficulty(sha256FirstWordAscii(pb, plen, String(n)), difficulty)) return n;
+          }
+          return -1;`);
+        let nonce = 0;
+        const tick = () => {
+          if (runId !== cap.runId) { reject(new Error('cancelled')); return; }
+          const found = stepFn(prefix, difficulty, nonce, 4096);
+          if (found >= 0) {
+            resolve({ nonce: found, elapsedMs: Math.max(1, Math.round((performance.now ? performance.now() : Date.now()) - t0)) });
+            return;
+          }
+          nonce += 4096;
+          if (onProg) onProg(Math.min(92, Math.round((1 - Math.exp(-nonce / expected)) * 100)));
+          cap.fallbackTimer = setTimeout(tick, 0);
+        };
+        tick();
+      });
+      if (!cap.workerSupported) return runFallback();
+      return new Promise((resolve, reject) => {
+        try {
+          const wSrc = `${POW_CORE}
+            self.onmessage = function(e) {
+              const { prefix, difficulty } = e.data;
+              const plen = prefix.length;
+              const pb = new Uint8Array(plen);
+              for (let i = 0; i < plen; i++) pb[i] = prefix.charCodeAt(i) & 0xff;
+              const start = performance.now();
+              let nonce = 0;
+              while (true) {
+                for (let i = 0; i < 8192; i++) {
+                  if (matchesDifficulty(sha256FirstWordAscii(pb, plen, String(nonce)), difficulty)) {
+                    self.postMessage({ type: 'done', nonce, elapsedMs: Math.max(1, Math.round(performance.now() - start)) });
+                    return;
+                  }
+                  nonce++;
+                }
+                self.postMessage({ type: 'progress', tried: nonce });
+              }
+            };`;
+          const url = URL.createObjectURL(new Blob([wSrc], { type: 'application/javascript' }));
+          const w = new Worker(url);
+          cap.worker = w; cap.workerUrl = url;
+          const cleanup = () => {
+            if (cap.worker === w) cap.worker = null;
+            try { w.terminate(); } catch (_) {}
+            if (cap.workerUrl === url) cap.workerUrl = '';
+            try { URL.revokeObjectURL(url); } catch (_) {}
+          };
+          w.onmessage = (ev) => {
+            if (runId !== cap.runId) { cleanup(); reject(new Error('cancelled')); return; }
+            const m = ev.data || {};
+            if (m.type === 'progress' && onProg) onProg(Math.min(94, Math.round((1 - Math.exp(-m.tried / expected)) * 100)));
+            else if (m.type === 'done') { cleanup(); resolve({ nonce: m.nonce, elapsedMs: m.elapsedMs }); }
+          };
+          w.onerror = () => {
+            cleanup();
+            cap.workerSupported = false;
+            if (runId !== cap.runId) { reject(new Error('cancelled')); return; }
+            runFallback().then(resolve, reject);
+          };
+          w.postMessage({ prefix, difficulty });
+        } catch (_) {
+          cap.workerSupported = false;
+          runFallback().then(resolve, reject);
+        }
+      });
+    };
+
+    const isFresh = (action) => {
+      if (!cap.enabled) return true;
+      if (cap.status !== 'verified' || !cap.solution || !cap.challenge || cap.action !== action) return false;
+      return Date.now() < (cap.challenge.expiresAt || 0) - 10_000;
+    };
+
+    const solveActive = async (runId, userTriggered) => {
+      const ch = cap.challenge;
+      if (!ch) return null;
+      if (userTriggered) cap.interacted = true;
+      setCapUi('solving', 'Verifying Browser...', 'Solving proof-of-work...', 18);
+      const probeAns = computeProbe(ch.probe);
+      const res = await solvePow(ch, probeAns, runId, (pct) => {
+        if (runId === cap.runId) setBar(18 + Math.round(pct * 0.78));
+      });
+      if (runId !== cap.runId) return null;
+      cap.solution = {
+        id: ch.id,
+        nonce: res.nonce,
+        mac: ch.mac,
+        probe: probeAns,
+        interacted: cap.interacted,
+        elapsedMs: res.elapsedMs,
+      };
+      setCapUi('verified', 'Verified', `Browser check passed · ${res.elapsedMs} ms`, 100);
+      const ttlMs = Math.max(15_000, (ch.expiresAt || 0) - Date.now() - 15_000);
+      cap.expiryTimer = setTimeout(() => {
+        if (runId !== cap.runId) return;
+        cap.solution = null; cap.challenge = null;
+        setCapUi('idle', "Verify You're Human", 'Verification expired — click to refresh', 0);
+      }, ttlMs);
+      return cap.solution;
+    };
+
+    const startCap = (action, userTriggered = false) => {
+      cancelCap();
+      const runId = cap.runId;
+      cap.action = action === 'register' ? 'register' : 'login';
+      cap.challenge = null;
+      cap.solution = null;
+      cap.interacted = Boolean(userTriggered);
+      const p = (async () => {
+        setCapUi('checking', 'Checking Browser...', 'Inspecting browser environment', 10);
+        try {
+          const ch = await this.g.online.fetchCaptcha(cap.action, collectSignals());
+          if (runId !== cap.runId) return null;
+          if (ch && ch.enabled === false) {
+            cap.enabled = false;
+            setCapUi('verified', 'Verified', '', 100);
+            return null;
+          }
+          cap.enabled = true;
+          cap.challenge = ch;
+          if (ch.interactive && !cap.interacted) {
+            setCapUi('interactive', "Click to Verify You're Human", 'Additional browser verification required', 0);
+            return null;
+          }
+          return await solveActive(runId, cap.interacted);
+        } catch (err) {
+          if (runId !== cap.runId) return null;
+          setCapUi('error', 'Verification Failed', `${err && err.message ? err.message : 'Network error'} — tap to retry`, 0);
+          return null;
+        } finally {
+          if (cap.inFlight === p) cap.inFlight = null;
+        }
+      })();
+      cap.inFlight = p;
+      return p;
+    };
+
+    const resetAndStartCap = (action, delayMs = 120) => {
+      cancelCap();
+      cap.action = action === 'register' ? 'register' : 'login';
+      cap.challenge = null;
+      cap.solution = null;
+      cap.interacted = false;
+      setCapUi('idle', "Verify You're Human", 'Browser & proof-of-work check', 0);
+      const gate = $('authGate');
+      if (!gate || gate.classList.contains('hidden')) return;
+      const target = cap.action;
+      cap.autoStartTimer = setTimeout(() => {
+        cap.autoStartTimer = null;
+        if (!$('authGate').classList.contains('hidden') && this.authMode === target) {
+          startCap(target, false);
+        }
+      }, delayMs);
+    };
+    this._resetCaptcha = resetAndStartCap;
+    this._cancelCaptcha = cancelCap;
+
+    const capBtn = $('authCaptchaBtn');
+    if (capBtn) {
+      capBtn.onclick = async (e) => {
+        errEl.textContent = '';
+        const trusted = Boolean(e && e.isTrusted);
+        const action = this.authMode === 'register' ? 'register' : 'login';
+        if (isFresh(action)) return;
+        if (cap.status === 'checking' || cap.status === 'solving') {
+          if (trusted) cap.interacted = true;
+          return;
+        }
+        if (cap.status === 'interactive' && cap.challenge && Date.now() < (cap.challenge.expiresAt || 0) - 15_000) {
+          const runId = cap.runId;
+          const p = (async () => {
+            try { return await solveActive(runId, trusted); }
+            catch (_) { if (runId === cap.runId) setCapUi('error', 'Verification Failed', 'Tap to retry', 0); return null; }
+            finally { if (cap.inFlight === p) cap.inFlight = null; }
+          })();
+          cap.inFlight = p;
+          await p;
+          return;
+        }
+        await startCap(action, trusted);
+      };
+    }
+
+    const ensureCap = async (action, userTriggered) => {
+      if (!cap.enabled) return null;
+      if (isFresh(action)) return cap.solution;
+      if (cap.status === 'interactive') throw new Error('Please click the verification checkbox above to continue.');
+      if (cap.inFlight) {
+        await cap.inFlight;
+        if (!cap.enabled) return null;
+        if (isFresh(action)) return cap.solution;
+        if (cap.status === 'interactive') throw new Error('Please click the verification checkbox above to continue.');
+      }
+      await startCap(action, userTriggered);
+      if (!cap.enabled) return null;
+      if (isFresh(action)) return cap.solution;
+      if (cap.status === 'interactive') throw new Error('Please click the verification checkbox above to continue.');
+      throw new Error('Human verification failed. Click the verification box to try again.');
+    };
+
     const setMode = (m) => {
-      this.authMode = m;
-      tabLogin.classList.toggle('on', m === 'login');
-      tabReg.classList.toggle('on', m === 'register');
-      cWrap.classList.toggle('hidden', m !== 'register');
-      pass2.required = (m === 'register');
-      pass1.autocomplete = m === 'register' ? 'new-password' : 'current-password';
-      subTxt.textContent = m === 'register' ? 'Create Account' : 'Sign In';
+      const next = m === 'register' ? 'register' : 'login';
+      const changed = this.authMode !== next;
+      this.authMode = next;
+      tabLogin.classList.toggle('on', next === 'login');
+      tabReg.classList.toggle('on', next === 'register');
+      cWrap.classList.toggle('hidden', next !== 'register');
+      pass2.required = (next === 'register');
+      pass1.autocomplete = next === 'register' ? 'new-password' : 'current-password';
+      subTxt.textContent = next === 'register' ? 'Create Account' : 'Sign In';
       errEl.textContent = '';
+      if (changed || cap.action !== next || cap.status === 'idle') {
+        resetAndStartCap(next);
+      }
     };
     tabLogin.onclick = () => setMode('login');
     tabReg.onclick = () => setMode('register');
@@ -12856,21 +13278,39 @@ class UIManager {
       const u = $('authUser').value.trim();
       const p = pass1.value;
       const p2 = pass2.value;
-      if (this.authMode === 'register' && p !== p2) {
+      const action = this.authMode === 'register' ? 'register' : 'login';
+      if (action === 'register' && p !== p2) {
         errEl.textContent = 'Passwords do not match.';
         return;
       }
       const btn = $('authSubmit');
       btn.disabled = true;
-      subTxt.textContent = this.authMode === 'register' ? 'Creating...' : 'Signing In...';
+      let sol = null;
       try {
-        if (this.authMode === 'register') await this.g.online.register(u, p, p2);
-        else await this.g.online.login(u, p);
+        if (cap.enabled && !isFresh(action)) {
+          subTxt.textContent = 'Verifying...';
+        }
+        sol = await ensureCap(action, Boolean(e && e.isTrusted));
+      } catch (err) {
+        btn.disabled = false;
+        subTxt.textContent = action === 'register' ? 'Create Account' : 'Sign In';
+        errEl.textContent = err.message || 'Verification failed.';
+        if (cap.status === 'interactive' && $('authCaptchaBtn')) $('authCaptchaBtn').focus();
+        return;
+      }
+      const hp = ($('authHp') && $('authHp').value) || '';
+      subTxt.textContent = action === 'register' ? 'Creating...' : 'Signing In...';
+      try {
+        if (action === 'register') await this.g.online.register(u, p, p2, sol, hp);
+        else await this.g.online.login(u, p, sol, hp);
+        cancelCap();
         pass1.value = ''; pass2.value = '';
+        if ($('authHp')) $('authHp').value = '';
         this.hideAuthGate();
         this.showMenu('play');
       } catch (err) {
         errEl.textContent = err.message || 'Authentication failed.';
+        resetAndStartCap(action, 160);
       } finally {
         btn.disabled = false;
         subTxt.textContent = this.authMode === 'register' ? 'Create Account' : 'Sign In';
@@ -12879,10 +13319,15 @@ class UIManager {
   }
   showAuthGate() {
     $('authErr').textContent = '';
+    if ($('authHp')) $('authHp').value = '';
     $('authGate').classList.remove('hidden');
+    if (this._resetCaptcha) this._resetCaptcha(this.authMode || 'login');
     setTimeout(() => { const u = $('authUser'); if (u) u.focus(); }, 50);
   }
-  hideAuthGate() { $('authGate').classList.add('hidden'); }
+  hideAuthGate() {
+    if (this._cancelCaptcha) this._cancelCaptcha();
+    $('authGate').classList.add('hidden');
+  }
   initPWA() {
     this._pwaPrompt = window.__hsInstallPrompt || null;
     const isStandalone = () =>
