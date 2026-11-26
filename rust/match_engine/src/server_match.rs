@@ -222,6 +222,7 @@ pub struct ServerMatch {
     afk_kick_s: f64,
     callbacks: Arc<dyn MatchEventSink>,
     humans: IndexMap<String, HumanState>,
+    spectators: HashSet<String>,
     car_user_ids: Vec<Option<String>>,
     car_explosions: Vec<i32>,
     car_kick: Vec<[f64; 4]>,
@@ -289,6 +290,12 @@ impl ServerMatch {
         }
 
         let mut humans = IndexMap::new();
+        let spectators: HashSet<String> = opts
+            .players
+            .iter()
+            .filter(|p| p.team != 0 && p.team != 1)
+            .map(|p| p.user_id.clone())
+            .collect();
         let mut car_info = Vec::new();
         let mut car_user_ids = Vec::new();
         let mut car_explosions = Vec::new();
@@ -381,6 +388,7 @@ impl ServerMatch {
             afk_kick_s,
             callbacks: opts.callbacks,
             humans,
+            spectators,
             car_user_ids,
             car_explosions,
             car_kick,
@@ -576,7 +584,10 @@ impl ServerMatch {
     }
 
     pub fn mark_replay_done(&mut self, user_id: &str) {
-        if self.state == MatchState::Goal && self.humans.contains_key(user_id) {
+        if self.state == MatchState::Goal
+            && (self.humans.contains_key(user_id)
+                || (self.humans.is_empty() && self.spectators.contains(user_id)))
+        {
             self.replay_done.insert(user_id.to_string());
         }
     }
@@ -603,6 +614,9 @@ impl ServerMatch {
     }
 
     pub fn remove_player_with_reason(&mut self, user_id: &str, reason: &str) {
+        if self.spectators.remove(user_id) {
+            self.replay_done.remove(user_id);
+        }
         let Some(h) = self.humans.shift_remove(user_id) else {
             return;
         };
@@ -806,10 +820,15 @@ impl ServerMatch {
                         return;
                     }
                     self.world.frozen = true;
-                    let all_done = self
-                        .humans
-                        .keys()
-                        .all(|uid| self.replay_done.contains(uid));
+                    let all_done = if !self.humans.is_empty() {
+                        self.humans.keys().all(|uid| self.replay_done.contains(uid))
+                    } else if !self.spectators.is_empty() {
+                        self.spectators
+                            .iter()
+                            .all(|uid| self.replay_done.contains(uid))
+                    } else {
+                        true
+                    };
                     if all_done || self.state_t > GOAL_PAUSE_S + REPLAY_MAX_S {
                         if self.clock_expired() {
                             // A post-buzzer goal tied the game: go straight to the overtime
@@ -1847,5 +1866,48 @@ mod tests {
         m.world.ball.touch_history.push(sim::TouchRecord { car_idx: 0, time: t });
         m.on_goal(1 - team);
         assert_eq!(m.world.cars[0].stats.shots, 1);
+    }
+
+    #[test]
+    fn solo_spectate_match_spawns_all_bots_and_holds_replay_for_spectator() {
+        let mut settings = default_lobby_settings("Spec");
+        settings.team_size = 2;
+        settings.bot_fill = true;
+        let mut m = ServerMatch::new(MatchCreateOptions {
+            settings,
+            teammate_diff: None,
+            afk_enabled: false,
+            afk_warn_s: None,
+            afk_kick_s: None,
+            players: vec![MatchPlayerSpec {
+                user_id: "spec1".into(),
+                username: "Spec".into(),
+                team: -1,
+                car: sanitize_car(None),
+            }],
+            callbacks: Arc::new(NullSink),
+        });
+        assert!(m.humans.is_empty(), "spectator must not have a human car");
+        assert_eq!(m.world.cars.len(), 4, "2v2 AI match should spawn 4 bots");
+        assert!(m.world.cars.iter().all(|c| c.bot.is_some()));
+        assert!(m.car_info.iter().all(|c| c["userId"].is_null() && c["botId"].is_string()));
+
+        m.start();
+        m.state = MatchState::Goal;
+        m.state_t = GOAL_PAUSE_S + 0.5;
+        m.run_slot();
+        assert_eq!(
+            m.state,
+            MatchState::Goal,
+            "goal replay should stay open until solo spectator finishes/skips it"
+        );
+
+        m.mark_replay_done("spec1");
+        m.run_slot();
+        assert_eq!(
+            m.state,
+            MatchState::Countdown,
+            "marking spectator replay_done should advance to next kickoff"
+        );
     }
 }

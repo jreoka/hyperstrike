@@ -902,7 +902,7 @@ pub fn apply_solo_rewards_to_db(
         -1
     };
 
-    if duration <= 0 {
+    if duration <= 0 || (player_team != 0 && player_team != 1) {
         return Value::Null;
     }
     let Some(user) = db.data.users.get_mut(ulower) else {
@@ -1000,6 +1000,21 @@ fn finalize_solo_match(
     } else {
         -1
     };
+
+    if sm.player_team != 0 && sm.player_team != 1 {
+        let rt = state.rt.lock().unwrap();
+        send_to_conn(
+            &rt,
+            conn_id,
+            &json!({
+                "type": "solo_match_finished",
+                "score": [blue_score, orange_score],
+                "winnerTeam": winner_team,
+                "reward": Value::Null
+            }),
+        );
+        return;
+    }
 
     if state.config.is_primary() {
         let (reward, updated_user) = {
@@ -1537,6 +1552,7 @@ struct SoloEventSink {
     conn_id: u64,
     user_id: String,
     solo_gen: u64,
+    spectating: bool,
 }
 
 impl SoloEventSink {
@@ -1584,7 +1600,17 @@ impl MatchEventSink for SoloEventSink {
         }
     }
 
-    fn send_spectators(&self, _payload: SnapshotPayload) {}
+    fn send_spectators(&self, payload: SnapshotPayload) {
+        if !self.spectating {
+            return;
+        }
+        let rt = self.state.rt.lock().unwrap();
+        if self.is_current(&rt)
+            && let Some(c) = rt.conns.get(&self.conn_id)
+        {
+            c.send_snapshot_if_unblocked(payload);
+        }
+    }
 
     fn on_goal(&self, mut info: Value) {
         if let Some(obj) = info.as_object_mut() {
@@ -2635,6 +2661,7 @@ async fn handle_ws_message(
                 match raw.and_then(|o| json_strict_int(o.get("side"))) {
                     Some(0) => 0,
                     Some(1) => 1,
+                    Some(-1) => -1,
                     _ => rand::rngs::OsRng.gen_range(0..=1),
                 }
             };
@@ -2690,6 +2717,7 @@ async fn handle_ws_message(
                 conn_id,
                 user_id: user_id.clone(),
                 solo_gen,
+                spectating: player_team < 0,
             });
             let fut = state.backend.create_match(MatchCreateOptions {
                 settings: settings.clone(),

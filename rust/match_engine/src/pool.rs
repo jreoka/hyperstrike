@@ -47,6 +47,7 @@ struct LoadState {
     total: usize,
     ready: Vec<String>,
     humans: HashMap<String, i64>,
+    spectators: HashSet<String>,
 }
 
 pub struct TokioMatchHandle {
@@ -152,7 +153,7 @@ impl MatchHandle for TokioMatchHandle {
             }
             let pending: HashSet<String> = user_ids
                 .into_iter()
-                .filter(|u| st.humans.contains_key(u))
+                .filter(|u| st.humans.contains_key(u) || st.spectators.contains(u))
                 .collect();
             if pending.is_empty() {
                 true
@@ -184,11 +185,12 @@ impl MatchHandle for TokioMatchHandle {
         if self.stopped.load(Ordering::Relaxed) {
             return;
         }
-        let is_human = {
+        let can_signal = {
             let st = self.load.lock().unwrap_or_else(|e| e.into_inner());
             st.humans.contains_key(user_id)
+                || (st.humans.is_empty() && st.spectators.contains(user_id))
         };
-        if is_human {
+        if can_signal {
             let _ = self.tx.send(MatchCmd::ReplayDone(user_id.to_string()));
         }
     }
@@ -225,6 +227,7 @@ impl MatchHandle for TokioMatchHandle {
         {
             let mut st = self.load.lock().unwrap_or_else(|e| e.into_inner());
             st.humans.remove(user_id);
+            st.spectators.remove(user_id);
         }
         self.mark_loaded_inner(user_id, true);
         if !self.stopped.load(Ordering::Relaxed) {
@@ -312,7 +315,14 @@ impl MatchBackend for SimPool {
             let humans: HashMap<String, i64> = opts
                 .players
                 .iter()
+                .filter(|p| p.team == 0 || p.team == 1)
                 .map(|p| (p.user_id.clone(), 0))
+                .collect();
+            let spectators: HashSet<String> = opts
+                .players
+                .iter()
+                .filter(|p| p.team != 0 && p.team != 1)
+                .map(|p| p.user_id.clone())
                 .collect();
             let callbacks = Arc::clone(&opts.callbacks);
             let sim = ServerMatch::new(opts);
@@ -335,6 +345,7 @@ impl MatchBackend for SimPool {
                     total: 0,
                     ready: Vec::new(),
                     humans,
+                    spectators,
                 }),
                 active_matches,
                 released: AtomicBool::new(false),

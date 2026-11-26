@@ -187,6 +187,195 @@ async fn e2e_websocket_auth_and_live_solo_match_snapshots() {
 }
 
 #[tokio::test]
+async fn e2e_solo_spectate_ai_spawns_all_bots_and_streams_snapshots() {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "hyperstrike_e2e_spec_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = Config::from_env(&repo_root);
+    config.data_dir = tmp_dir.clone();
+    config.db_file = tmp_dir.join("db.json");
+    config.client_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into();
+    config.allowed_origin.clear();
+    config.allowed_host.clear();
+
+    let backend = Arc::new(SimPool::new(2));
+    let state = AppState::new(config.clone(), backend);
+    let token = {
+        let mut db = state.db.lock().unwrap();
+        let user = server_core::db::User {
+            id: "u_spec_1".into(),
+            username: "SpectatorPilot".into(),
+            pass_hash: "00".repeat(64),
+            salt: "testsalt12345678".into(),
+            created_at: 1_700_000_000_000,
+            level: 1,
+            xp: 0,
+            total_xp: 0,
+            rp: 100,
+            peak_rp: 100,
+            stats: server_core::db::UserStats::default(),
+            car: server_core::db::sanitize_car(None),
+            anti_cheat_flags: 0,
+            last_report_at: 0,
+            ac_ban_until: None,
+            ac_log: Vec::new(),
+        };
+        db.data.users.insert("spectatorpilot".into(), user);
+        db.create_session("spectatorpilot")
+    };
+
+    let app = server_core::router(Arc::clone(&state));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
+    });
+
+    let set_cookie = issue_client_cookie(&config.client_secret, "");
+    let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+
+    let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+    req.headers_mut()
+        .insert("Cookie", cookie_pair.parse().unwrap());
+    req.headers_mut()
+        .insert("Origin", format!("http://{addr}").parse().unwrap());
+
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(req)
+        .await
+        .expect("WS connect");
+
+    ws.send(Message::Text(
+        json!({ "type": "auth", "token": token }).to_string().into(),
+    ))
+    .await
+    .unwrap();
+
+    let mut authed = false;
+    while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_secs(2), ws.next()).await {
+        if let Message::Text(txt) = msg {
+            let v: Value = serde_json::from_str(&txt).unwrap();
+            if v["type"] == "auth_ok" {
+                authed = true;
+                break;
+            }
+        }
+    }
+    assert!(authed, "expected auth_ok");
+
+    // Start a solo match with side = -1 (Spectate AI)
+    ws.send(Message::Text(
+        json!({
+            "type": "solo_start",
+            "cfg": {
+                "teamSize": 2,
+                "side": -1,
+                "mode": "standard",
+                "arena": 0,
+                "layout": "default",
+                "duration": 120,
+                "difficulty": 1
+            }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    let mut saw_started = false;
+    let mut saw_kickoff = false;
+    let mut saw_binary_snap = false;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline && !(saw_started && saw_kickoff && saw_binary_snap)
+    {
+        match tokio::time::timeout(Duration::from_millis(500), ws.next()).await {
+            Ok(Some(Ok(Message::Text(txt)))) => {
+                let v: Value = serde_json::from_str(&txt).unwrap();
+                match v["type"].as_str() {
+                    Some("solo_match_start") => {
+                        let cars = v["cars"].as_array().expect("cars array");
+                        assert_eq!(cars.len(), 4, "2v2 Spectate AI should spawn 4 bots");
+                        assert!(
+                            cars.iter().all(|c| c["userId"].is_null() && c["botId"].is_string()),
+                            "spectator must not be placed in a car: {cars:?}"
+                        );
+                        saw_started = true;
+                        let mid = v["mid"].as_u64().expect("mid");
+                        ws.send(Message::Text(
+                            json!({ "type": "match_loaded", "m": mid })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
+                    Some("match_kickoff") => {
+                        assert!(saw_started, "kickoff must not arrive before solo_match_start");
+                        saw_kickoff = true;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Some(Ok(Message::Binary(bytes)))) => {
+                assert!(bytes.len() >= 32);
+                assert_eq!(bytes[0], NET_MAGIC);
+                assert_eq!(bytes[1], NET_VERSION);
+                saw_binary_snap = true;
+            }
+            _ => break,
+        }
+    }
+
+    assert!(saw_started, "expected solo_match_start");
+    assert!(saw_kickoff, "expected match_kickoff");
+    assert!(saw_binary_snap, "expected binary snapshot frame for spectator");
+
+    // Verify spectating does not grant stats/XP/RP via apply_solo_rewards_to_db
+    {
+        let mut db = state.db.lock().unwrap();
+        let reward = server_core::ws::apply_solo_rewards_to_db(
+            &mut db,
+            "u_spec_1",
+            "spectatorpilot",
+            120,
+            1,
+            false,
+            -1,
+            [3, 1],
+            &std::collections::HashMap::new(),
+        );
+        assert!(reward.is_null(), "spectating should not produce rewards");
+        let u = db.data.users.get("spectatorpilot").unwrap();
+        assert_eq!(u.stats.matches, 0);
+        assert_eq!(u.stats.wins, 0);
+        assert_eq!(u.stats.losses, 0);
+        assert_eq!(u.xp, 0);
+        assert_eq!(u.rp, 100);
+    }
+
+    ws.send(Message::Text(
+        json!({ "type": "solo_leave" }).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    let _ = ws.close(None).await;
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[tokio::test]
 async fn e2e_cross_room_kick_blocked_and_reauth_cleans_up() {
     let tmp_dir = std::env::temp_dir().join(format!(
         "hyperstrike_e2e_sec_{}",
