@@ -161,6 +161,16 @@ impl Config {
         self.peer_urls.get(&self.primary_region).map(|s| s.as_str())
     }
 
+    /// The region advertised to the game client. Empty when PRIMARY_REGION is not set in the
+    /// env (no cluster configured), so the game hides the region tag entirely.
+    pub fn advertised_region(&self) -> &str {
+        if self.primary_region.is_empty() {
+            ""
+        } else {
+            self.region.as_str()
+        }
+    }
+
     pub fn has_region(&self, target: &str) -> bool {
         let lower = target.trim().to_ascii_lowercase();
         !lower.is_empty()
@@ -430,6 +440,34 @@ mod tests {
             HeaderValue::from_static("https://hyperstrike.fly.dev/index.html"),
         );
         assert!(!cfg.is_request_allowed(&h, false));
+    }
+
+    #[test]
+    fn advertised_region_hides_without_primary_region() {
+        let mut cfg = Config {
+            port: 8080,
+            data_dir: PathBuf::from("data"),
+            db_file: PathBuf::from("data/db.json"),
+            index_file: PathBuf::from("index.html"),
+            region: "ord".into(),
+            primary_region: String::new(),
+            cluster_regions: Vec::new(),
+            fly_app_name: String::new(),
+            peer_urls: HashMap::new(),
+            allowed_origin: String::new(),
+            allowed_host: String::new(),
+            client_secret: "secret".into(),
+            sim_workers: 1,
+            trust_proxy: false,
+            afk_warn_secs: 20.0,
+            afk_kick_secs: 30.0,
+            admin_users: Vec::new(),
+        };
+        // PRIMARY_REGION unset -> no region advertised to the game
+        assert_eq!(cfg.advertised_region(), "");
+
+        cfg.primary_region = "ord".into();
+        assert_eq!(cfg.advertised_region(), "ord");
     }
 
     #[test]

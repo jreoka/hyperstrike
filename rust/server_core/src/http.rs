@@ -920,7 +920,7 @@ pub async fn me(
             "user": user,
             "isAdmin": is_admin,
             "server": {
-                "region": state.config.region,
+                "region": state.config.advertised_region(),
                 "online": online,
                 "lobbies": lobbies
             }

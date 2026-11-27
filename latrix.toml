@@ -1,0 +1,35 @@
+app = "hyperstrike"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+AC_LLM_BASE_URL = "https://openrouter.ai/api/v1"
+AC_LLM_MODEL = "tencent/hy4-flash"
+ADMIN_USER = "jreoka"
+DATA_DIR = "/data"
+NODE_ENV = "production"
+PORT = "8080"
+URL = "https://hyperstrike.win"
+
+[http]
+port = 8080
+domains = ["hyperstrike.win"]
+health = "/api/health"
+force_https = true
+
+[scale]
+count = 1
+cpu = 0.5
+memory = "256MB"
+
+[[volumes]]
+name = "hyperstrike-data"
+path = "/data"
+copies = 2
+sync = "30s"
+
+[deploy]
+strategy = "rolling"
+health_timeout = "90s"
+stop_timeout = "10s"

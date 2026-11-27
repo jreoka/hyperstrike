@@ -691,7 +691,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let me_json = body_json(resp).await;
         assert_eq!(me_json["user"]["username"], "AceDriver");
-        assert_eq!(me_json["server"]["region"], "test");
+        // PRIMARY_REGION unset -> no region advertised to the game
+        assert_eq!(me_json["server"]["region"], "");
 
         // 7. POST /api/car -> 200 sanitized
         let resp = app

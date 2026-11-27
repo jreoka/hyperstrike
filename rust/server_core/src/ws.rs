@@ -1800,7 +1800,7 @@ async fn handle_ws_message(
             &json!({
                 "type": "auth_ok",
                 "user": pub_u,
-                "region": state.config.region,
+                "region": state.config.advertised_region(),
                 "online": online
             }),
         );
