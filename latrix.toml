@@ -1,4 +1,5 @@
 app = "hyperstrike"
+region = "nyc1"
 
 [build]
 dockerfile = "Dockerfile"
