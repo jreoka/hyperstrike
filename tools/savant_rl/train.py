@@ -28,6 +28,7 @@ import os
 import signal
 import struct
 import subprocess
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -141,21 +142,43 @@ def install_signal_handlers():
 
 
 STATUS_STATE: dict = {}
+STATUS_LOCK = threading.Lock()
+_HEARTBEAT_STARTED = False
 
 
 def write_status_snapshot(**overrides):
     """Atomically persists live training status and rolling history to STATUS_FILE."""
-    if not STATUS_STATE:
-        return
-    STATUS_STATE.update(overrides)
-    STATUS_STATE["updatedAtMs"] = int(time.time() * 1000)
+    with STATUS_LOCK:
+        if not STATUS_STATE:
+            return
+        STATUS_STATE.update(overrides)
+        STATUS_STATE["updatedAtMs"] = int(time.time() * 1000)
+        payload = json.dumps(STATUS_STATE, separators=(",", ":"))
     try:
         STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = STATUS_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(STATUS_STATE, separators=(",", ":")), encoding="utf-8")
+        tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, STATUS_FILE)
     except OSError:
         pass
+
+
+def start_status_heartbeat(interval_secs: float = 30.0):
+    """Background daemon thread that keeps status.json heartbeat fresh during long CPU evals/updates."""
+    global _HEARTBEAT_STARTED
+    if _HEARTBEAT_STARTED:
+        return
+    _HEARTBEAT_STARTED = True
+
+    def _loop():
+        while True:
+            time.sleep(interval_secs)
+            with STATUS_LOCK:
+                st = STATUS_STATE.get("state")
+            if st in ("starting", "training", "evaluating", "paused"):
+                write_status_snapshot()
+
+    threading.Thread(target=_loop, name="savant-heartbeat", daemon=True).start()
 
 
 def load_prior_status_history() -> tuple[list[dict], list[dict], dict | None]:
@@ -756,8 +779,10 @@ def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
     # while EVAL_WORKERS=1 keeps Fly.io background training strictly single-core.
     if EVAL_WORKERS <= 1:
         res = {}
-        for k, kw in specs.items():
+        total_suites = len(specs)
+        for idx, (k, kw) in enumerate(specs.items(), start=1):
             wait_until_server_idle()
+            write_status_snapshot(state="evaluating", phase=f"eval {idx}/{total_suites} ({k})")
             res[k] = eval_against(lib, model_bytes, **kw)
     else:
         with ThreadPoolExecutor(max_workers=min(EVAL_WORKERS, len(specs))) as ex:
@@ -978,6 +1003,7 @@ def main():
         }
     )
     write_status_snapshot()
+    start_status_heartbeat(30.0)
 
     actor_opt = make_adamw(actor, STAGES[0]["actor_lr"])
     critic_opt = make_adamw(critic, STAGES[0]["critic_lr"])
@@ -1203,6 +1229,7 @@ def main():
             for t in range(ROLLOUT_STEPS):
                 if HEALTH_URL and (t % 16 == 0):
                     wait_until_server_idle()
+                    write_status_snapshot(state="training", phase=f"rollout {t}/{ROLLOUT_STEPS}")
                 obs_t = torch.nan_to_num(torch.from_numpy(obs_np).to(device), nan=0.0, posinf=5.0, neginf=-5.0)
                 obs_buf[t] = obs_t
                 ep_buf[t] = cur_ep
@@ -1297,6 +1324,8 @@ def main():
 
             for ep_i in range(PPO_EPOCHS):
                 wait_until_server_idle()
+                if HEALTH_URL:
+                    write_status_snapshot(state="training", phase=f"ppo epoch {ep_i + 1}/{PPO_EPOCHS}")
                 perm = torch.randperm(n_chunks, device=device)
                 for i in range(0, n_chunks, MINIBATCH_CHUNKS):
                     mb = perm[i : i + MINIBATCH_CHUNKS]

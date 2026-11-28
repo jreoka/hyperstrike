@@ -2108,7 +2108,7 @@ tbody tr:hover{background:var(--surf2)}
         <div class="kpi">
           <div class="kpi-label">Trainer Status <span class="badge ${stateMeta.cls}">${esc(stateMeta.label)}</span></div>
           <div class="kpi-val">${esc(st ? (st.device || 'cpu').toUpperCase() : (d.enabled ? 'BOOTING' : 'OFF'))}</div>
-          <div class="kpi-sub">${st && st.pauseReason ? esc(st.pauseReason) : (st && st.updatedAtMs ? 'Heartbeat ' + fmtRel(st.updatedAtMs) + ' · PID ' + (st.pid ?? '—') : (d.enabled ? 'Waiting for first status.json write' : 'SAVANT_BG_TRAIN != 1'))}</div>
+          <div class="kpi-sub">${st && st.pauseReason ? esc(st.pauseReason) : (st && st.updatedAtMs ? (st.phase ? esc(st.phase) + ' · ' : '') + 'Heartbeat ' + fmtRel(st.updatedAtMs) + ' · PID ' + (st.pid ?? '—') : (d.enabled ? 'Waiting for first status.json write' : 'SAVANT_BG_TRAIN != 1'))}</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">Curriculum Stage <span class="badge b-acc">S${stageIdx}</span></div>
