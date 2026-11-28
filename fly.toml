@@ -5,6 +5,7 @@
 
 app = 'dill-hyperstrike'
 primary_region = 'ord'
+kill_timeout = 30
 
 [build]
   dockerfile = 'Dockerfile'
@@ -15,6 +16,12 @@ primary_region = 'ord'
   NODE_ENV = 'production'
   PORT = '8080'
   PRIMARY_REGION = 'ord'
+  SAVANT_BG_TRAIN = '1'
+  SAVANT_EVAL_EVERY = '20'
+  SAVANT_MINIBATCH_SIZE = '1024'
+  SAVANT_NUM_ENVS = '64'
+  SAVANT_PAUSE_POLL_SECS = '5'
+  SIM_WORKERS = '1'
   URL = 'https://hyperstrike.win'
 
 [[mounts]]
@@ -39,5 +46,5 @@ primary_region = 'ord'
     path = '/api/health'
 
 [[vm]]
-  size = 'shared-cpu-1x'
-  memory = '256mb'
+  size = 'shared-cpu-2x'
+  memory = '1024mb'

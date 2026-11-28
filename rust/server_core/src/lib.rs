@@ -459,6 +459,7 @@ mod tests {
             port: 0,
             data_dir: dir.clone(),
             db_file: dir.join("db.json"),
+            savant_policy_file: dir.join("savant_rl").join("savant_policy.bin"),
             index_file,
             region: "test".into(),
             primary_region: String::new(),

@@ -1,11 +1,36 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use axum::serve::ListenerExt;
 use match_engine::SimPool;
 use server_core::AppState;
 use server_core::config::Config;
+
+fn try_reload_savant_policy(path: &Path, last_mtime: &mut Option<SystemTime>) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    let Ok(mtime) = meta.modified() else {
+        return;
+    };
+    if *last_mtime == Some(mtime) {
+        return;
+    }
+    if let Ok(bytes) = std::fs::read(path)
+        && match_engine::reload_savant_policy_bytes(&bytes)
+    {
+        let initial = last_mtime.is_none();
+        *last_mtime = Some(mtime);
+        eprintln!(
+            "[SAVANT] {} live policy from {} ({} bytes)",
+            if initial { "Loaded" } else { "Hot-reloaded" },
+            path.display(),
+            bytes.len()
+        );
+    }
+}
 
 fn resolve_base_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe()
@@ -46,6 +71,18 @@ async fn main() {
     let sim_workers = config.sim_workers;
     let region = config.region.clone();
     let data_dir_display = config.data_dir.display().to_string();
+    let savant_policy_file = config.savant_policy_file.clone();
+
+    let mut last_policy_mtime = None;
+    try_reload_savant_policy(&savant_policy_file, &mut last_policy_mtime);
+    let policy_watch_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            try_reload_savant_policy(&savant_policy_file, &mut last_policy_mtime);
+        }
+    });
 
     let model = match_engine::server_match::ac_model();
     server_core::anticheat::set_model_info(server_core::anticheat::ModelInfo {
@@ -82,6 +119,7 @@ async fn main() {
     .await
     .expect("serving");
 
+    policy_watch_task.abort();
     bg_tasks.shutdown().await;
     state.flush_db_sync();
 }

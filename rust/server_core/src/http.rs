@@ -237,14 +237,31 @@ pub async fn manifest_get(State(state): State<Arc<AppState>>, headers: HeaderMap
 }
 
 pub async fn savant_policy_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    serve_static_asset(
-        &state,
-        &headers,
-        EMBEDDED_SAVANT_POLICY,
-        "application/octet-stream",
-        "no-cache",
-        None,
-    )
+    if let Err(resp) = check_origin(&state, &headers) {
+        return *resp;
+    }
+    let body: Bytes = match std::fs::read(&state.config.savant_policy_file) {
+        Ok(raw) if raw.len() >= 24 && &raw[..4] == b"HSP2" => Bytes::from(raw),
+        _ => Bytes::from_static(EMBEDDED_SAVANT_POLICY),
+    };
+    let digest = Sha256::digest(&body);
+    let tag = format!("\"{}\"", hex::encode(&digest[..16]));
+    let etag = HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("\"0\""));
+
+    let mut resp = if etag_matches(&headers, &etag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        let mut r = (StatusCode::OK, body).into_response();
+        r.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        r
+    };
+    let h = resp.headers_mut();
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    h.insert(header::ETAG, etag);
+    resp
 }
 
 pub async fn sw_get(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {

@@ -4,7 +4,7 @@
 //! guaranteeing identical observation features, temporal KV-cached RoPE attention, and action
 //! decoding with zero train/serve skew.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use glam::DVec3;
 
@@ -944,6 +944,36 @@ pub fn embedded_savant_policy() -> Option<&'static SavantPolicy> {
     static POL: OnceLock<Option<SavantPolicy>> = OnceLock::new();
     POL.get_or_init(|| SavantPolicy::from_bytes(EMBEDDED_POLICY_BYTES))
         .as_ref()
+}
+
+fn live_policy_slot() -> &'static RwLock<Option<Arc<SavantPolicy>>> {
+    static LIVE_POL: OnceLock<RwLock<Option<Arc<SavantPolicy>>>> = OnceLock::new();
+    LIVE_POL.get_or_init(|| {
+        RwLock::new(SavantPolicy::from_bytes(EMBEDDED_POLICY_BYTES).map(Arc::new))
+    })
+}
+
+/// Returns the currently active SAVANT neural policy (hot-reloaded from disk if available,
+/// otherwise falling back to `EMBEDDED_POLICY_BYTES`).
+pub fn active_savant_policy() -> Option<Arc<SavantPolicy>> {
+    live_policy_slot()
+        .read()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(Arc::clone))
+}
+
+/// Parses `bytes` as an `HSP2` policy and atomically swaps it in as the active SAVANT policy.
+/// Returns `true` if the bytes were valid and installed, `false` otherwise.
+pub fn reload_savant_policy_bytes(bytes: &[u8]) -> bool {
+    let Some(pol) = SavantPolicy::from_bytes(bytes) else {
+        return false;
+    };
+    if let Ok(mut guard) = live_policy_slot().write() {
+        *guard = Some(Arc::new(pol));
+        true
+    } else {
+        false
+    }
 }
 
 /// Returns true if the arena shape and match state are supported by the trained neural policy.

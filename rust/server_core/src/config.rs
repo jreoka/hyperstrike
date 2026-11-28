@@ -9,6 +9,7 @@ pub struct Config {
     pub port: u16,
     pub data_dir: PathBuf,
     pub db_file: PathBuf,
+    pub savant_policy_file: PathBuf,
     pub index_file: PathBuf,
     pub region: String,
     pub primary_region: String,
@@ -39,6 +40,11 @@ impl Config {
             .unwrap_or_else(|| base_dir.join("data"));
 
         let db_file = data_dir.join("db.json");
+        let savant_policy_file = std::env::var("SAVANT_POLICY_PATH")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("savant_rl").join("savant_policy.bin"));
         let index_file = base_dir.join("index.html");
 
         let region = std::env::var("FLY_REGION")
@@ -132,6 +138,7 @@ impl Config {
             port,
             data_dir,
             db_file,
+            savant_policy_file,
             index_file,
             region,
             primary_region,
@@ -399,6 +406,7 @@ mod tests {
             port: 8080,
             data_dir: PathBuf::from("data"),
             db_file: PathBuf::from("data/db.json"),
+            savant_policy_file: PathBuf::from("data/savant_rl/savant_policy.bin"),
             index_file: PathBuf::from("index.html"),
             region: "local".into(),
             primary_region: String::new(),
@@ -448,6 +456,7 @@ mod tests {
             port: 8080,
             data_dir: PathBuf::from("data"),
             db_file: PathBuf::from("data/db.json"),
+            savant_policy_file: PathBuf::from("data/savant_rl/savant_policy.bin"),
             index_file: PathBuf::from("index.html"),
             region: "ord".into(),
             primary_region: String::new(),
@@ -476,6 +485,7 @@ mod tests {
             port: 8080,
             data_dir: PathBuf::from("data"),
             db_file: PathBuf::from("data/db.json"),
+            savant_policy_file: PathBuf::from("data/savant_rl/savant_policy.bin"),
             index_file: PathBuf::from("index.html"),
             region: "local".into(),
             primary_region: String::new(),

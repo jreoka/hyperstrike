@@ -10,7 +10,7 @@ use crate::math_ext::{
 };
 use crate::physics::{Ball, Car, PredSlice};
 use crate::policy::{
-    OBS_DIM, POLICY_TICK_SKIP, SavantPolicyCache, decode_action, embedded_savant_policy,
+    OBS_DIM, POLICY_TICK_SKIP, SavantPolicyCache, active_savant_policy, decode_action,
     extract_obs, policy_supports_world,
 };
 use crate::powers::PowerTarget;
@@ -825,7 +825,7 @@ impl BotAi {
             && self.aer.is_none()
             && self.seq.is_none()
             && policy_supports_world(w)
-            && let Some(pol) = embedded_savant_policy()
+            && let Some(pol) = active_savant_policy()
         {
             let car = &w.cars[car_idx];
             let ad = Self::attack_dir(car);

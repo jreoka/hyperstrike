@@ -3,6 +3,7 @@ pub mod server_match;
 
 pub use pool::{SimPool, TokioMatchHandle, detect_worker_count};
 pub use server_match::{MatchState, ServerMatch, parse_packed_controls, unpack_controls};
+pub use sim::reload_savant_policy_bytes;
 
 #[cfg(test)]
 mod tests {

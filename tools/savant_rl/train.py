@@ -22,11 +22,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
+import json
 import math
 import os
+import signal
 import struct
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -36,9 +39,14 @@ import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[2]
 RL_ENV_DIR = ROOT / "rust" / "rl_env"
-DLL_PATH = RL_ENV_DIR / "target" / "release" / ("rl_env.dll" if os.name == "nt" else "librl_env.so")
-OUT_MODEL = ROOT / "rust" / "sim" / "assets" / "savant_policy.bin"
-CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
+DLL_PATH = Path(
+    os.environ.get(
+        "SAVANT_RL_LIB",
+        str(RL_ENV_DIR / "target" / "release" / ("rl_env.dll" if os.name == "nt" else "librl_env.so")),
+    )
+)
+OUT_MODEL = Path(os.environ.get("SAVANT_OUT_MODEL", str(ROOT / "rust" / "sim" / "assets" / "savant_policy.bin")))
+CKPT_DIR = Path(os.environ.get("SAVANT_CKPT_DIR", str(Path(__file__).resolve().parent / "checkpoints")))
 LATEST_PT = CKPT_DIR / "latest.pt"
 BEST_PT = CKPT_DIR / "best.pt"
 
@@ -69,14 +77,18 @@ CTX_LEN = 16          # Sliding window of 16 frames (0.53s/layer; 1.03s effectiv
 ROPE_THETA = 100.0    # Tuned for 1..16 frame relative temporal resolution
 PREFIX_LEN = max(ACTOR_LAYERS, CRITIC_LAYERS) * (CTX_LEN - 1)  # 30: exact receptive field for zero train/serve skew
 
-# Training hyperparameters (zero flags needed)
-NUM_ENVS = 256
+# Training hyperparameters (zero flags needed; env-overridable for headless CPU servers)
+NUM_ENVS = max(8, int(os.environ.get("SAVANT_NUM_ENVS", "256")))
 ROLLOUT_STEPS = 128
 CHUNK_LEN = 64        # Divides ROLLOUT_STEPS cleanly; 2 chunks per agent per rollout
-MINIBATCH_SIZE = 4096
+MINIBATCH_SIZE = max(CHUNK_LEN, int(os.environ.get("SAVANT_MINIBATCH_SIZE", "4096")))
 MINIBATCH_CHUNKS = max(1, MINIBATCH_SIZE // CHUNK_LEN)
 PPO_EPOCHS = 4
-EVAL_EVERY = 50
+EVAL_EVERY = max(1, int(os.environ.get("SAVANT_EVAL_EVERY", "50")))
+EVAL_WORKERS = max(1, int(os.environ.get("SAVANT_EVAL_WORKERS", "8")))
+HEALTH_URL = os.environ.get("SAVANT_HEALTH_URL", "").strip()
+PAUSE_POLL_SECS = max(1.0, float(os.environ.get("SAVANT_PAUSE_POLL_SECS", "5.0")))
+UPDATE_SLEEP_SECS = max(0.0, float(os.environ.get("SAVANT_UPDATE_SLEEP", "0.0")))
 GAMMA = 0.994
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
@@ -118,9 +130,54 @@ def disable_windows_quick_edit():
         pass
 
 
+def install_signal_handlers():
+    """Converts SIGTERM (e.g. Fly.io stop/redeploy) into KeyboardInterrupt for clean checkpoint saves."""
+    def _handle_term(signum, _frame):
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_term)
+
+
+def wait_until_server_idle():
+    """When SAVANT_HEALTH_URL is set, pauses training while any live player or match is active."""
+    if not HEALTH_URL:
+        return
+    paused = False
+    while True:
+        online = 0
+        active_matches = 0
+        try:
+            with urllib.request.urlopen(HEALTH_URL, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                online = int(data.get("online", 0))
+                active_matches = int(data.get("activeMatches", 0))
+        except Exception:
+            # If the server is starting up or unreachable briefly, don't deadlock training
+            if paused:
+                print("[RESUME] Health endpoint unreachable — resuming training", flush=True)
+            return
+        if online > 0 or active_matches > 0:
+            if not paused:
+                print(
+                    f"[PAUSE] Live server busy (online={online}, activeMatches={active_matches}) "
+                    f"— yielding CPU until idle...",
+                    flush=True,
+                )
+                paused = True
+            time.sleep(PAUSE_POLL_SECS)
+        else:
+            if paused:
+                print("[RESUME] Live server idle — resuming background RL training", flush=True)
+            return
+
+
 def build_and_load_dll() -> ctypes.CDLL:
-    print("[build] compiling rust/rl_env (--release)...", flush=True)
-    subprocess.run(["cargo", "build", "--release"], cwd=RL_ENV_DIR, check=True)
+    if os.environ.get("SAVANT_RL_LIB") and DLL_PATH.exists():
+        print(f"[build] loading prebuilt rl_env library: {DLL_PATH}", flush=True)
+    else:
+        print("[build] compiling rust/rl_env (--release)...", flush=True)
+        subprocess.run(["cargo", "build", "--release"], cwd=RL_ENV_DIR, check=True)
     lib = ctypes.CDLL(str(DLL_PATH))
 
     lib.rl_pool_new.argtypes = [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint32]
@@ -657,10 +714,17 @@ def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
         "may1": dict(opp_diff=5, team_size=1, matches=4, secs=180.0, arena=0, mayhem=1),
         "may2": dict(opp_diff=4, team_size=2, matches=4, secs=180.0, arena=0, mayhem=1),
     }
-    # ctypes.CDLL releases the GIL, so running all 8 suites concurrently saturates CPU cores (~3-4x faster)
-    with ThreadPoolExecutor(max_workers=len(specs)) as ex:
-        futs = {k: ex.submit(eval_against, lib, model_bytes, **kw) for k, kw in specs.items()}
-        res = {k: f.result() for k, f in futs.items()}
+    # ctypes.CDLL releases the GIL, so running suites concurrently saturates CPU cores on desktop
+    # while EVAL_WORKERS=1 keeps Fly.io background training strictly single-core.
+    if EVAL_WORKERS <= 1:
+        res = {}
+        for k, kw in specs.items():
+            wait_until_server_idle()
+            res[k] = eval_against(lib, model_bytes, **kw)
+    else:
+        with ThreadPoolExecutor(max_workers=min(EVAL_WORKERS, len(specs))) as ex:
+            futs = {k: ex.submit(eval_against, lib, model_bytes, **kw) for k, kw in specs.items()}
+            res = {k: f.result() for k, f in futs.items()}
 
     e_chp1, e_leg1, e_mpc1 = res["chp1"], res["leg1"], res["mpc1"]
     e_leg2, e_mpc2, e_exp1 = res["leg2"], res["mpc2"], res["exp1"]
@@ -806,6 +870,15 @@ def is_compatible_hsp2(blob: bytes) -> bool:
 
 def main():
     disable_windows_quick_edit()
+    install_signal_handlers()
+    torch_threads_raw = os.environ.get("SAVANT_TORCH_THREADS", "").strip()
+    if torch_threads_raw:
+        n_t = max(1, int(torch_threads_raw))
+        torch.set_num_threads(n_t)
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError:
+            pass
     seed = int(time.time()) & 0x7FFFFFFF
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -1007,6 +1080,8 @@ def main():
             actor.eval()
             critic.eval()
             for t in range(ROLLOUT_STEPS):
+                if HEALTH_URL and (t % 16 == 0):
+                    wait_until_server_idle()
                 obs_t = torch.nan_to_num(torch.from_numpy(obs_np).to(device), nan=0.0, posinf=5.0, neginf=-5.0)
                 obs_buf[t] = obs_t
                 ep_buf[t] = cur_ep
@@ -1100,6 +1175,7 @@ def main():
             actor_steps = 0
 
             for ep_i in range(PPO_EPOCHS):
+                wait_until_server_idle()
                 perm = torch.randperm(n_chunks, device=device)
                 for i in range(0, n_chunks, MINIBATCH_CHUNKS):
                     mb = perm[i : i + MINIBATCH_CHUNKS]
@@ -1237,6 +1313,9 @@ def main():
                     )
                     st = alloc_rollout_state(num_agents, actor, critic, device)
                     print(f"[PPO] rebuilt pool for Stage {stage} ({STAGES[stage]['name']}): {NUM_ENVS} envs, {num_agents} controlled agents", flush=True)
+
+            if UPDATE_SLEEP_SECS > 0.0:
+                time.sleep(UPDATE_SLEEP_SECS)
     except KeyboardInterrupt:
         print(f"\n[STOP] Ctrl+C received at update {upd} ({total_env_steps/1e6:.2f}M steps) — saving {LATEST_PT.name}...", flush=True)
         atomic_torch_save(make_checkpoint_payload(last_eval_score), LATEST_PT)

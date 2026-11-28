@@ -32,8 +32,9 @@ pub use physics::{
 };
 pub use policy::{
     ACT_BRANCHES, ACT_HEADS, EMBEDDED_POLICY_BYTES, OBS_DIM, POLICY_MAGIC, POLICY_TICK_SKIP,
-    SavantPolicy, SavantPolicyCache, TOTAL_LOGITS, decode_action, embedded_savant_policy,
-    encode_action, extract_obs, policy_supports_world,
+    SavantPolicy, SavantPolicyCache, TOTAL_LOGITS, active_savant_policy, decode_action,
+    embedded_savant_policy, encode_action, extract_obs, policy_supports_world,
+    reload_savant_policy_bytes,
 };
 pub use powers::{
     POWERS, PowerDef, PowerEvent, PowerShot, PowerSystem, PowerTarget, PowerTargetKind,

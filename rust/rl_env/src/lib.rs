@@ -740,11 +740,19 @@ pub extern "C" fn rl_pool_new(num_envs: usize, seed: u64, pool_mode: u32) -> *mu
         envs.push(env);
     }
 
-    let n_threads = thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(8)
-        .min(24)
-        .min(num_envs.max(1));
+    let env_threads = std::env::var("RL_ENV_THREADS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1);
+    let n_threads = env_threads
+        .unwrap_or_else(|| {
+            thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(8)
+                .min(24)
+        })
+        .min(num_envs.max(1))
+        .max(1);
 
     let sync = Arc::new(PoolSync {
         state: Mutex::new(PoolSharedState {
@@ -991,53 +999,54 @@ pub unsafe extern "C" fn rl_eval_policy(
     let pol = Arc::new(pol);
     let n_exp = ARENAS.len() - EXPERIMENTAL_ARENAS_START;
 
-    let mut agg = [0i32; 7];
-    thread::scope(|s| {
-        let mut handles = Vec::with_capacity(num_matches);
-        for m in 0..num_matches {
-            let pol = Arc::clone(&pol);
-            let a_idx = if arena_idx == EVAL_ARENA_EXPERIMENTAL_CYCLE {
-                EXPERIMENTAL_ARENAS_START + (m % n_exp)
-            } else {
-                arena_idx.min(ARENAS.len() - 1)
-            };
-            let arena = ARENAS[a_idx];
-            handles.push(s.spawn(move || {
-                let swap = m % 2 == 1;
-                let a_team: u8 = if swap { 1 } else { 0 };
-                let mut w = World::with_seed(arena, &ArenaOpts::default(), 5000 + m as u64);
-                if mayhem != 0 {
-                    w.powers = Some(PowerSystem::new(10.0));
-                }
-                let mut id = 0usize;
-                let mut a_cars = Vec::new();
-                for team in [0u8, 1u8] {
-                    for k in 0..team_size {
-                        let ci = w.add_car(Car::new(id, team, format!("E{id}"), 0));
-                        if team == a_team {
-                            a_cars.push(ci);
-                        } else {
-                            let mut bot = BotAi::new_with_rng(opp_diff, k % PERSONALITIES.len(), &mut w.rng);
-                            bot.force_mpc = true;
-                            w.cars[ci].bot = Some(bot);
-                        }
-                        id += 1;
-                    }
-                }
-                setup_kickoff(&mut w, team_size);
-                let mut prev_ctls = vec![Controls::default(); w.cars.len()];
-                let mut rem = vec![0u8; w.cars.len()];
-                let mut caches = vec![SavantPolicyCache::default(); w.cars.len()];
-                let dt = w.phys.dt;
-                let mut t = 0.0;
-                let mut since = 0.0;
-                let (mut ga, mut gb, mut sa, mut sb, mut oga) = (0i32, 0i32, 0i32, 0i32, 0i32);
+    let max_eval_threads = std::env::var("RL_ENV_THREADS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(num_matches.max(1));
 
-                while t < secs {
-                    for &ci in &a_cars {
-                        if !w.cars[ci].demolished {
-                            if rem[ci] == 0 {
-                                let mut ob = [0.0_f32; OBS_DIM];
+    let run_match = |m: usize| -> [i32; 7] {
+        let a_idx = if arena_idx == EVAL_ARENA_EXPERIMENTAL_CYCLE {
+            EXPERIMENTAL_ARENAS_START + (m % n_exp)
+        } else {
+            arena_idx.min(ARENAS.len() - 1)
+        };
+        let arena = ARENAS[a_idx];
+        let swap = m % 2 == 1;
+        let a_team: u8 = if swap { 1 } else { 0 };
+        let mut w = World::with_seed(arena, &ArenaOpts::default(), 5000 + m as u64);
+        if mayhem != 0 {
+            w.powers = Some(PowerSystem::new(10.0));
+        }
+        let mut id = 0usize;
+        let mut a_cars = Vec::new();
+        for team in [0u8, 1u8] {
+            for k in 0..team_size {
+                let ci = w.add_car(Car::new(id, team, format!("E{id}"), 0));
+                if team == a_team {
+                    a_cars.push(ci);
+                } else {
+                    let mut bot = BotAi::new_with_rng(opp_diff, k % PERSONALITIES.len(), &mut w.rng);
+                    bot.force_mpc = true;
+                    w.cars[ci].bot = Some(bot);
+                }
+                id += 1;
+            }
+        }
+        setup_kickoff(&mut w, team_size);
+        let mut prev_ctls = vec![Controls::default(); w.cars.len()];
+        let mut rem = vec![0u8; w.cars.len()];
+        let mut caches = vec![SavantPolicyCache::default(); w.cars.len()];
+        let dt = w.phys.dt;
+        let mut t = 0.0;
+        let mut since = 0.0;
+        let (mut ga, mut gb, mut sa, mut sb, mut oga) = (0i32, 0i32, 0i32, 0i32, 0i32);
+
+        while t < secs {
+            for &ci in &a_cars {
+                if !w.cars[ci].demolished {
+                    if rem[ci] == 0 {
+                        let mut ob = [0.0_f32; OBS_DIM];
                                 extract_obs(&w, ci, &prev_ctls[ci], &mut ob);
                                 let act = pol.act_greedy(&ob, &mut caches[ci]);
                                 prev_ctls[ci] = decode_action(&act);
@@ -1089,18 +1098,34 @@ pub unsafe extern "C" fn rl_eval_policy(
                         since = 0.0;
                     }
                 }
-                let wa = i32::from(ga > gb);
-                let wb = i32::from(gb > ga);
-                [ga, gb, wa, wb, sa, sb, oga]
-            }));
-        }
-        for h in handles {
-            let r = h.join().unwrap();
+        let wa = i32::from(ga > gb);
+        let wb = i32::from(gb > ga);
+        [ga, gb, wa, wb, sa, sb, oga]
+    };
+
+    let mut agg = [0i32; 7];
+    if max_eval_threads <= 1 {
+        for m in 0..num_matches {
+            let r = run_match(m);
             for i in 0..7 {
                 agg[i] += r[i];
             }
         }
-    });
+    } else {
+        let run_match = &run_match;
+        thread::scope(|s| {
+            let mut handles = Vec::with_capacity(num_matches);
+            for m in 0..num_matches {
+                handles.push(s.spawn(move || run_match(m)));
+            }
+            for h in handles {
+                let r = h.join().unwrap();
+                for i in 0..7 {
+                    agg[i] += r[i];
+                }
+            }
+        });
+    }
 
     let out = unsafe { slice::from_raw_parts_mut(out_metrics, 7) };
     out.copy_from_slice(&agg);
