@@ -30,13 +30,12 @@ RUN apt-get update \
     && /opt/venv/bin/pip install --no-cache-dir numpy \
     && /opt/venv/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
     && useradd -r -u 1000 -m hyperstrike \
-    && mkdir -p /data /app/tools/savant_rl /app/seed/checkpoints \
+    && mkdir -p /data /app/tools/savant_rl /app/seed \
     && chown -R hyperstrike:hyperstrike /app /data
 
 COPY --from=builder /build/rust/app/target/release/server /app/server
 COPY --from=builder /build/rust/rl_env/target/release/librl_env.so /app/librl_env.so
 COPY tools/savant_rl/train.py /app/tools/savant_rl/train.py
-COPY tools/savant_rl/checkpoints/ /app/seed/checkpoints/
 COPY rust/sim/assets/savant_policy.bin /app/seed/savant_policy.bin
 COPY docker-entrypoint.sh /app/entrypoint.sh
 
