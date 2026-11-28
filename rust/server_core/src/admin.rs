@@ -1301,13 +1301,31 @@ pub(crate) fn training_summary_json(state: &AppState) -> Value {
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
     let now = now_ms();
+    let (online, ws_conns, active_matches) = {
+        let rt = state.rt.lock().unwrap();
+        (
+            rt.clients_by_user_id.len(),
+            rt.conns.len(),
+            state.backend.stats().active_matches,
+        )
+    };
+    let server_busy = online > 0 || ws_conns > 0 || active_matches > 0;
     if let Some(st) = read_training_status(state) {
         let raw_state = st.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
         let updated_at = st.get("updatedAtMs").and_then(|v| v.as_i64()).unwrap_or(0);
-        let stale = matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
+        let frozen_by_players = server_busy
+            && matches!(raw_state, "training" | "evaluating" | "paused" | "starting");
+        let stale = !frozen_by_players
+            && matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
             && updated_at > 0
             && (now - updated_at) > 180_000;
-        let effective_state = if stale { "stale" } else { raw_state };
+        let effective_state = if frozen_by_players {
+            "paused"
+        } else if stale {
+            "stale"
+        } else {
+            raw_state
+        };
         json!({
             "enabled": enabled,
             "state": effective_state,
@@ -1351,22 +1369,42 @@ pub async fn training_stats(State(state): State<Arc<AppState>>, headers: HeaderM
         .map(|b| b.len() >= 24 && &b[..4] == b"HSP2")
         .unwrap_or(false);
 
-    let status = read_training_status(&state);
+    let (online, ws_conns, active_matches) = {
+        let rt = state.rt.lock().unwrap();
+        (
+            rt.clients_by_user_id.len(),
+            rt.conns.len(),
+            state.backend.stats().active_matches,
+        )
+    };
+    let server_busy = online > 0 || ws_conns > 0 || active_matches > 0;
+
+    let mut status = read_training_status(&state);
+    let mut frozen_by_players = false;
+    if let Some(Value::Object(ref mut obj)) = status {
+        let raw_state = obj.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+        if server_busy && matches!(raw_state, "training" | "evaluating" | "paused" | "starting") {
+            frozen_by_players = true;
+            obj.insert("state".into(), json!("paused"));
+            obj.insert(
+                "pauseReason".into(),
+                json!(format!(
+                    "Paused while players are active (online={online}, matches={active_matches})"
+                )),
+            );
+        }
+    }
     let is_stale = status
         .as_ref()
         .map(|st| {
             let raw_state = st.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
             let updated_at = st.get("updatedAtMs").and_then(|v| v.as_i64()).unwrap_or(0);
-            matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
+            !frozen_by_players
+                && matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
                 && updated_at > 0
                 && (now - updated_at) > 180_000
         })
         .unwrap_or(false);
-
-    let (online, active_matches) = {
-        let rt = state.rt.lock().unwrap();
-        (rt.clients_by_user_id.len(), state.backend.stats().active_matches)
-    };
 
     json_response(
         &state,

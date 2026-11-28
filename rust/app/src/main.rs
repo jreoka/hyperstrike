@@ -1,35 +1,75 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::serve::ListenerExt;
 use match_engine::SimPool;
 use server_core::AppState;
 use server_core::config::Config;
 
-fn try_reload_savant_policy(path: &Path, last_mtime: &mut Option<SystemTime>) {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return;
-    };
-    let Ok(mtime) = meta.modified() else {
-        return;
-    };
-    if *last_mtime == Some(mtime) {
-        return;
+fn try_reload_savant_policy(path: &Path, last_mtime: Option<SystemTime>) -> Option<SystemTime> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    if last_mtime == Some(mtime) {
+        return last_mtime;
     }
     if let Ok(bytes) = std::fs::read(path)
         && match_engine::reload_savant_policy_bytes(&bytes)
     {
         let initial = last_mtime.is_none();
-        *last_mtime = Some(mtime);
         eprintln!(
             "[SAVANT] {} live policy from {} ({} bytes)",
             if initial { "Loaded" } else { "Hot-reloaded" },
             path.display(),
             bytes.len()
         );
+        return Some(mtime);
     }
+    last_mtime
+}
+
+fn spawn_trainer_busy_flag_task(state: Arc<AppState>) -> Option<tokio::task::JoinHandle<()>> {
+    let busy_path = std::env::var("SAVANT_BUSY_FILE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)?;
+    let cooldown_secs: u64 = std::env::var("SAVANT_IDLE_COOLDOWN_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(30);
+    let cooldown = Duration::from_secs(cooldown_secs);
+
+    Some(tokio::spawn(async move {
+        let _ = tokio::fs::remove_file(&busy_path).await;
+        let mut is_busy = false;
+        let mut idle_since: Option<Instant> = None;
+        let mut interval = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            interval.tick().await;
+            let active_matches = state.backend.stats().active_matches;
+            let (online, ws_conns) = {
+                let rt = state.rt.lock().unwrap();
+                (rt.clients_by_user_id.len(), rt.conns.len())
+            };
+            let busy_now = online > 0 || ws_conns > 0 || active_matches > 0;
+            if busy_now {
+                idle_since = None;
+                if !is_busy {
+                    let _ = tokio::fs::write(&busy_path, b"1").await;
+                    is_busy = true;
+                }
+            } else if is_busy {
+                let since = *idle_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= cooldown {
+                    let _ = tokio::fs::remove_file(&busy_path).await;
+                    is_busy = false;
+                    idle_since = None;
+                }
+            }
+        }
+    }))
 }
 
 fn resolve_base_dir() -> PathBuf {
@@ -73,14 +113,19 @@ async fn main() {
     let data_dir_display = config.data_dir.display().to_string();
     let savant_policy_file = config.savant_policy_file.clone();
 
-    let mut last_policy_mtime = None;
-    try_reload_savant_policy(&savant_policy_file, &mut last_policy_mtime);
+    let mut last_policy_mtime = try_reload_savant_policy(&savant_policy_file, None);
     let policy_watch_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(15));
         interval.tick().await;
         loop {
             interval.tick().await;
-            try_reload_savant_policy(&savant_policy_file, &mut last_policy_mtime);
+            let p = savant_policy_file.clone();
+            let prev = last_policy_mtime;
+            if let Ok(next) =
+                tokio::task::spawn_blocking(move || try_reload_savant_policy(&p, prev)).await
+            {
+                last_policy_mtime = next;
+            }
         }
     });
 
@@ -95,6 +140,7 @@ async fn main() {
     let backend = Arc::new(SimPool::new(sim_workers));
     let state = AppState::new(config, backend);
     let bg_tasks = state.spawn_background_tasks();
+    let busy_flag_task = spawn_trainer_busy_flag_task(Arc::clone(&state));
 
     let app = server_core::router(Arc::clone(&state));
     let listener = match tokio::net::TcpListener::bind(SocketAddr::from(([0u16; 8], port))).await {
@@ -120,6 +166,9 @@ async fn main() {
     .expect("serving");
 
     policy_watch_task.abort();
+    if let Some(t) = busy_flag_task {
+        t.abort();
+    }
     bg_tasks.shutdown().await;
     state.flush_db_sync();
 }

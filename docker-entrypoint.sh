@@ -23,6 +23,9 @@ if [ ! -f "${POLICY_OUT}" ] && [ -f "/app/seed/savant_policy.bin" ]; then
 fi
 
 NPROC="$(nproc 2>/dev/null || echo 1)"
+BUSY_FILE="${SAVANT_BUSY_FILE:-/tmp/hyperstrike_busy}"
+export SAVANT_BUSY_FILE="${BUSY_FILE}"
+rm -f "${BUSY_FILE}"
 SERVER_PID=""
 TRAIN_WRAPPER_PID=""
 STOPPING=0
@@ -45,27 +48,25 @@ shutdown() {
     if [ -n "${SERVER_PID}" ]; then
         wait "${SERVER_PID}" 2>/dev/null || true
     fi
+    rm -f "${BUSY_FILE}"
     exit 0
 }
 
 trap shutdown TERM INT
 
-# Start live Rust game server pinned to CPU 0 when >= 2 CPUs are available
-if [ "${NPROC}" -ge 2 ] && command -v taskset >/dev/null 2>&1; then
-    echo "[entrypoint] Starting game server pinned to CPU 0 (nproc=${NPROC}, SIM_WORKERS=${SIM_WORKERS:-auto})"
-    taskset -c 0 /app/server &
-else
-    echo "[entrypoint] Starting game server (nproc=${NPROC}, SIM_WORKERS=${SIM_WORKERS:-auto})"
-    /app/server &
-fi
+# Start live Rust game server with unrestricted access to all CPUs so live matches never starve
+echo "[entrypoint] Starting game server (nproc=${NPROC}, SIM_WORKERS=${SIM_WORKERS:-auto})"
+/app/server &
 SERVER_PID=$!
 
-# Start background SAVANT RL trainer pinned to CPU 1 (nice 19, single-threaded, pauses on live players)
+# Start background SAVANT RL trainer (nice 19, idle I/O, single-threaded, instant SIGSTOP on live players)
 if [ "${SAVANT_BG_TRAIN:-0}" = "1" ]; then
     (
         TRAIN_CHILD=""
         stop_trainer() {
             if [ -n "${TRAIN_CHILD}" ]; then
+                # Always SIGCONT first so a frozen trainer can catch SIGTERM and save latest.pt cleanly
+                kill -CONT "${TRAIN_CHILD}" 2>/dev/null || true
                 kill -TERM "${TRAIN_CHILD}" 2>/dev/null || true
                 wait "${TRAIN_CHILD}" 2>/dev/null || true
             fi
@@ -89,14 +90,45 @@ if [ "${SAVANT_BG_TRAIN:-0}" = "1" ]; then
         export NUMEXPR_NUM_THREADS="1"
 
         while true; do
+            # Wait until server is idle before spawning trainer so cold boot doesn't contend with players
+            while [ -f "${BUSY_FILE}" ]; do
+                sleep 1 &
+                wait $! || true
+            done
+
             if [ "${NPROC}" -ge 2 ] && command -v taskset >/dev/null 2>&1; then
-                echo "[entrypoint] Starting SAVANT RL trainer pinned to CPU 1 (nice 19)"
-                taskset -c 1 nice -n 19 /opt/venv/bin/python -u /app/tools/savant_rl/train.py &
+                echo "[entrypoint] Starting SAVANT RL trainer pinned to CPU 1 (nice 19, duty=${SAVANT_CPU_DUTY:-1.0})"
+                if command -v ionice >/dev/null 2>&1; then
+                    taskset -c 1 ionice -c 3 nice -n 19 /opt/venv/bin/python -u /app/tools/savant_rl/train.py &
+                else
+                    taskset -c 1 nice -n 19 /opt/venv/bin/python -u /app/tools/savant_rl/train.py &
+                fi
             else
-                echo "[entrypoint] Starting SAVANT RL trainer (nice 19)"
+                echo "[entrypoint] Starting SAVANT RL trainer (nice 19, duty=${SAVANT_CPU_DUTY:-1.0})"
                 nice -n 19 /opt/venv/bin/python -u /app/tools/savant_rl/train.py &
             fi
             TRAIN_CHILD=$!
+            FROZEN=0
+
+            # Instant OS-level freeze/resume supervisor: SIGSTOP freezes Python/PyTorch/Rust FFI in <1ms
+            while kill -0 "${TRAIN_CHILD}" 2>/dev/null; do
+                if [ -f "${BUSY_FILE}" ]; then
+                    if [ "${FROZEN}" -eq 0 ]; then
+                        kill -STOP "${TRAIN_CHILD}" 2>/dev/null || true
+                        FROZEN=1
+                        echo "[entrypoint] Live players active — froze SAVANT RL trainer (SIGSTOP)"
+                    fi
+                else
+                    if [ "${FROZEN}" -eq 1 ]; then
+                        kill -CONT "${TRAIN_CHILD}" 2>/dev/null || true
+                        FROZEN=0
+                        echo "[entrypoint] Server idle — resumed SAVANT RL trainer (SIGCONT)"
+                    fi
+                fi
+                sleep 0.5 &
+                wait $! || true
+            done
+
             set +e
             wait "${TRAIN_CHILD}"
             CODE=$?

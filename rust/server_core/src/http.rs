@@ -101,9 +101,9 @@ pub(crate) fn parse_json_body(state: &AppState, body: &Bytes) -> Result<Value, B
 
 pub async fn health(State(state): State<Arc<AppState>>) -> Response {
     let sim = state.backend.stats();
-    let (online, lobbies) = {
+    let (online, lobbies, ws_conns) = {
         let rt = state.rt.lock().unwrap();
-        (rt.clients_by_user_id.len(), rt.lobbies.len())
+        (rt.clients_by_user_id.len(), rt.lobbies.len(), rt.conns.len())
     };
     let uptime = state.started_at.elapsed().as_secs();
     json_response(
@@ -114,6 +114,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Response {
             "region": state.config.region,
             "uptime": uptime,
             "online": online,
+            "wsConns": ws_conns,
             "lobbies": lobbies,
             "workers": sim.ready_workers,
             "activeMatches": sim.active_matches

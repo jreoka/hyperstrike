@@ -91,6 +91,7 @@ EVAL_WORKERS = max(1, int(os.environ.get("SAVANT_EVAL_WORKERS", "8")))
 HEALTH_URL = os.environ.get("SAVANT_HEALTH_URL", "").strip()
 PAUSE_POLL_SECS = max(1.0, float(os.environ.get("SAVANT_PAUSE_POLL_SECS", "5.0")))
 UPDATE_SLEEP_SECS = max(0.0, float(os.environ.get("SAVANT_UPDATE_SLEEP", "0.0")))
+CPU_DUTY = max(0.05, min(1.0, float(os.environ.get("SAVANT_CPU_DUTY", "1.0"))))
 GAMMA = 0.994
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
@@ -203,11 +204,13 @@ def wait_until_server_idle():
     prev_state = STATUS_STATE.get("state", "training")
     while True:
         online = 0
+        ws_conns = 0
         active_matches = 0
         try:
             with urllib.request.urlopen(HEALTH_URL, timeout=2.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 online = int(data.get("online", 0))
+                ws_conns = int(data.get("wsConns", 0))
                 active_matches = int(data.get("activeMatches", 0))
         except Exception:
             # If the server is starting up or unreachable briefly, don't deadlock training
@@ -215,11 +218,11 @@ def wait_until_server_idle():
                 print("[RESUME] Health endpoint unreachable — resuming training", flush=True)
                 write_status_snapshot(state=prev_state, pauseReason=None)
             return
-        if online > 0 or active_matches > 0:
-            reason = f"Live players active (online={online}, matches={active_matches})"
+        if online > 0 or ws_conns > 0 or active_matches > 0:
+            reason = f"Live players active (online={online}, ws={ws_conns}, matches={active_matches})"
             if not paused:
                 print(
-                    f"[PAUSE] Live server busy (online={online}, activeMatches={active_matches}) "
+                    f"[PAUSE] Live server busy (online={online}, wsConns={ws_conns}, activeMatches={active_matches}) "
                     f"— yielding CPU until idle...",
                     flush=True,
                 )
@@ -231,6 +234,21 @@ def wait_until_server_idle():
                 print("[RESUME] Live server idle — resuming background RL training", flush=True)
                 write_status_snapshot(state=prev_state, pauseReason=None)
             return
+
+
+def pace_cpu(work_secs: float):
+    """Duty-cycles CPU work so shared-CPU hosts (e.g. Fly.io) never exhaust burst credits."""
+    if CPU_DUTY >= 0.999 or work_secs <= 0.0:
+        return
+    sleep_total = work_secs * (1.0 / CPU_DUTY - 1.0)
+    deadline = time.monotonic() + sleep_total
+    while True:
+        rem = deadline - time.monotonic()
+        if rem <= 0.005:
+            break
+        time.sleep(min(rem, 1.0))
+        if HEALTH_URL:
+            wait_until_server_idle()
 
 
 def build_and_load_dll() -> ctypes.CDLL:
@@ -783,7 +801,9 @@ def evaluate_full(lib: ctypes.CDLL, model_bytes: bytes):
         for idx, (k, kw) in enumerate(specs.items(), start=1):
             wait_until_server_idle()
             write_status_snapshot(state="evaluating", phase=f"eval {idx}/{total_suites} ({k})")
+            t_ev = time.monotonic()
             res[k] = eval_against(lib, model_bytes, **kw)
+            pace_cpu(time.monotonic() - t_ev)
     else:
         with ThreadPoolExecutor(max_workers=min(EVAL_WORKERS, len(specs))) as ex:
             futs = {k: ex.submit(eval_against, lib, model_bytes, **kw) for k, kw in specs.items()}
@@ -1227,9 +1247,12 @@ def main():
             actor.eval()
             critic.eval()
             for t in range(ROLLOUT_STEPS):
-                if HEALTH_URL and (t % 16 == 0):
-                    wait_until_server_idle()
-                    write_status_snapshot(state="training", phase=f"rollout {t}/{ROLLOUT_STEPS}")
+                if HEALTH_URL:
+                    if t % 4 == 0:
+                        wait_until_server_idle()
+                    if t % 16 == 0:
+                        write_status_snapshot(state="training", phase=f"rollout {t}/{ROLLOUT_STEPS}")
+                t_step = time.monotonic()
                 obs_t = torch.nan_to_num(torch.from_numpy(obs_np).to(device), nan=0.0, posinf=5.0, neginf=-5.0)
                 obs_buf[t] = obs_t
                 ep_buf[t] = cur_ep
@@ -1262,6 +1285,7 @@ def main():
                 ep_gs += int(stats_np[0])
                 ep_gc += int(stats_np[1])
                 ep_tc += int(stats_np[2])
+                pace_cpu(time.monotonic() - t_step)
 
             st["cur_ep"] = cur_ep
             total_env_steps += ROLLOUT_STEPS * num_agents
@@ -1328,6 +1352,9 @@ def main():
                     write_status_snapshot(state="training", phase=f"ppo epoch {ep_i + 1}/{PPO_EPOCHS}")
                 perm = torch.randperm(n_chunks, device=device)
                 for i in range(0, n_chunks, MINIBATCH_CHUNKS):
+                    if HEALTH_URL:
+                        wait_until_server_idle()
+                    t_mb = time.monotonic()
                     mb = perm[i : i + MINIBATCH_CHUNKS]
 
                     # Critic ALWAYS trains all epochs (decoupled from actor KL early-stopping)
@@ -1342,6 +1369,7 @@ def main():
                             v_losses.append(v_loss.item())
 
                     if actor_kl_break:
+                        pace_cpu(time.monotonic() - t_mb)
                         continue
 
                     new_logp, ent, head_ents, logits = actor.eval_actions_seq(
@@ -1352,12 +1380,14 @@ def main():
                     approx_kl = ((ratio - 1.0) - log_ratio).mean().item()
                     if not math.isfinite(approx_kl):
                         actor_kl_break = True
+                        pace_cpu(time.monotonic() - t_mb)
                         continue
                     kls.append(approx_kl)
 
                     is_first_mb = ep_i == 0 and i == 0
                     if approx_kl > (CATASTROPHIC_KL if is_first_mb else MAX_KL):
                         actor_kl_break = True
+                        pace_cpu(time.monotonic() - t_mb)
                         continue
 
                     pg1 = -b_adv[mb] * ratio
@@ -1377,6 +1407,7 @@ def main():
                             actor_steps += 1
                             ent_vals.append(ent_mean.item())
                             min_head_ents.append(head_ents.min().item())
+                    pace_cpu(time.monotonic() - t_mb)
 
             # Self-healing NaN/Inf guard: roll back to last healthy weights instead of bricking training
             if not models_finite(actor, critic):
