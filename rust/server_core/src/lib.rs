@@ -385,6 +385,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(admin::broadcast).options(http::options_handler),
         )
         .route(
+            "/api/admin/training",
+            get(admin::training_stats).options(http::options_handler),
+        )
+        .route(
             "/api/admin/ac/behavior",
             get(anticheat::admin_behavior).options(http::options_handler),
         )

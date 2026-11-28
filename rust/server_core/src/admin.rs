@@ -420,7 +420,8 @@ pub async fn overview(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
             "browsers": browser_dist,
             "recentAc": recent_ac,
             "topPlayers": top_players,
-            "cluster": cluster
+            "cluster": cluster,
+            "training": training_summary_json(&state)
         }),
     )
 }
@@ -1254,5 +1255,138 @@ pub async fn broadcast(
         &state,
         StatusCode::OK,
         &json!({ "ok": true, "sent": sent_local + sent_remote }),
+    )
+}
+
+fn file_meta_json(path: &std::path::Path) -> Value {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64);
+            json!({
+                "exists": true,
+                "sizeBytes": meta.len(),
+                "modifiedAtMs": modified_ms,
+                "path": path.display().to_string(),
+            })
+        }
+        Err(_) => json!({
+            "exists": false,
+            "sizeBytes": 0,
+            "modifiedAtMs": Value::Null,
+            "path": path.display().to_string(),
+        }),
+    }
+}
+
+fn training_status_path(state: &AppState) -> std::path::PathBuf {
+    std::env::var("SAVANT_STATUS_FILE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| state.config.data_dir.join("savant_rl").join("status.json"))
+}
+
+fn read_training_status(state: &AppState) -> Option<Value> {
+    let path = training_status_path(state);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
+pub(crate) fn training_summary_json(state: &AppState) -> Value {
+    let enabled = std::env::var("SAVANT_BG_TRAIN")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    let now = now_ms();
+    if let Some(st) = read_training_status(state) {
+        let raw_state = st.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let updated_at = st.get("updatedAtMs").and_then(|v| v.as_i64()).unwrap_or(0);
+        let stale = matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
+            && updated_at > 0
+            && (now - updated_at) > 180_000;
+        let effective_state = if stale { "stale" } else { raw_state };
+        json!({
+            "enabled": enabled,
+            "state": effective_state,
+            "stage": st.get("stage").and_then(|v| v.as_u64()).unwrap_or(0),
+            "stageName": st.get("stageName").and_then(|v| v.as_str()).unwrap_or("GENESIS"),
+            "upd": st.get("upd").and_then(|v| v.as_u64()).unwrap_or(0),
+            "bestScore": st.get("bestScore").cloned().unwrap_or(Value::Null),
+            "updatedAtMs": updated_at,
+        })
+    } else {
+        json!({
+            "enabled": enabled,
+            "state": if enabled { "starting" } else { "disabled" },
+            "stage": Value::Null,
+            "stageName": Value::Null,
+            "upd": 0,
+            "bestScore": Value::Null,
+            "updatedAtMs": Value::Null,
+        })
+    }
+}
+
+pub async fn training_stats(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return *resp;
+    }
+
+    let now = now_ms();
+    let enabled = std::env::var("SAVANT_BG_TRAIN")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    let rl_dir = state.config.data_dir.join("savant_rl");
+    let ckpt_dir = std::env::var("SAVANT_CKPT_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| rl_dir.join("checkpoints"));
+
+    let policy_path = &state.config.savant_policy_file;
+    let live_policy_valid = std::fs::read(policy_path)
+        .map(|b| b.len() >= 24 && &b[..4] == b"HSP2")
+        .unwrap_or(false);
+
+    let status = read_training_status(&state);
+    let is_stale = status
+        .as_ref()
+        .map(|st| {
+            let raw_state = st.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let updated_at = st.get("updatedAtMs").and_then(|v| v.as_i64()).unwrap_or(0);
+            matches!(raw_state, "training" | "evaluating" | "paused" | "starting")
+                && updated_at > 0
+                && (now - updated_at) > 180_000
+        })
+        .unwrap_or(false);
+
+    let (online, active_matches) = {
+        let rt = state.rt.lock().unwrap();
+        (rt.clients_by_user_id.len(), state.backend.stats().active_matches)
+    };
+
+    json_response(
+        &state,
+        StatusCode::OK,
+        &json!({
+            "now": now,
+            "enabled": enabled,
+            "region": state.config.region,
+            "simWorkers": state.config.sim_workers,
+            "serverOnline": online,
+            "serverActiveMatches": active_matches,
+            "isStale": is_stale,
+            "status": status,
+            "artifacts": {
+                "livePolicyActive": live_policy_valid,
+                "policy": file_meta_json(policy_path),
+                "bestCkpt": file_meta_json(&ckpt_dir.join("best.pt")),
+                "latestCkpt": file_meta_json(&ckpt_dir.join("latest.pt")),
+                "statusFile": file_meta_json(&training_status_path(&state)),
+            }
+        }),
     )
 }

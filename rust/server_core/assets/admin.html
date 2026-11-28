@@ -295,6 +295,7 @@ tbody tr:hover{background:var(--surf2)}
       <button class="nav-btn" data-tab="live"><span>Live Server</span><span class="nav-cnt" id="cntLive">0</span></button>
       <button class="nav-btn" data-tab="sessions"><span>Sessions</span><span class="nav-cnt" id="cntSessions">0</span></button>
       <button class="nav-btn" data-tab="anticheat"><span>Anti-Cheat</span><span class="nav-cnt" id="cntAc">0</span></button>
+      <button class="nav-btn" data-tab="training"><span>SAVANT RL</span><span class="nav-cnt" id="cntTraining">--</span></button>
     </nav>
     <div class="side-foot">
       <div class="me-row">
@@ -344,6 +345,7 @@ tbody tr:hover{background:var(--surf2)}
     users: [],
     sessions: [],
     live: null,
+    training: null,
     userSearch: '',
     userFilter: 'all',
     userSort: 'createdAt',
@@ -725,7 +727,7 @@ tbody tr:hover{background:var(--surf2)}
   $('autoBtn').onclick = () => { state.auto = !state.auto; resetAutoTimer(); };
   $('refreshBtn').onclick = () => refreshCurrent();
 
-  const TAB_TITLES = { overview: 'Overview', users: 'Users', live: 'Live Server', sessions: 'Sessions', anticheat: 'Anti-Cheat' };
+  const TAB_TITLES = { overview: 'Overview', users: 'Users', live: 'Live Server', sessions: 'Sessions', anticheat: 'Anti-Cheat', training: 'SAVANT RL Training' };
   function tabFromPath() {
     const seg = location.pathname.replace(/^\/admin\/?/, '').split('/')[0];
     return TAB_TITLES[seg] ? seg : 'overview';
@@ -783,6 +785,11 @@ tbody tr:hover{background:var(--surf2)}
         state.overview = ov;
         state.live = res;
         updateNavCountsFromOverview(ov);
+      } else if (state.tab === 'training') {
+        const [ov, res] = await Promise.all([api('/api/admin/overview'), api('/api/admin/training')]);
+        state.overview = ov;
+        state.training = res;
+        updateNavCountsFromOverview(ov);
       }
       $('liveText').textContent = 'Updated ' + fmtTime(Date.now());
       render();
@@ -804,6 +811,14 @@ tbody tr:hover{background:var(--surf2)}
     $('cntLive').textContent = ov.server.online;
     $('cntSessions').textContent = ov.counts.sessions;
     $('cntAc').textContent = ov.counts.banned + ov.counts.flagged;
+    const tr = ov.training;
+    if (tr) {
+      if (tr.state === 'paused') $('cntTraining').textContent = 'PAUSE';
+      else if (tr.state === 'training' || tr.state === 'evaluating') $('cntTraining').textContent = 'S' + (tr.stage ?? 0);
+      else if (tr.state === 'starting') $('cntTraining').textContent = 'INIT';
+      else if (tr.state === 'stale') $('cntTraining').textContent = 'STALE';
+      else $('cntTraining').textContent = tr.enabled ? 'IDLE' : 'OFF';
+    }
   }
 
   // ---- HiDPI Canvas Charts ----
@@ -993,6 +1008,7 @@ tbody tr:hover{background:var(--surf2)}
     else if (state.tab === 'live') renderLive();
     else if (state.tab === 'sessions') renderSessions();
     else if (state.tab === 'anticheat') renderAntiCheat();
+    else if (state.tab === 'training') renderTraining();
 
     if (bcastDraft && $('bcastIn')) $('bcastIn').value = bcastDraft;
     if (focusId && $(focusId)) {
@@ -1897,8 +1913,304 @@ tbody tr:hover{background:var(--surf2)}
     });
   }
 
+  function drawSignedLineChart(canvas, tipEl, samples, series, xLabelFn) {
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(200, Math.floor(rect.width));
+    const h = Math.max(120, Math.floor(rect.height));
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const pad = { l: 46, r: 10, t: 10, b: 22 };
+    const pw = w - pad.l - pad.r;
+    const ph = h - pad.t - pad.b;
+    const pts = samples && samples.length ? samples : [];
+
+    ctx.clearRect(0, 0, w, h);
+    if (!pts.length) {
+      ctx.fillStyle = '#5c667a';
+      ctx.font = '11px ui-monospace,monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Waiting for training samples...', pad.l + pw / 2, pad.t + ph / 2);
+      return;
+    }
+
+    let minV = Infinity, maxV = -Infinity;
+    for (const p of pts) {
+      for (const sr of series) {
+        const v = Number(p[sr.key]);
+        if (Number.isFinite(v)) { minV = Math.min(minV, v); maxV = Math.max(maxV, v); }
+      }
+    }
+    if (!Number.isFinite(minV)) { minV = -1; maxV = 1; }
+    if (Math.abs(maxV - minV) < 1e-6) { minV -= 1; maxV += 1; }
+    const span = maxV - minV;
+    minV -= span * 0.1;
+    maxV += span * 0.1;
+
+    const xFor = i => pts.length === 1 ? pad.l + pw / 2 : pad.l + (pw * i / (pts.length - 1));
+    const yFor = v => pad.t + ph - (ph * ((v - minV) / (maxV - minV)));
+
+    ctx.strokeStyle = '#1c222e';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#5c667a';
+    ctx.font = '10px ui-monospace,monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) {
+      const val = minV + (maxV - minV) * (i / steps);
+      const y = pad.t + ph - (ph * i / steps);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, Math.round(y) + 0.5);
+      ctx.lineTo(w - pad.r, Math.round(y) + 0.5);
+      ctx.stroke();
+      const lbl = Math.abs(val) >= 100 ? Math.round(val).toString() : val.toFixed(Math.abs(val) >= 10 ? 1 : 2);
+      ctx.fillText(lbl, pad.l - 6, y);
+    }
+
+    if (minV < 0 && maxV > 0) {
+      const y0 = Math.round(yFor(0)) + 0.5;
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#2c3548';
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y0);
+      ctx.lineTo(w - pad.r, y0);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#5c667a';
+    const labelCount = Math.min(5, pts.length);
+    for (let i = 0; i < labelCount; i++) {
+      const idx = labelCount === 1 ? 0 : Math.round(i * (pts.length - 1) / (labelCount - 1));
+      ctx.fillText(xLabelFn(pts[idx]), xFor(idx), h - 14);
+    }
+
+    for (const sr of series) {
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = xFor(i), y = yFor(Number(p[sr.key]) || 0);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = sr.color;
+      ctx.lineWidth = 1.75;
+      ctx.stroke();
+      if (pts.length <= 28) {
+        ctx.fillStyle = sr.color;
+        pts.forEach((p, i) => {
+          ctx.beginPath();
+          ctx.arc(xFor(i), yFor(Number(p[sr.key]) || 0), 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    canvas.onmousemove = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const ratio = Math.max(0, Math.min(1, (mx - pad.l) / Math.max(1, pw)));
+      const idx = Math.round(ratio * (pts.length - 1));
+      const p = pts[idx];
+      if (!p) return;
+      const lines = [xLabelFn(p), ...series.map(sr => `${sr.label}: ${p[sr.key] ?? '—'}`)];
+      tipEl.textContent = lines.join('  ·  ');
+      tipEl.style.display = 'block';
+      const tx = Math.min(w - tipEl.offsetWidth - 8, Math.max(8, xFor(idx) - tipEl.offsetWidth / 2));
+      tipEl.style.left = tx + 'px';
+      tipEl.style.top = '6px';
+    };
+    canvas.onmouseleave = () => { tipEl.style.display = 'none'; };
+  }
+
+  function fmtBytes(n) {
+    if (!n || n <= 0) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function renderTraining() {
+    const d = state.training;
+    if (!d) { $('content').innerHTML = '<div class="empty">Loading training telemetry...</div>'; return; }
+    const st = d.status || null;
+    const art = d.artifacts || {};
+    const m = st && st.latestMetrics ? st.latestMetrics : {};
+    const cfg = st && st.config ? st.config : {};
+    const mod = st && st.model ? st.model : {};
+
+    const rawState = st ? (d.isStale ? 'stale' : (st.state || 'unknown')) : (d.enabled ? 'starting' : 'disabled');
+    const stateMeta = {
+      training:   { label: 'Training',   cls: 'b-green' },
+      evaluating: { label: 'Evaluating', cls: 'b-acc' },
+      paused:     { label: 'Paused',     cls: 'b-amber' },
+      starting:   { label: 'Starting',   cls: 'b-acc' },
+      stopped:    { label: 'Stopped',    cls: 'b-muted' },
+      stale:      { label: 'Stale',      cls: 'b-red' },
+      disabled:   { label: 'Disabled',   cls: 'b-muted' },
+    }[rawState] || { label: rawState, cls: 'b-muted' };
+
+    const stageIdx = st && st.stage != null ? Number(st.stage) : 0;
+    const stageName = (st && st.stageName) || 'GENESIS';
+    const stagePct = Math.round(((stageIdx + 1) / 4) * 100);
+    const stepsM = st && st.totalEnvSteps != null ? (st.totalEnvSteps / 1e6).toFixed(2) + 'M' : '—';
+    const updStr = st && st.upd != null ? Number(st.upd).toLocaleString() : '—';
+    const bestStr = st && st.bestScore != null ? Number(st.bestScore).toFixed(1) : '—';
+    const lastEvScoreStr = st && st.lastEvalScore != null ? Number(st.lastEvalScore).toFixed(1) : '—';
+    const lrStr = st && st.actorLr != null ? Number(st.actorLr).toExponential(2) : '—';
+
+    const suiteDefs = [
+      ['chp1', '1v1 CHAMP'],
+      ['leg1', '1v1 LEGEND'],
+      ['mpc1', '1v1 MPC-SAVANT'],
+      ['leg2', '2v2 LEGEND'],
+      ['mpc2', '2v2 MPC-SAVANT'],
+      ['exp1', '1v1 LABS (Experimental)'],
+      ['may1', '1v1 MAYHEM'],
+      ['may2', '2v2 MAYHEM'],
+    ];
+    const suites = st && st.lastEval && st.lastEval.suites ? st.lastEval.suites : null;
+    const suiteRows = suites ? suiteDefs.map(([k, label]) => {
+      const s = suites[k];
+      if (!s) return '';
+      const gd = (s.goals_a || 0) - (s.goals_b || 0);
+      const gdCls = gd > 0 ? 'b-green' : gd < 0 ? 'b-red' : 'b-muted';
+      const gdTxt = (gd > 0 ? '+' : '') + gd;
+      return `<tr>
+        <td><b>${esc(label)}</b></td>
+        <td class="mono">${s.goals_a} – ${s.goals_b}</td>
+        <td><span class="badge ${gdCls}">${gdTxt}</span></td>
+        <td class="mono">${s.wins_a}W – ${s.wins_b}L</td>
+        <td class="mono muted">${s.shots_a} – ${s.shots_b}</td>
+        <td class="mono ${s.owngoals_a > 0 ? '' : 'dim'}">${s.owngoals_a}</td>
+      </tr>`;
+    }).join('') : '';
+
+    const artRow = (name, info, extra = '') => {
+      const ok = info && info.exists;
+      return `<tr>
+        <td><b>${esc(name)}</b> ${extra}</td>
+        <td>${ok ? '<span class="badge b-green">Present</span>' : '<span class="badge b-muted">Missing</span>'}</td>
+        <td class="mono">${ok ? fmtBytes(info.sizeBytes) : '—'}</td>
+        <td class="mono muted">${ok && info.modifiedAtMs ? fmtRel(info.modifiedAtMs) + ' · ' + fmtDate(info.modifiedAtMs) : '—'}</td>
+      </tr>`;
+    };
+
+    $('content').innerHTML = `
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi-label">Trainer Status <span class="badge ${stateMeta.cls}">${esc(stateMeta.label)}</span></div>
+          <div class="kpi-val">${esc(st ? (st.device || 'cpu').toUpperCase() : (d.enabled ? 'BOOTING' : 'OFF'))}</div>
+          <div class="kpi-sub">${st && st.pauseReason ? esc(st.pauseReason) : (st && st.updatedAtMs ? 'Heartbeat ' + fmtRel(st.updatedAtMs) + ' · PID ' + (st.pid ?? '—') : (d.enabled ? 'Waiting for first status.json write' : 'SAVANT_BG_TRAIN != 1'))}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Curriculum Stage <span class="badge b-acc">S${stageIdx}</span></div>
+          <div class="kpi-val">${esc(stageName)}</div>
+          <div class="kpi-sub">LR ${esc(lrStr)} · Stage ${stageIdx + 1}/4 (${stagePct}%)</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Progress <span class="mono dim">${m.sps != null ? Math.round(m.sps).toLocaleString() + ' sps' : '—'}</span></div>
+          <div class="kpi-val">${updStr} <span style="font-size:13px;color:var(--ink2);font-weight:500">upds</span></div>
+          <div class="kpi-sub">${stepsM} env steps · ${cfg.numEnvs ?? '—'} envs / ${cfg.numAgents ?? '—'} agents</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Best Eval Score ${art.livePolicyActive ? '<span class="badge b-green">Live</span>' : '<span class="badge b-muted">Embedded</span>'}</div>
+          <div class="kpi-val">${bestStr}</div>
+          <div class="kpi-sub">Last eval: ${lastEvScoreStr}${st && st.lastEval && st.lastEval.t ? ' (' + fmtRel(st.lastEval.t) + ')' : ''}</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h">
+            <div><div class="card-title">Evaluation Score Trend</div><div class="card-sub">${st && st.evalHistory ? st.evalHistory.length : 0} benchmarks persisted</div></div>
+            <div class="legend"><span><i style="background:#38bdf8"></i>Composite Score</span></div>
+          </div>
+          <div class="chart-wrap"><canvas id="chTrainEval"></canvas><div class="chart-tip" id="tipTrainEval"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div><div class="card-title">PPO Reward / sec &amp; Value Loss</div><div class="card-sub">${st && st.history ? st.history.length : 0} recent updates</div></div>
+            <div class="legend"><span><i style="background:#22c55e"></i>Reward/s</span><span><i style="background:#f59e0b"></i>Value Loss</span></div>
+          </div>
+          <div class="chart-wrap"><canvas id="chTrainPpo"></canvas><div class="chart-tip" id="tipTrainPpo"></div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-h">
+          <div>
+            <div class="card-title">Latest 8-Suite Benchmark</div>
+            <div class="card-sub">${st && st.lastEval ? `Update #${st.lastEval.upd} · ${(st.lastEval.steps / 1e6).toFixed(2)}M steps · Score ${Number(st.lastEval.score).toFixed(1)} · ${fmtDate(st.lastEval.t)}` : 'No benchmark recorded yet'}</div>
+          </div>
+          ${st && st.lastEval ? `<span class="badge b-acc">Score ${Number(st.lastEval.score).toFixed(1)}</span>` : ''}
+        </div>
+        ${suites ? `<div class="tbl-wrap"><table>
+          <thead><tr><th>Suite</th><th>Goals</th><th>Diff</th><th>Record</th><th>Shots</th><th>Own Goals</th></tr></thead>
+          <tbody>${suiteRows}</tbody>
+        </table></div>` : '<div class="empty">Benchmark results will appear after the first evaluation cycle.</div>'}
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-h"><div class="card-title">PPO Diagnostics &amp; Runtime</div><div class="card-sub">${esc(d.region || 'local')} · ${d.simWorkers} sim worker</div></div>
+          <dl class="rg-kv">
+            <dt>Throughput</dt><dd>${m.sps != null ? Number(m.sps).toLocaleString() + ' steps/s' : '—'}</dd>
+            <dt>Rollout / Update Time</dt><dd>${m.rolloutSecs != null ? `${m.rolloutSecs}s / ${m.updateSecs ?? 0}s` : '—'}</dd>
+            <dt>Reward / sec</dt><dd>${m.rewPerSec != null ? (m.rewPerSec >= 0 ? '+' : '') + Number(m.rewPerSec).toFixed(3) : '—'}</dd>
+            <dt>Value Loss</dt><dd>${m.vloss != null ? Number(m.vloss).toFixed(4) : '—'}</dd>
+            <dt>Entropy / Min Head</dt><dd>${m.entropy != null ? `${Number(m.entropy).toFixed(2)} / ${Number(m.minHeadEntropy ?? 0).toFixed(2)}` : '—'}</dd>
+            <dt>Approx KL</dt><dd>${m.kl != null ? Number(m.kl).toFixed(5) : '—'}</dd>
+            <dt>Rollout vsBot Goals / Touches</dt><dd>${m.vsBotGoalsFor != null ? `${m.vsBotGoalsFor}–${m.vsBotGoalsAgainst} · ${m.touches} touches` : '—'}</dd>
+            <dt>Batch Config</dt><dd>${cfg.numEnvs ? `${cfg.numEnvs} envs · mb=${cfg.minibatchSize} · eval/${cfg.evalEvery}` : '—'}</dd>
+            <dt>Architecture</dt><dd>${mod.dModel ? `RoPE d=${mod.dModel} L=${mod.layers} H=${mod.heads} ctx=${mod.ctxLen}` : '—'}</dd>
+            <dt>Parameters (Actor / Critic)</dt><dd>${mod.actorParams ? `${Number(mod.actorParams).toLocaleString()} / ${Number(mod.criticParams).toLocaleString()}` : '—'}</dd>
+            <dt>Live Server Gate</dt><dd>${d.serverOnline} online · ${d.serverActiveMatches} active matches</dd>
+          </dl>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title">Persistent Volume &amp; Model Files</div><div class="card-sub">${art.livePolicyActive ? 'Hot-reloading from /data' : 'Using embedded policy'}</div></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Artifact</th><th>State</th><th>Size</th><th>Updated</th></tr></thead>
+            <tbody>
+              ${artRow('savant_policy.bin', art.policy, art.livePolicyActive ? '<span class="badge b-acc">Active</span>' : '')}
+              ${artRow('best.pt', art.bestCkpt)}
+              ${artRow('latest.pt', art.latestCkpt)}
+              ${artRow('status.json', art.statusFile)}
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+    `;
+
+    drawSignedLineChart(
+      $('chTrainEval'), $('tipTrainEval'),
+      st && st.evalHistory ? st.evalHistory : [],
+      [{ key: 'score', label: 'Score', color: '#38bdf8' }],
+      p => '#' + p.upd
+    );
+    drawSignedLineChart(
+      $('chTrainPpo'), $('tipTrainPpo'),
+      st && st.history ? st.history : [],
+      [
+        { key: 'rew', label: 'Rew/s', color: '#22c55e' },
+        { key: 'vloss', label: 'VLoss', color: '#f59e0b' }
+      ],
+      p => '#' + p.upd
+    );
+  }
+
   window.addEventListener('resize', () => {
     if (state.tab === 'overview' && state.overview) renderOverview();
+    else if (state.tab === 'training' && state.training) renderTraining();
   });
 
   initAuth();

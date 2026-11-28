@@ -47,6 +47,7 @@ DLL_PATH = Path(
 )
 OUT_MODEL = Path(os.environ.get("SAVANT_OUT_MODEL", str(ROOT / "rust" / "sim" / "assets" / "savant_policy.bin")))
 CKPT_DIR = Path(os.environ.get("SAVANT_CKPT_DIR", str(Path(__file__).resolve().parent / "checkpoints")))
+STATUS_FILE = Path(os.environ.get("SAVANT_STATUS_FILE", str(CKPT_DIR.parent / "status.json")))
 LATEST_PT = CKPT_DIR / "latest.pt"
 BEST_PT = CKPT_DIR / "best.pt"
 
@@ -139,11 +140,44 @@ def install_signal_handlers():
         signal.signal(signal.SIGTERM, _handle_term)
 
 
+STATUS_STATE: dict = {}
+
+
+def write_status_snapshot(**overrides):
+    """Atomically persists live training status and rolling history to STATUS_FILE."""
+    if not STATUS_STATE:
+        return
+    STATUS_STATE.update(overrides)
+    STATUS_STATE["updatedAtMs"] = int(time.time() * 1000)
+    try:
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATUS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(STATUS_STATE, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, STATUS_FILE)
+    except OSError:
+        pass
+
+
+def load_prior_status_history() -> tuple[list[dict], list[dict], dict | None]:
+    """Loads persisted history arrays from STATUS_FILE so admin charts survive restarts."""
+    if not STATUS_FILE.exists():
+        return [], [], None
+    try:
+        data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        hist = data.get("history") if isinstance(data.get("history"), list) else []
+        ev_hist = data.get("evalHistory") if isinstance(data.get("evalHistory"), list) else []
+        last_ev = data.get("lastEval") if isinstance(data.get("lastEval"), dict) else None
+        return hist[-120:], ev_hist[-80:], last_ev
+    except Exception:
+        return [], [], None
+
+
 def wait_until_server_idle():
     """When SAVANT_HEALTH_URL is set, pauses training while any live player or match is active."""
     if not HEALTH_URL:
         return
     paused = False
+    prev_state = STATUS_STATE.get("state", "training")
     while True:
         online = 0
         active_matches = 0
@@ -156,8 +190,10 @@ def wait_until_server_idle():
             # If the server is starting up or unreachable briefly, don't deadlock training
             if paused:
                 print("[RESUME] Health endpoint unreachable — resuming training", flush=True)
+                write_status_snapshot(state=prev_state, pauseReason=None)
             return
         if online > 0 or active_matches > 0:
+            reason = f"Live players active (online={online}, matches={active_matches})"
             if not paused:
                 print(
                     f"[PAUSE] Live server busy (online={online}, activeMatches={active_matches}) "
@@ -165,10 +201,12 @@ def wait_until_server_idle():
                     flush=True,
                 )
                 paused = True
+            write_status_snapshot(state="paused", pauseReason=reason)
             time.sleep(PAUSE_POLL_SECS)
         else:
             if paused:
                 print("[RESUME] Live server idle — resuming background RL training", flush=True)
+                write_status_snapshot(state=prev_state, pauseReason=None)
             return
 
 
@@ -883,8 +921,9 @@ def main():
     torch.manual_seed(seed)
     np.random.seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_label = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
     print(
-        f"[init] device={device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'cpu'}) | "
+        f"[init] device={device} ({device_label}) | "
         f"RoPE Transformer (d={ACTOR_D_MODEL}, L={ACTOR_LAYERS}, H={ACTOR_HEADS}, ctx={CTX_LEN}, theta={ROPE_THETA}) | "
         f"Ctrl+C anytime to save & stop",
         flush=True,
@@ -898,6 +937,47 @@ def main():
     actor_params = sum(p.numel() for p in actor.parameters())
     critic_params = sum(p.numel() for p in critic.parameters())
     print(f"[init] params: actor={actor_params:,} critic={critic_params:,}", flush=True)
+
+    prior_hist, prior_eval_hist, prior_last_eval = load_prior_status_history()
+    STATUS_STATE.clear()
+    STATUS_STATE.update(
+        {
+            "state": "starting",
+            "pauseReason": None,
+            "startedAtMs": int(time.time() * 1000),
+            "pid": os.getpid(),
+            "device": f"{device} ({device_label})" if device.type == "cuda" else "cpu",
+            "arch": ARCH_TAG,
+            "model": {
+                "actorParams": actor_params,
+                "criticParams": critic_params,
+                "dModel": ACTOR_D_MODEL,
+                "layers": ACTOR_LAYERS,
+                "heads": ACTOR_HEADS,
+                "ffnDim": ACTOR_FFN_DIM,
+                "ctxLen": CTX_LEN,
+            },
+            "config": {
+                "numEnvs": NUM_ENVS,
+                "numAgents": 0,
+                "minibatchSize": MINIBATCH_SIZE,
+                "evalEvery": EVAL_EVERY,
+                "rolloutSteps": ROLLOUT_STEPS,
+            },
+            "stage": 0,
+            "stageName": STAGES[0]["name"],
+            "upd": 0,
+            "totalEnvSteps": 0,
+            "bestScore": None,
+            "lastEvalScore": None,
+            "actorLr": STAGES[0]["actor_lr"],
+            "latestMetrics": None,
+            "lastEval": prior_last_eval,
+            "history": prior_hist,
+            "evalHistory": prior_eval_hist,
+        }
+    )
+    write_status_snapshot()
 
     actor_opt = make_adamw(actor, STAGES[0]["actor_lr"])
     critic_opt = make_adamw(critic, STAGES[0]["critic_lr"])
@@ -968,6 +1048,14 @@ def main():
             cur_bytes = export_hsp2(actor)
             snapshots.append(cur_bytes)
             print(f"[init] benchmarking resumed checkpoint {resume_path.name}...", flush=True)
+            write_status_snapshot(
+                state="evaluating",
+                upd=upd,
+                totalEnvSteps=total_env_steps,
+                stage=saved_stage,
+                stageName=STAGES[saved_stage]["name"],
+                bestScore=round(best_score, 2) if best_score > -1e8 else None,
+            )
             init_ev = evaluate_full(lib, cur_bytes)
             stage = detect_stage(init_ev, saved_stage)
             stage_lr = STAGES[stage]["actor_lr"]
@@ -979,6 +1067,27 @@ def main():
                 flush=True,
             )
             print(format_eval(upd, stage, total_env_steps, init_ev), flush=True)
+            STATUS_STATE["lastEval"] = {
+                "t": int(time.time() * 1000),
+                "upd": upd,
+                "steps": total_env_steps,
+                "score": round(float(init_ev["score"]), 2),
+                "suites": {k: v for k, v in init_ev.items() if k != "score"},
+            }
+            if not STATUS_STATE["evalHistory"] or STATUS_STATE["evalHistory"][-1].get("upd") != upd:
+                STATUS_STATE["evalHistory"].append(
+                    {
+                        "t": int(time.time() * 1000),
+                        "upd": upd,
+                        "steps": total_env_steps,
+                        "score": round(float(init_ev["score"]), 2),
+                        "stage": stage,
+                        "chp1Gd": init_ev["chp1"]["goals_a"] - init_ev["chp1"]["goals_b"],
+                        "leg1Gd": init_ev["leg1"]["goals_a"] - init_ev["leg1"]["goals_b"],
+                        "mpc1Gd": init_ev["mpc1"]["goals_a"] - init_ev["mpc1"]["goals_b"],
+                    }
+                )
+                STATUS_STATE["evalHistory"] = STATUS_STATE["evalHistory"][-80:]
     else:
         snapshots.append(export_hsp2(actor))
         print("[init] no compatible checkpoints found — starting completely from scratch (Stage 0: GENESIS)", flush=True)
@@ -1037,6 +1146,18 @@ def main():
         f"[PPO] running forever in Stage {stage} ({STAGES[stage]['name']}) | "
         f"{NUM_ENVS} envs, {num_agents} controlled agents, eval/save every {EVAL_EVERY} updates",
         flush=True,
+    )
+    STATUS_STATE["config"]["numAgents"] = num_agents
+    write_status_snapshot(
+        state="training",
+        pauseReason=None,
+        stage=stage,
+        stageName=STAGES[stage]["name"],
+        upd=upd,
+        totalEnvSteps=total_env_steps,
+        bestScore=round(best_score, 2) if best_score > -1e8 else None,
+        lastEvalScore=round(best_score, 2) if best_score > -1e8 else None,
+        actorLr=actor_lr,
     )
 
     t_start = time.time()
@@ -1259,17 +1380,63 @@ def main():
             critic.reprime_cache(st["hist_obs"], st["hist_ep"], st["cur_ep"], st["critic_cache"])
 
             sps = (ROLLOUT_STEPS * num_agents) / max(1e-3, dt_roll)
+            dt_total_upd = time.time() - t_roll
+            mean_r = rew_buf.mean().item() * 30.0
+            mean_vloss = float(np.mean(v_losses)) if v_losses else 0.0
+            mean_ent = float(np.mean(ent_vals)) if ent_vals else 0.0
+            mean_min_h = float(np.mean(min_head_ents)) if min_head_ents else 0.0
+            mean_kl = float(np.mean(kls)) if kls else 0.0
+
             if upd == 1 or upd % 10 == 0:
-                mean_r = rew_buf.mean().item() * 30.0
                 print(
                     f"[PPO S{stage}] upd {upd:05d} steps={total_env_steps/1e6:.2f}M "
                     f"sps={sps:,.0f} rew/s={mean_r:+.3f} vsBotG={ep_gs}-{ep_gc} touches={ep_tc} "
-                    f"vloss={np.mean(v_losses) if v_losses else 0:.3f} "
-                    f"ent={np.mean(ent_vals) if ent_vals else 0:.2f} "
-                    f"minH={np.mean(min_head_ents) if min_head_ents else 0:.2f} "
-                    f"kl={np.mean(kls) if kls else 0:.4f} lr={eff_actor_lr:.1e} "
+                    f"vloss={mean_vloss:.3f} "
+                    f"ent={mean_ent:.2f} "
+                    f"minH={mean_min_h:.2f} "
+                    f"kl={mean_kl:.4f} lr={eff_actor_lr:.1e} "
                     f"elapsed={(time.time()-t_start)/60:.1f}m",
                     flush=True,
+                )
+
+            if HEALTH_URL or upd == 1 or upd % 5 == 0:
+                now_ms_val = int(time.time() * 1000)
+                STATUS_STATE["history"].append(
+                    {
+                        "t": now_ms_val,
+                        "upd": upd,
+                        "steps": total_env_steps,
+                        "sps": round(sps, 1),
+                        "rew": round(mean_r, 4),
+                        "vloss": round(mean_vloss, 4),
+                        "ent": round(mean_ent, 3),
+                        "kl": round(mean_kl, 5),
+                    }
+                )
+                STATUS_STATE["history"] = STATUS_STATE["history"][-120:]
+                write_status_snapshot(
+                    state="training",
+                    pauseReason=None,
+                    stage=stage,
+                    stageName=STAGES[stage]["name"],
+                    upd=upd,
+                    totalEnvSteps=total_env_steps,
+                    bestScore=round(best_score, 2) if best_score > -1e8 else None,
+                    lastEvalScore=round(last_eval_score, 2) if last_eval_score > -1e8 else None,
+                    actorLr=eff_actor_lr,
+                    latestMetrics={
+                        "sps": round(sps, 1),
+                        "rewPerSec": round(mean_r, 4),
+                        "vsBotGoalsFor": ep_gs,
+                        "vsBotGoalsAgainst": ep_gc,
+                        "touches": ep_tc,
+                        "vloss": round(mean_vloss, 4),
+                        "entropy": round(mean_ent, 3),
+                        "minHeadEntropy": round(mean_min_h, 3),
+                        "kl": round(mean_kl, 5),
+                        "rolloutSecs": round(dt_roll, 2),
+                        "updateSecs": round(max(0.0, dt_total_upd - dt_roll), 2),
+                    },
                 )
 
             if upd % EVAL_EVERY == 0:
@@ -1282,6 +1449,7 @@ def main():
                 add_snapshot(lib, pool, cand_bytes)
 
                 print(f"[eval] benchmarking upd {upd:05d} across 8 suites...", flush=True)
+                write_status_snapshot(state="evaluating", pauseReason=None)
                 ev = evaluate_full(lib, cand_bytes)
                 score = ev["score"]
                 last_eval_score = score
@@ -1312,7 +1480,41 @@ def main():
                         lib, stage, (seed + upd * 997) & 0x7FFFFFFF, snapshots
                     )
                     st = alloc_rollout_state(num_agents, actor, critic, device)
+                    STATUS_STATE["config"]["numAgents"] = num_agents
                     print(f"[PPO] rebuilt pool for Stage {stage} ({STAGES[stage]['name']}): {NUM_ENVS} envs, {num_agents} controlled agents", flush=True)
+
+                ev_ms = int(time.time() * 1000)
+                STATUS_STATE["lastEval"] = {
+                    "t": ev_ms,
+                    "upd": upd,
+                    "steps": total_env_steps,
+                    "score": round(float(score), 2),
+                    "suites": {k: v for k, v in ev.items() if k != "score"},
+                }
+                STATUS_STATE["evalHistory"].append(
+                    {
+                        "t": ev_ms,
+                        "upd": upd,
+                        "steps": total_env_steps,
+                        "score": round(float(score), 2),
+                        "stage": stage,
+                        "chp1Gd": ev["chp1"]["goals_a"] - ev["chp1"]["goals_b"],
+                        "leg1Gd": ev["leg1"]["goals_a"] - ev["leg1"]["goals_b"],
+                        "mpc1Gd": ev["mpc1"]["goals_a"] - ev["mpc1"]["goals_b"],
+                    }
+                )
+                STATUS_STATE["evalHistory"] = STATUS_STATE["evalHistory"][-80:]
+                write_status_snapshot(
+                    state="training",
+                    pauseReason=None,
+                    stage=stage,
+                    stageName=STAGES[stage]["name"],
+                    upd=upd,
+                    totalEnvSteps=total_env_steps,
+                    bestScore=round(best_score, 2) if best_score > -1e8 else None,
+                    lastEvalScore=round(float(score), 2),
+                    actorLr=actor_lr,
+                )
 
             if UPDATE_SLEEP_SECS > 0.0:
                 time.sleep(UPDATE_SLEEP_SECS)
@@ -1320,6 +1522,7 @@ def main():
         print(f"\n[STOP] Ctrl+C received at update {upd} ({total_env_steps/1e6:.2f}M steps) — saving {LATEST_PT.name}...", flush=True)
         atomic_torch_save(make_checkpoint_payload(last_eval_score), LATEST_PT)
         cleanup_old_checkpoints()
+        write_status_snapshot(state="stopped", pauseReason=None, upd=upd, totalEnvSteps=total_env_steps)
         print(f"[STOP] Saved cleanly. Re-run `python tools\\savant_rl\\train.py` anytime to auto-resume.", flush=True)
     finally:
         lib.rl_pool_free(pool)
